@@ -108,7 +108,8 @@ $files_to_include = array(
     'customer-portal.php',
     'kitchen-portal.php',
     'foh-portal.php',
-    'menu-manager-portal.php'
+    'menu-manager-portal.php',
+    'super-admin-portal.php'
 );
 
 foreach ( $files_to_include as $file ) {
