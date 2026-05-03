@@ -78,8 +78,13 @@ function cmp_render_super_admin_portal() {
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
-        // Use localStorage to remember the active tab so page reloads don't reset the view
-        let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
+        // Check if PHP passed a POST variable telling us which tab to open
+        let activeTab = "<?php echo isset($_POST['sa_tab']) ? esc_js($_POST['sa_tab']) : ''; ?>";
+        
+        // If not, fall back to the last remembered tab or default to FOH
+        if (!activeTab) {
+            activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
+        }
 
         function activateTab(targetId) {
             navBtns.forEach(btn => {
