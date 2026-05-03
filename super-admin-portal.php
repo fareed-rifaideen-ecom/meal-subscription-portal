@@ -40,6 +40,31 @@ function cmp_render_super_admin_portal() {
 
     ob_start();
     ?>
+    <style>
+        /* Extra inline CSS specifically for the new external button */
+        .sa-ext-btn {
+            background: #38bdf8;
+            color: #0f172a !important;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 0.95em;
+            font-weight: bold;
+            margin-left: 15px;
+            align-self: center;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .sa-ext-btn:hover {
+            background: #0ea5e9;
+            color: #fff !important;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(56, 189, 248, 0.3);
+        }
+    </style>
+
     <div class="sa-dashboard-wrapper">
         <!-- TOP NAVIGATION BAR -->
         <div class="sa-topbar">
@@ -49,9 +74,15 @@ function cmp_render_super_admin_portal() {
             </div>
             
             <div class="sa-nav">
-                <button class="sa-nav-btn" data-target="sa-foh">Customers (FOH)</button>
+                <!-- Primary Tabbed Views -->
+                <button class="sa-nav-btn" data-target="sa-foh">Customer Portal</button>
                 <button class="sa-nav-btn" data-target="sa-kitchen">Kitchen Report</button>
-                <button class="sa-nav-btn" data-target="sa-menu">Menu Manager</button>
+                
+                <!-- External Link Button for Menu Manager -->
+                <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-ext-btn">
+                    Menu Manager 
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                </a>
             </div>
 
             <div class="sa-topbar-footer">
@@ -67,9 +98,7 @@ function cmp_render_super_admin_portal() {
             <div id="sa-kitchen" class="sa-tab-content">
                 <?php echo do_shortcode('[meal_kitchen_portal]'); ?>
             </div>
-            <div id="sa-menu" class="sa-tab-content">
-                <?php echo do_shortcode('[meal_menu_manager]'); ?>
-            </div>
+            <!-- Menu Manager has been removed from here -->
         </div>
     </div>
 
@@ -78,12 +107,19 @@ function cmp_render_super_admin_portal() {
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
-        // Check if PHP passed a POST variable telling us which tab to open
         let activeTab = "<?php echo isset($_POST['sa_tab']) ? esc_js($_POST['sa_tab']) : ''; ?>";
         
+        // Safeguard: If the page reloads from an old menu action, force it to FOH
+        if (activeTab === 'sa-menu') { activeTab = 'sa-foh'; }
+
         // If not, fall back to the last remembered tab or default to FOH
         if (!activeTab) {
             activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
+        }
+
+        // Validate tab exists, otherwise default
+        if (activeTab !== 'sa-foh' && activeTab !== 'sa-kitchen') {
+            activeTab = 'sa-foh';
         }
 
         function activateTab(targetId) {
