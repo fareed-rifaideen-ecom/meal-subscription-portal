@@ -377,6 +377,7 @@ function cmp_render_customer_portal() {
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
                             $is_locked = ($log && $log->is_locked);
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
+                            $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
                             $input_disabled = ($is_void || (!$is_admin_override && ($is_locked || $is_paused))) ? 'disabled' : '';
                             $meal_select_disabled = ($input_disabled || $saved_chefs_choice) ? 'disabled' : '';
@@ -396,10 +397,12 @@ function cmp_render_customer_portal() {
                             $macros_mob = '<div class="mob-grid"><div><strong>Cal:</strong> 0</div><div><strong>Fat:</strong> 0g</div><div><strong>Carb:</strong> 0g</div><div><strong>Pro:</strong> 0g</div></div>';
                             
                             if ($log && !$is_juice) {
-                                if ($saved_chefs_choice) {
-                                    $macros_desk = esc_html($label_chefs_choice);
-                                    $macros_mob = esc_html($label_chefs_choice);
+                                if ($saved_chefs_choice && !$is_chef_assigned) {
+                                    // Chef hasn't picked them yet
+                                    $macros_desk = esc_html($label_chefs_choice) . ' (Pending)';
+                                    $macros_mob = esc_html($label_chefs_choice) . ' (Pending)';
                                 } else {
+                                    // Normal macro calculation (or Chef Assigned macro calculation)
                                     $cal=0; $fat=0; $carbs=0; $pro=0;
                                     $meal_ids = array($log->breakfast_id, $log->lunch_id, $log->dinner_id, $log->snack_1_id, $log->snack_2_id);
                                     foreach ($meal_ids as $m_id) {
@@ -410,8 +413,19 @@ function cmp_render_customer_portal() {
                                             $pro += floatval($foods_map[$m_id]->protein);
                                         }
                                     }
-                                    $macros_desk = "<strong>Cal:</strong> {$cal}<br><strong>Fat:</strong> {$fat}g<br><strong>Carb:</strong> {$carbs}g<br><strong>Pro:</strong> {$pro}g";
-                                    $macros_mob = '<div class="mob-grid"><div><strong>Cal:</strong> '.$cal.'</div><div><strong>Fat:</strong> '.$fat.'g</div><div><strong>Carb:</strong> '.$carbs.'g</div><div><strong>Pro:</strong> '.$pro.'g</div></div>';
+                                    
+                                    $deskHtml = "<strong>Cal:</strong> {$cal}<br><strong>Fat:</strong> {$fat}g<br><strong>Carb:</strong> {$carbs}g<br><strong>Pro:</strong> {$pro}g";
+                                    $mobHtml = '<div class="mob-grid"><div><strong>Cal:</strong> '.$cal.'</div><div><strong>Fat:</strong> '.$fat.'g</div><div><strong>Carb:</strong> '.$carbs.'g</div><div><strong>Pro:</strong> '.$pro.'g</div></div>';
+
+                                    // If Chef Assigned, add a visual badge so the customer knows
+                                    if ($saved_chefs_choice && $is_chef_assigned) {
+                                        $badge = '<div style="color:#379237; font-size:0.85em; font-weight:bold; margin-bottom:4px;">(Chef Assigned)</div>';
+                                        $macros_desk = $badge . $deskHtml;
+                                        $macros_mob = $badge . $mobHtml;
+                                    } else {
+                                        $macros_desk = $deskHtml;
+                                        $macros_mob = $mobHtml;
+                                    }
                                 }
                             }
                         ?>
@@ -553,14 +567,19 @@ function cmp_render_customer_portal() {
         function calculateMacros(rowElement) {
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var macroDisplay = rowElement.find('.cmp-macro-display');
+            var selects = rowElement.find('select.cmp-meal-select');
             
-            if (isChefsChoice) {
-                macroDisplay.html('<span class="macro-desktop">' + chefsChoiceLabel + '</span><span class="macro-mobile">' + chefsChoiceLabel + '</span>');
+            // Check if there's actually a value in the selects (meaning chef assigned it)
+            var hasValues = false;
+            selects.each(function() { if ($(this).val() !== "") hasValues = true; });
+
+            if (isChefsChoice && !hasValues) {
+                macroDisplay.html('<span class="macro-desktop">' + chefsChoiceLabel + ' (Pending)</span><span class="macro-mobile">' + chefsChoiceLabel + ' (Pending)</span>');
                 return;
             }
             
             var cal=0, fat=0, carbs=0, pro=0;
-            rowElement.find('select.cmp-meal-select').each(function() {
+            selects.each(function() {
                 var selected = $(this).find('option:selected');
                 if (selected.val() !== "") {
                     cal += parseFloat(selected.data('cal')) || 0;
@@ -573,7 +592,12 @@ function cmp_render_customer_portal() {
             var deskHtml = '<strong>Cal:</strong> ' + cal + '<br><strong>Fat:</strong> ' + fat + 'g<br><strong>Carb:</strong> ' + carbs + 'g<br><strong>Pro:</strong> ' + pro + 'g';
             var mobHtml = '<div class="mob-grid"><div><strong>Cal:</strong> '+cal+'</div><div><strong>Fat:</strong> '+fat+'g</div><div><strong>Carb:</strong> '+carbs+'g</div><div><strong>Pro:</strong> '+pro+'g</div></div>';
             
-            macroDisplay.html('<span class="macro-desktop">' + deskHtml + '</span><span class="macro-mobile">' + mobHtml + '</span>');
+            if (isChefsChoice && hasValues) {
+                var badge = '<div style="color:#379237; font-size:0.85em; font-weight:bold; margin-bottom:4px;">(Chef Assigned)</div>';
+                macroDisplay.html('<span class="macro-desktop">' + badge + deskHtml + '</span><span class="macro-mobile">' + badge + mobHtml + '</span>');
+            } else {
+                macroDisplay.html('<span class="macro-desktop">' + deskHtml + '</span><span class="macro-mobile">' + mobHtml + '</span>');
+            }
         }
 
         $('.cmp-meal-select').on('change', function() { calculateMacros($(this).closest('tr')); });
