@@ -19,7 +19,7 @@ function cmp_render_super_admin_portal() {
             #cmp-sa-login .login-submit input[type="submit"] { width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; }
         </style>';
         return $custom_css . '<div style="max-width:400px; margin:50px auto; padding:30px; background:#fff; border-radius:8px; border:1px solid #ddd; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                    <h2 style="text-align:center; margin-top:0; color:#0f172a;">Admin Center Login</h2>
+                    <h2 style="text-align:center; margin-top:0; color:#0f172a;">Command Center Login</h2>
                     <p style="text-align:center; color:#666; margin-bottom:20px;">Secure access for authorized personnel only.</p>' 
                     . wp_login_form( $login_args ) . 
                 '</div>';
@@ -33,44 +33,19 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
-    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET (CACHE BUSTER ENABLED)
+    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET (With Cache Buster)
     wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
 
     $current_user = wp_get_current_user();
 
     ob_start();
     ?>
-    <style>
-        /* Extra inline CSS specifically for the new external button */
-        .sa-ext-btn {
-            background: #38bdf8;
-            color: #0f172a !important;
-            text-decoration: none;
-            padding: 10px 20px;
-            border-radius: 6px;
-            font-size: 0.95em;
-            font-weight: bold;
-            margin-left: 15px;
-            align-self: center;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .sa-ext-btn:hover {
-            background: #0ea5e9;
-            color: #fff !important;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 10px rgba(56, 189, 248, 0.3);
-        }
-    </style>
-
     <div class="sa-dashboard-wrapper">
         <!-- TOP NAVIGATION BAR -->
         <div class="sa-topbar">
             <div class="sa-topbar-header">
-                <h2>Super Admin Center</h2>
-                <p>Logged in as: <?php echo esc_html($current_user->display_name); ?></p>
+                <h2>Command Center</h2>
+                <p>Logged in as: <strong><?php echo esc_html($current_user->display_name); ?></strong></p>
             </div>
             
             <div class="sa-nav">
@@ -98,7 +73,6 @@ function cmp_render_super_admin_portal() {
             <div id="sa-kitchen" class="sa-tab-content">
                 <?php echo do_shortcode('[meal_kitchen_portal]'); ?>
             </div>
-            <!-- Menu Manager has been removed from here -->
         </div>
     </div>
 
@@ -107,42 +81,31 @@ function cmp_render_super_admin_portal() {
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
-        let activeTab = "<?php echo isset($_POST['sa_tab']) ? esc_js($_POST['sa_tab']) : ''; ?>";
-        
-        // Safeguard: If the page reloads from an old menu action, force it to FOH
-        if (activeTab === 'sa-menu') { activeTab = 'sa-foh'; }
+        // DETECTION LOGIC: Check URL (GET) then POST then localStorage
+        const urlParams = new URLSearchParams(window.location.search);
+        let activeTab = urlParams.get('sa_tab'); 
 
-        // If not, fall back to the last remembered tab or default to FOH
         if (!activeTab) {
-            activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
+            activeTab = "<?php echo isset($_POST['sa_tab']) ? esc_js($_POST['sa_tab']) : ''; ?>";
         }
-
-        // Validate tab exists, otherwise default
-        if (activeTab !== 'sa-foh' && activeTab !== 'sa-kitchen') {
-            activeTab = 'sa-foh';
+        
+        if (!activeTab || activeTab === 'sa-menu') {
+            activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
         }
 
         function activateTab(targetId) {
             navBtns.forEach(btn => {
-                if (btn.getAttribute('data-target') === targetId) {
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
-                }
+                btn.classList.toggle('active', btn.getAttribute('data-target') === targetId);
             });
 
             contents.forEach(content => {
-                if (content.id === targetId) {
-                    content.classList.add('active');
-                } else {
-                    content.classList.remove('active');
-                }
+                content.classList.toggle('active', content.id === targetId);
             });
             
             localStorage.setItem('cmpSuperAdminTab', targetId);
         }
 
-        // Initialize
+        // Initialize view
         activateTab(activeTab);
 
         // Click listeners
