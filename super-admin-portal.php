@@ -41,9 +41,9 @@ function cmp_render_super_admin_portal() {
     ob_start();
     ?>
     <div class="sa-dashboard-wrapper">
-        <!-- SIDEBAR -->
-        <div class="sa-sidebar">
-            <div class="sa-sidebar-header">
+        <!-- TOP NAVIGATION BAR -->
+        <div class="sa-topbar">
+            <div class="sa-topbar-header">
                 <h2>Command Center</h2>
                 <p>Logged in as: <?php echo esc_html($current_user->display_name); ?></p>
             </div>
@@ -54,8 +54,8 @@ function cmp_render_super_admin_portal() {
                 <button class="sa-nav-btn" data-target="sa-menu">Menu Manager</button>
             </div>
 
-            <div class="sa-sidebar-footer">
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">Secure Log Out</a>
+            <div class="sa-topbar-footer">
+                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">Log Out</a>
             </div>
         </div>
 
@@ -78,7 +78,7 @@ function cmp_render_super_admin_portal() {
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
-        // Use localStorage to remember the active tab so page reloads (like Kitchen Date Filter) don't reset the view
+        // Use localStorage to remember the active tab so page reloads don't reset the view
         let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
 
         function activateTab(targetId) {
