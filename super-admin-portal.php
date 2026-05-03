@@ -33,8 +33,8 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
-    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET
-    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), '1.0.0' );
+    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET (CACHE BUSTER ENABLED)
+    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
 
     $current_user = wp_get_current_user();
 
