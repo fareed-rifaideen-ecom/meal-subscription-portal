@@ -34,6 +34,32 @@ function cmp_ajax_kitchen_action() {
     wp_send_json_success();
 }
 
+// NEW: AJAX HANDLER TO SAVE CHEF'S CHOICE ASSIGNMENTS
+add_action('wp_ajax_cmp_assign_chef_meals', 'cmp_ajax_assign_chef_meals');
+function cmp_ajax_assign_chef_meals() {
+    check_ajax_referer('cmp_kitchen_nonce', 'nonce');
+    global $wpdb;
+    
+    if (!current_user_can('manage_options') && !current_user_can('kitchen_staff')) {
+        wp_send_json_error('Permission Denied');
+    }
+    
+    $log_id = intval($_POST['log_id']);
+    $data = array(
+        'breakfast_id' => !empty($_POST['breakfast']) ? intval($_POST['breakfast']) : null,
+        'lunch_id'     => !empty($_POST['lunch']) ? intval($_POST['lunch']) : null,
+        'dinner_id'    => !empty($_POST['dinner']) ? intval($_POST['dinner']) : null,
+        'snack_1_id'   => !empty($_POST['snack_1']) ? intval($_POST['snack_1']) : null,
+        'snack_2_id'   => !empty($_POST['snack_2']) ? intval($_POST['snack_2']) : null,
+        'juice_1_id'   => !empty($_POST['juice_1']) ? intval($_POST['juice_1']) : null,
+        'juice_2_id'   => !empty($_POST['juice_2']) ? intval($_POST['juice_2']) : null,
+        'juice_3_id'   => !empty($_POST['juice_3']) ? intval($_POST['juice_3']) : null,
+    );
+    
+    $wpdb->update($wpdb->prefix . 'cmp_daily_logs', $data, array('id' => $log_id));
+    wp_send_json_success();
+}
+
 add_action('wp_ajax_cmp_export_kitchen_csv', 'cmp_export_kitchen_csv');
 function cmp_export_kitchen_csv() {
     if (!is_user_logged_in() || (!current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('foh_manager'))) {
@@ -43,9 +69,9 @@ function cmp_export_kitchen_csv() {
     global $wpdb;
     $prep_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
     
-    // FIX: Removed missing columns from SQL to prevent crash.
+    // FETCH allowed_categories alongside other data
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, u.display_name, u.user_email 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
@@ -104,19 +130,24 @@ function cmp_export_kitchen_csv() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
+        // NEW: Chef's Choice assignment logic for CSV export
         $meals_list = array();
-        if ($log->is_chefs_choice) {
-            $meals_list[] = "Chef's Choice (Full Day)";
+        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
+
+        if ($log->is_chefs_choice && !$is_assigned) {
+            $meals_list[] = "Chef's Choice (Pending Assignment)";
         } elseif ($log->juice_1_id) {
-            if ($log->juice_1_id) $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? '');
-            if ($log->juice_2_id) $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? '');
-            if ($log->juice_3_id) $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? '');
+            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+            $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
+            $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
+            $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
         } else {
-            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? '');
-            if ($log->lunch_id) $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? '');
-            if ($log->dinner_id) $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? '');
-            if ($log->snack_1_id) $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? '');
-            if ($log->snack_2_id) $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? '');
+            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
+            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
+            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
+            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
+            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
         }
 
         $meals_formatted = implode("\n", $meals_list); 
@@ -155,9 +186,9 @@ function cmp_render_kitchen_portal() {
     global $wpdb;
     $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
 
-    // FIX: Removed missing columns from SQL to prevent crash.
+    // FETCH allowed_categories alongside other data
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, u.display_name, u.user_email 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
@@ -165,7 +196,7 @@ function cmp_render_kitchen_portal() {
         $selected_date
     ) );
 
-    $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
+    $foods = $wpdb->get_results("SELECT id, food_name, category_name FROM {$wpdb->prefix}cmp_foods WHERE is_active = 1 ORDER BY category_name, food_name");
     $food_map = array(); foreach ($foods as $f) { $food_map[$f->id] = $f->food_name; }
 
     $customers = array();
@@ -211,26 +242,44 @@ function cmp_render_kitchen_portal() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
+        // Display Meal Logic (Shared with CSV logic)
         $meals_list = array();
-        if ($log->is_chefs_choice) {
-            $meals_list[] = "Chef's Choice (Full Day)";
+        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
+
+        if ($log->is_chefs_choice && !$is_assigned) {
+            $meals_list[] = "Chef's Choice (Pending Assignment)";
         } elseif ($log->juice_1_id) {
             $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown');
             $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown');
             $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown');
         } else {
             if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown');
-            if ($log->lunch_id) $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown');
-            if ($log->dinner_id) $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown');
-            if ($log->snack_1_id) $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown');
-            if ($log->snack_2_id) $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown');
+            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown');
+            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown');
+            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown');
+            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown');
         }
 
         $customers[] = array(
-            'log_id' => $log->id, 'name' => $full_name ?: 'Customer', 'phone' => $phone, 'email' => $email, 'address' => $address,
-            'method' => $method, 'timing' => $timing, 'time_slot' => $time_slot, 'plan' => $log->plan_name,
-            'allergies' => !empty($allergies) ? $allergies : 'No Allergies', 'dispatch' => $log->dispatch_status,
-            'delivery' => $log->delivery_result, 'pos' => $log->pos_updated, 'meals' => $meals_list
+            'log_id' => $log->id, 
+            'name' => $full_name ?: 'Customer', 
+            'phone' => $phone, 
+            'email' => $email, 
+            'address' => $address,
+            'method' => $method, 
+            'timing' => $timing, 
+            'time_slot' => $time_slot, 
+            'plan' => $log->plan_name,
+            'allergies' => !empty($allergies) ? $allergies : 'No Allergies', 
+            'dispatch' => $log->dispatch_status,
+            'delivery' => $log->delivery_result, 
+            'pos' => $log->pos_updated, 
+            'meals' => $meals_list,
+            // Added variables for Chef's Choice UI Rendering
+            'is_chefs_choice' => $log->is_chefs_choice,
+            'is_assigned' => $is_assigned,
+            'allowed_categories' => $log->allowed_categories,
+            'raw_log' => $log
         );
     }
 
@@ -328,9 +377,84 @@ function cmp_render_kitchen_portal() {
                             </td>
                             <td><strong><?php echo esc_html($c['plan']); ?></strong></td>
                             <td>
-                                <ul style="margin:0; padding-left:20px; line-height: 1.6;">
-                                    <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
-                                </ul>
+                                <!-- START CHEF'S CHOICE LOGIC -->
+                                <?php if ($c['is_chefs_choice']): ?>
+                                    <?php 
+                                    $display_style = $c['is_assigned'] ? 'block' : 'none'; 
+                                    $form_style = $c['is_assigned'] ? 'none' : 'block'; 
+                                    ?>
+                                    
+                                    <!-- View 1: Assigned Meals Display -->
+                                    <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
+                                        <ul style="margin:0; padding-left:20px; line-height: 1.6;">
+                                            <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
+                                        </ul>
+                                        <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Assignment</button>
+                                    </div>
+                                    
+                                    <!-- View 2: Dropdown Assignment Form -->
+                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
+                                        <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
+                                        <?php 
+                                        $allowed_cats = explode(',', $c['allowed_categories']);
+                                        $is_juice_plan = ($c['allowed_categories'] === 'Juices');
+                                        $meal_count = count($allowed_cats);
+                                        $snack_count = ($meal_count >= 2) ? 2 : 1;
+                                        $raw = $c['raw_log'];
+                                        ?>
+                                        
+                                        <?php if(!$is_juice_plan): ?>
+                                            <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
+                                                <select class="chef-meal-select" data-cat="<?php echo $cat; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <option value="">- <?php echo $cat; ?> -</option>
+                                                    <?php foreach($foods as $f) if($f->category_name == $cat) {
+                                                        $sel = ($raw->{strtolower($cat).'_id'} == $f->id) ? 'selected' : '';
+                                                        echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                    } ?>
+                                                </select>
+                                            <?php endif; endforeach; ?>
+                                            
+                                            <?php if($snack_count > 0): ?>
+                                                <select class="chef-meal-select" data-cat="snack_1" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <option value="">- Snack 1 -</option>
+                                                    <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
+                                                        $sel = ($raw->snack_1_id == $f->id) ? 'selected' : '';
+                                                        echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                    } ?>
+                                                </select>
+                                                <?php if($snack_count == 2): ?>
+                                                    <select class="chef-meal-select" data-cat="snack_2" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                        <option value="">- Snack 2 -</option>
+                                                        <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
+                                                            $sel = ($raw->snack_2_id == $f->id) ? 'selected' : '';
+                                                            echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                        } ?>
+                                                    </select>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
+
+                                        <?php else: ?>
+                                            <?php for($j=1; $j<=3; $j++): ?>
+                                                <select class="chef-meal-select" data-cat="juice_<?php echo $j; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <option value="">- Juice <?php echo $j; ?> -</option>
+                                                    <?php foreach($foods as $f) if($f->category_name == 'Juices') {
+                                                        $sel = ($raw->{'juice_'.$j.'_id'} == $f->id) ? 'selected' : '';
+                                                        echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                    } ?>
+                                                </select>
+                                            <?php endfor; ?>
+                                        <?php endif; ?>
+                                        
+                                        <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:5px; transition: 0.2s;">Save Meals</button>
+                                    </div>
+                                    
+                                <?php else: ?>
+                                    <!-- Normal Customer Selection -->
+                                    <ul style="margin:0; padding-left:20px; line-height: 1.6;">
+                                        <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
+                                    </ul>
+                                <?php endif; ?>
+                                <!-- END CHEF'S CHOICE LOGIC -->
                             </td>
                             <td style="text-align:center; background:#fcfcfc;">
                                 <input type="checkbox" class="chk-large cmp-dispatch-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['dispatch'] ? 'checked' : ''; ?> <?php echo $dispatch_disabled; ?>>
@@ -366,6 +490,56 @@ function cmp_render_kitchen_portal() {
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
 
+        // CHEF'S CHOICE ASSIGNMENT LOGIC
+        $('.edit-chef-assign').on('click', function() {
+            var cell = $(this).closest('td');
+            cell.find('.chef-assigned-view').hide();
+            cell.find('.chef-assign-form').show();
+        });
+
+        $('.save-chef-assign').on('click', function() {
+            var btn = $(this);
+            var container = btn.closest('.chef-assign-form');
+            var logId = container.data('log-id');
+            
+            // Validation: Ensure all selects have a value
+            var missing = false;
+            container.find('select').each(function() {
+                if ($(this).val() === '') missing = true;
+            });
+            if(missing) { 
+                alert("Please select all meals to complete the assignment."); 
+                return; 
+            }
+            
+            btn.text('Saving...').prop('disabled', true).css('opacity', '0.7');
+            
+            var data = {
+                action: 'cmp_assign_chef_meals',
+                nonce: '<?php echo wp_create_nonce("cmp_kitchen_nonce"); ?>',
+                log_id: logId,
+                breakfast: container.find('select[data-cat="Breakfast"]').val() || null,
+                lunch: container.find('select[data-cat="Lunch"]').val() || null,
+                dinner: container.find('select[data-cat="Dinner"]').val() || null,
+                snack_1: container.find('select[data-cat="snack_1"]').val() || null,
+                snack_2: container.find('select[data-cat="snack_2"]').val() || null,
+                juice_1: container.find('select[data-cat="juice_1"]').val() || null,
+                juice_2: container.find('select[data-cat="juice_2"]').val() || null,
+                juice_3: container.find('select[data-cat="juice_3"]').val() || null
+            };
+            
+            $.post("<?php echo admin_url('admin-ajax.php'); ?>", data, function(res) {
+                if(res.success) {
+                    // Reload to cleanly refresh UI and backend CSV mapping
+                    location.reload(); 
+                } else {
+                    alert(res.data || 'Error saving assignment.');
+                    btn.text('Save Meals').prop('disabled', false).css('opacity', '1');
+                }
+            });
+        });
+
+        // CORE LOGISTICS LOGIC
         function saveAction(logId, field, val) {
             $.post("<?php echo admin_url('admin-ajax.php'); ?>", {
                 action: 'cmp_kitchen_action',
