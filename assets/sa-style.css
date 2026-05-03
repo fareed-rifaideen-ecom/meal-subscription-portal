@@ -1,10 +1,11 @@
 /* =========================================================
-   SUPER ADMIN COMMAND CENTER - PREMIUM UI STYLES (TOP NAV)
+   SUPER ADMIN COMMAND CENTER - TOP NAV UI
    ========================================================= */
 
+/* --- 1. Main Dashboard Wrapper --- */
 .sa-dashboard-wrapper { 
     display: flex; 
-    flex-direction: column; /* Switches layout to stack vertically */
+    flex-direction: column; /* Forces vertical stacking, completely killing the sidebar */
     min-height: 85vh; 
     background: #f8fafc; 
     border: 1px solid #e2e8f0; 
@@ -105,7 +106,7 @@
 /* --- 3. Light Workspace / Content Area --- */
 .sa-content-area { 
     flex-grow: 1; 
-    padding: 25px; /* Reduced padding to reclaim edges */
+    padding: 25px; 
     overflow-y: auto; 
     background: #f8fafc; 
     width: 100%; 
@@ -144,7 +145,7 @@
 @media (max-width: 1024px) {
     .sa-topbar { flex-direction: column; padding: 15px; }
     .sa-topbar-header { width: 100%; justify-content: space-between; margin-bottom: 10px; }
-    .sa-topbar-header p { display: none; } /* Hide user text on mobile */
+    .sa-topbar-header p { display: none; } 
     .sa-nav { width: 100%; justify-content: space-between; padding-right: 0; overflow-x: auto; }
     .sa-nav-btn { padding: 15px 10px; font-size: 0.95em; white-space: nowrap; }
     .sa-topbar-footer { display: none; } 
