@@ -1,0 +1,186 @@
+/* =========================================================
+   SUPER ADMIN COMMAND CENTER - PREMIUM UI STYLES
+   ========================================================= */
+
+/* --- 1. Main Dashboard Wrapper --- */
+.sa-dashboard-wrapper { 
+    display: flex; 
+    min-height: 85vh; 
+    background: #f8fafc; 
+    border: 1px solid #e2e8f0; 
+    border-radius: 12px; 
+    overflow: hidden; 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+    box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+    margin: 20px 0;
+}
+
+/* --- 2. Dark Premium Sidebar --- */
+.sa-sidebar { 
+    width: 280px; 
+    background: #0f172a; 
+    color: #fff; 
+    display: flex; 
+    flex-direction: column; 
+    flex-shrink: 0; 
+    box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+    z-index: 10;
+}
+
+.sa-sidebar-header { 
+    padding: 35px 25px; 
+    border-bottom: 1px solid #1e293b; 
+    background: #0b1120;
+}
+
+.sa-sidebar-header h2 { 
+    color: #ffffff; 
+    margin: 0 0 8px 0; 
+    font-size: 1.6em; 
+    letter-spacing: 0.5px;
+}
+
+.sa-sidebar-header p { 
+    color: #94a3b8; 
+    margin: 0; 
+    font-size: 0.9em; 
+}
+
+/* Sidebar Navigation */
+.sa-nav { 
+    display: flex; 
+    flex-direction: column; 
+    padding: 25px 0; 
+    flex-grow: 1; 
+}
+
+.sa-nav-btn { 
+    background: transparent; 
+    border: none; 
+    color: #94a3b8; 
+    text-align: left; 
+    padding: 18px 30px; 
+    font-size: 1.1em; 
+    font-weight: 600; 
+    cursor: pointer; 
+    transition: all 0.3s ease; 
+    border-left: 4px solid transparent; 
+}
+
+.sa-nav-btn:hover { 
+    background: #1e293b; 
+    color: #f8fafc; 
+    padding-left: 35px; /* Slight indent bump on hover */
+}
+
+.sa-nav-btn.active { 
+    background: #1e293b; 
+    color: #38bdf8; 
+    border-left-color: #38bdf8; 
+}
+
+/* Sidebar Footer & Logout */
+.sa-sidebar-footer { 
+    padding: 25px; 
+    border-top: 1px solid #1e293b; 
+    background: #0b1120;
+}
+
+.sa-logout-btn { 
+    display: block; 
+    text-align: center; 
+    background: #ef4444; 
+    color: #ffffff; 
+    text-decoration: none; 
+    padding: 14px; 
+    border-radius: 8px; 
+    font-weight: bold; 
+    transition: all 0.2s ease; 
+    border: 1px solid #b91c1c;
+}
+
+.sa-logout-btn:hover { 
+    background: #dc2626; 
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+/* --- 3. Light Workspace / Content Area --- */
+.sa-content-area { 
+    flex-grow: 1; 
+    padding: 40px; 
+    overflow-y: auto; 
+    background: #f8fafc; 
+    width: calc(100% - 280px); 
+}
+
+.sa-tab-content { 
+    display: none; 
+    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); 
+}
+
+.sa-tab-content.active { 
+    display: block; 
+}
+
+@keyframes fadeIn { 
+    from { opacity: 0; transform: translateY(15px); } 
+    to { opacity: 1; transform: translateY(0); } 
+}
+
+/* --- 4. CSS Hacks: Clean up nested shortcode UI --- */
+/* Hide the dark headers inside the imported portals since our sidebar replaces them */
+.sa-content-area div[style*="background: #222"] { display: none !important; } 
+
+/* Hide redundant logout buttons inside the content area */
+.sa-content-area .cmp-no-print a[href*="logout"] { display: none !important; } 
+
+/* Hide cross-link buttons (like "View Kitchen Report" in FOH portal) */
+.sa-content-area .cmp-no-print a[href*="kitchen-command-center"] { display: none !important; } 
+.sa-content-area a[href*="kitchen-command-center"] { display: none !important; }
+
+/* Make the internal dashboard panels look more cohesive */
+.sa-content-area .cmp-dashboard-wrap, 
+.sa-content-area > div > div[style*="max-width: 1400px"], 
+.sa-content-area > div > div[style*="max-width: 1200px"] {
+    max-width: 100% !important;
+}
+
+/* --- 5. Mobile & Tablet Responsiveness --- */
+@media (max-width: 1024px) {
+    .sa-dashboard-wrapper { flex-direction: column; }
+    
+    .sa-sidebar { 
+        width: 100%; 
+        flex-direction: row; 
+        align-items: center; 
+        padding: 0; 
+        border-bottom: 2px solid #1e293b; 
+    }
+    
+    .sa-sidebar-header { display: none; }
+    .sa-sidebar-footer { padding: 10px; border: none; background: transparent; }
+    .sa-logout-btn { padding: 10px 15px; font-size: 0.9em; }
+    
+    .sa-nav { 
+        flex-direction: row; 
+        padding: 0; 
+        width: 100%; 
+        justify-content: flex-start;
+        overflow-x: auto;
+    }
+    
+    .sa-nav-btn { 
+        padding: 20px 15px; 
+        text-align: center; 
+        border-left: none; 
+        border-bottom: 3px solid transparent; 
+        font-size: 1em; 
+        white-space: nowrap;
+    }
+    
+    .sa-nav-btn:hover { padding-left: 15px; } /* Disable indent bump on mobile */
+    .sa-nav-btn.active { border-left-color: transparent; border-bottom-color: #38bdf8; background: #0b1120; }
+    
+    .sa-content-area { width: 100%; padding: 20px; }
+}
