@@ -33,8 +33,8 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
-    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET
-    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), '1.0.0' );
+    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET (With Cache Buster)
+    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
 
     $current_user = wp_get_current_user();
 
@@ -43,25 +43,25 @@ function cmp_render_super_admin_portal() {
     <div class="sa-dashboard-wrapper">
         <!-- TOP NAVIGATION BAR -->
         <div class="sa-topbar">
-            <!-- Zone 1: Branding -->
+            <!-- Zone 1: Branding & User Info -->
             <div class="sa-topbar-header">
                 <h2>Super Admin Portal</h2>
-                <p>Logged in as: <?php echo esc_html($current_user->display_name); ?></p>
+                <p>Logged in as: <strong><?php echo esc_html($current_user->display_name); ?></strong></p>
             </div>
             
-            <!-- Zone 2: Primary Navigation -->
+            <!-- Zone 2: Primary Navigation & External Tools -->
             <div class="sa-nav">
                 <button class="sa-nav-btn" data-target="sa-foh">Customer Portal</button>
                 <button class="sa-nav-btn" data-target="sa-kitchen">Kitchen Report</button>
                 
-                <!-- External Button for Menu Manager -->
+                <!-- External Button for Menu Manager (Opens in New Tab) -->
                 <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-ext-btn">
                     Menu Manager 
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 5px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                 </a>
             </div>
 
-            <!-- Zone 3: Actions -->
+            <!-- Zone 3: Global Actions -->
             <div class="sa-topbar-footer">
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">Log Out</a>
             </div>
@@ -86,7 +86,7 @@ function cmp_render_super_admin_portal() {
         // Use localStorage to remember the active tab
         let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
 
-        // Safety check: if the stored tab was 'sa-menu' (which we removed), default back to 'sa-foh'
+        // Safety check: if the stored tab was 'sa-menu' (which is now external), default back to 'sa-foh'
         if (activeTab === 'sa-menu') { activeTab = 'sa-foh'; }
 
         function activateTab(targetId) {
