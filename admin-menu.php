@@ -10,7 +10,7 @@ function cmp_add_admin_menu() {
     add_menu_page(
         'Meal Portal Manager',
         'Meal Portal',
-        'manage_options', // Requires admin privileges
+        'read', // Broad visibility, strict checking happens in renderer below
         'cmp-menu-manager',
         'cmp_render_admin_page',
         'dashicons-carrot', // Adds a food icon
@@ -20,6 +20,11 @@ function cmp_add_admin_menu() {
 
 // 2. Render the admin page and handle the CSV upload
 function cmp_render_admin_page() {
+    // STRICT SECURITY: Only allow Admins or Menu Managers
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { 
+        wp_die('Access Denied. You do not have permission to view the Meal Portal Manager.'); 
+    }
+
     global $wpdb;
     $table_foods = $wpdb->prefix . 'cmp_foods';
     $message = '';
