@@ -100,37 +100,31 @@ function cmp_render_menu_manager() {
     ?>
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
         
-        <div style="background: #222; color: #fff; padding: 20px; border-radius: 8px 8px 0 0; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
-            <div>
-                <h2 style="margin: 0; color: #fff;">Menu Manager Portal</h2>
-                <p style="margin: 5px 0 0 0; color: #ccc;">Upload the quarterly CSV or manage items manually.</p>
-            </div>
-            <a href="<?php echo wp_logout_url(get_permalink()); ?>" style="background:#dc3232; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Log Out</a>
-        </div>
-
         <?php echo $notification; ?>
 
         <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px;">
-            <div style="flex: 1; min-width: 300px; background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
-                <h3 style="margin-top: 0;">Upload Quarterly CSV</h3>
-                <p style="font-size: 0.9em; color: #666;">Upload your new menu here. Items not in the CSV will be automatically deactivated.</p>
+            <div style="flex: 1; min-width: 300px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                <h3 style="margin-top: 0; color: #0f172a;">Upload Quarterly CSV</h3>
+                <p style="font-size: 0.9em; color: #64748b;">Upload your new menu here. Items not in the CSV will be automatically deactivated.</p>
                 <form method="POST" enctype="multipart/form-data">
-                    <input type="file" name="csv_file" accept=".csv" required style="margin-bottom: 10px; width: 100%; padding: 10px; background: #fff; border: 1px solid #ccc; border-radius: 4px;">
-                    <label style="display: block; margin-bottom: 15px; font-weight: bold; color: #dc3232; font-size: 0.9em;">
+                    <input type="file" name="csv_file" accept=".csv" required style="margin-bottom: 10px; width: 100%; padding: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px;">
+                    <label style="display: block; margin-bottom: 15px; font-weight: bold; color: #dc2626; font-size: 0.9em;">
                         <input type="checkbox" name="wipe_menu" value="yes"> WIPE CURRENT MENU (Deletes old database)
                     </label>
-                    <button type="submit" name="upload_csv_frontend" style="background: #2271b1; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer;">Upload & Sync Menu</button>
+                    <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB AFTER SUBMIT -->
+                    <button type="submit" name="upload_csv_frontend" style="background: #38bdf8; color: #0f172a; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">Upload & Sync Menu</button>
                 </form>
             </div>
 
-            <div style="flex: 2; min-width: 400px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #0073aa; box-shadow: 0 4px 6px rgba(0,115,170,0.1);">
-                <h3 id="form_title" style="margin-top: 0; color: #0073aa;">Add New Food Item</h3>
+            <div style="flex: 2; min-width: 400px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #38bdf8; box-shadow: 0 4px 6px rgba(56,189,248,0.1);">
+                <h3 id="form_title" style="margin-top: 0; color: #0f172a;">Add New Food Item</h3>
                 <form method="POST" id="crud-form">
+                    <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB AFTER SUBMIT -->
                     <input type="hidden" name="food_id" id="edit_id" value="0">
                     <div style="display: flex; gap: 15px; margin-bottom: 15px;">
                         <div style="flex: 1;">
-                            <label style="display:block; font-weight:bold; margin-bottom:5px;">Category</label>
-                            <select name="cat_name" id="edit_cat" required style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc;">
+                            <label style="display:block; font-weight:bold; margin-bottom:5px; color: #334155;">Category</label>
+                            <select name="cat_name" id="edit_cat" required style="width:100%; padding:8px; border-radius:4px; border:1px solid #cbd5e1; background: #f8fafc;">
                                 <option value="Breakfast">Breakfast</option>
                                 <option value="Lunch">Lunch</option>
                                 <option value="Dinner">Dinner</option>
@@ -139,37 +133,37 @@ function cmp_render_menu_manager() {
                             </select>
                         </div>
                         <div style="flex: 2;">
-                            <label style="display:block; font-weight:bold; margin-bottom:5px;">Food Name</label>
-                            <input type="text" name="food_name" id="edit_name" required style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc;">
+                            <label style="display:block; font-weight:bold; margin-bottom:5px; color: #334155;">Food Name</label>
+                            <input type="text" name="food_name" id="edit_name" required style="width:100%; padding:8px; border-radius:4px; border:1px solid #cbd5e1; background: #f8fafc;">
                         </div>
                     </div>
                     <div style="margin-bottom: 15px;">
-                        <label style="display:block; font-weight:bold; margin-bottom:5px;">Description</label>
-                        <textarea name="desc" id="edit_desc" rows="2" style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc;"></textarea>
+                        <label style="display:block; font-weight:bold; margin-bottom:5px; color: #334155;">Description</label>
+                        <textarea name="desc" id="edit_desc" rows="2" style="width:100%; padding:8px; border-radius:4px; border:1px solid #cbd5e1; background: #f8fafc;"></textarea>
                     </div>
                     <div style="display: flex; gap: 15px; margin-bottom: 15px;">
-                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em;">Calories</label><input type="number" name="cal" id="edit_cal" required style="width:100%; padding:8px; border:1px solid #ccc;"></div>
-                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em;">Fat (g)</label><input type="number" step="0.1" name="fat" id="edit_fat" required style="width:100%; padding:8px; border:1px solid #ccc;"></div>
-                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em;">Carbs (g)</label><input type="number" step="0.1" name="carbs" id="edit_carbs" required style="width:100%; padding:8px; border:1px solid #ccc;"></div>
-                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em;">Protein (g)</label><input type="number" step="0.1" name="pro" id="edit_pro" required style="width:100%; padding:8px; border:1px solid #ccc;"></div>
+                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em; color: #334155;">Calories</label><input type="number" name="cal" id="edit_cal" required style="width:100%; padding:8px; border:1px solid #cbd5e1; background: #f8fafc;"></div>
+                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em; color: #334155;">Fat (g)</label><input type="number" step="0.1" name="fat" id="edit_fat" required style="width:100%; padding:8px; border:1px solid #cbd5e1; background: #f8fafc;"></div>
+                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em; color: #334155;">Carbs (g)</label><input type="number" step="0.1" name="carbs" id="edit_carbs" required style="width:100%; padding:8px; border:1px solid #cbd5e1; background: #f8fafc;"></div>
+                        <div style="flex:1;"><label style="display:block; font-weight:bold; font-size:0.9em; color: #334155;">Protein (g)</label><input type="number" step="0.1" name="pro" id="edit_pro" required style="width:100%; padding:8px; border:1px solid #cbd5e1; background: #f8fafc;"></div>
                     </div>
                     <div style="margin-bottom: 15px;">
-                        <label><input type="checkbox" name="is_active" id="edit_active" checked> Item is Active & Visible</label>
+                        <label style="color: #334155; font-weight: bold;"><input type="checkbox" name="is_active" id="edit_active" checked> Item is Active & Visible</label>
                     </div>
                     <div style="display: flex; gap: 10px;">
-                        <button type="submit" name="save_food" id="btn_save" style="background: #46b450; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer;">Save Food Item</button>
-                        <button type="button" onclick="resetForm()" style="background: #ccc; color: #333; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">Clear Form</button>
+                        <button type="submit" name="save_food" id="btn_save" style="background: #10b981; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">Save Food Item</button>
+                        <button type="button" onclick="resetForm()" style="background: #e2e8f0; color: #334155; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">Clear Form</button>
                     </div>
                 </form>
             </div>
         </div>
 
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+        <div style="background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
             <div style="flex: 2; min-width: 250px;">
-                <input type="text" id="foodSearch" placeholder="🔍 Search food by name or description..." style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em;">
+                <input type="text" id="foodSearch" placeholder="🔍 Search food by name or description..." style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 1em; background: #f8fafc;">
             </div>
             <div style="flex: 1; min-width: 200px;">
-                <select id="catFilter" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em;">
+                <select id="catFilter" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 1em; background: #f8fafc;">
                     <option value="">All Categories</option>
                     <option value="Breakfast">Breakfast</option>
                     <option value="Lunch">Lunch</option>
@@ -180,15 +174,15 @@ function cmp_render_menu_manager() {
             </div>
         </div>
 
-        <div style="overflow-x: auto;">
-            <table style="width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.9em;">
+        <div style="overflow-x: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <table style="width: 100%; border-collapse: collapse; background: #fff; font-size: 0.95em;">
                 <thead>
-                    <tr style="background: #f1f1f1;">
-                        <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: left;">Category</th>
-                        <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: left;">Food Details</th>
-                        <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: center;">Macros</th>
-                        <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: center;">Status</th>
-                        <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: center;">Actions</th>
+                    <tr style="background: #0f172a; color: #fff;">
+                        <th style="padding: 15px; text-align: left;">Category</th>
+                        <th style="padding: 15px; text-align: left;">Food Details</th>
+                        <th style="padding: 15px; text-align: center;">Macros</th>
+                        <th style="padding: 15px; text-align: center;">Status</th>
+                        <th style="padding: 15px; text-align: center;">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="foodTableBody">
@@ -198,29 +192,30 @@ function cmp_render_menu_manager() {
                         $search_text = strtolower(esc_attr($f->food_name . ' ' . $f->description));
                         $cat_text = esc_attr($f->category_name);
                     ?>
-                    <tr class="food-row" data-search="<?php echo $search_text; ?>" data-cat="<?php echo $cat_text; ?>" style="border-bottom: 1px solid #eee; <?php if(!$f->is_active) echo 'background: #fdfdfd; opacity: 0.7;'; ?>">
-                        <td style="padding: 10px;"><strong><?php echo esc_html($f->category_name); ?></strong></td>
-                        <td style="padding: 10px;">
-                            <strong style="font-size: 1.1em; color: #0073aa;"><?php echo esc_html($f->food_name); ?></strong><br>
-                            <span style="color: #666;"><?php echo esc_html($f->description); ?></span>
+                    <tr class="food-row" data-search="<?php echo $search_text; ?>" data-cat="<?php echo $cat_text; ?>" style="border-bottom: 1px solid #f1f5f9; <?php if(!$f->is_active) echo 'background: #f8fafc; opacity: 0.6;'; ?>">
+                        <td style="padding: 15px; color: #334155;"><strong><?php echo esc_html($f->category_name); ?></strong></td>
+                        <td style="padding: 15px;">
+                            <strong style="font-size: 1.1em; color: #0284c7;"><?php echo esc_html($f->food_name); ?></strong><br>
+                            <span style="color: #64748b; font-size: 0.9em;"><?php echo esc_html($f->description); ?></span>
                         </td>
-                        <td style="padding: 10px; text-align: center; color: #555;">
+                        <td style="padding: 15px; text-align: center; color: #475569; font-size: 0.9em;">
                             Cal: <?php echo $f->calories; ?> | F: <?php echo $f->total_fat; ?> | C: <?php echo $f->carbohydrates; ?> | P: <?php echo $f->protein; ?>
                         </td>
-                        <td style="padding: 10px; text-align: center;">
+                        <td style="padding: 15px; text-align: center;">
                             <?php if($f->is_active): ?>
-                                <span style="background: #d4edda; color: #155724; padding: 3px 8px; border-radius: 3px;">Active</span>
+                                <span style="background: #dcfce7; color: #065f46; padding: 4px 10px; border-radius: 20px; font-size: 0.85em; font-weight: bold;">Active</span>
                             <?php else: ?>
-                                <span style="background: #f8d7da; color: #721c24; padding: 3px 8px; border-radius: 3px;">Inactive</span>
+                                <span style="background: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 20px; font-size: 0.85em; font-weight: bold;">Inactive</span>
                             <?php endif; ?>
                         </td>
-                        <td style="padding: 10px; text-align: center;">
-                            <div style="display: flex; gap: 5px; justify-content: center;">
-                                <button onclick="editFood(<?php echo $f->id; ?>, '<?php echo esc_js($f->category_name); ?>', '<?php echo $js_name; ?>', '<?php echo $js_desc; ?>', <?php echo $f->calories; ?>, <?php echo $f->total_fat; ?>, <?php echo $f->carbohydrates; ?>, <?php echo $f->protein; ?>, <?php echo $f->is_active; ?>)" style="background: #2271b1; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">Edit</button>
+                        <td style="padding: 15px; text-align: center;">
+                            <div style="display: flex; gap: 8px; justify-content: center;">
+                                <button onclick="editFood(<?php echo $f->id; ?>, '<?php echo esc_js($f->category_name); ?>', '<?php echo $js_name; ?>', '<?php echo $js_desc; ?>', <?php echo $f->calories; ?>, <?php echo $f->total_fat; ?>, <?php echo $f->carbohydrates; ?>, <?php echo $f->protein; ?>, <?php echo $f->is_active; ?>)" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">Edit</button>
                                 
                                 <form method="POST" onsubmit="return confirm('Are you sure you want to delete this food item forever?');" style="margin:0;">
+                                    <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB -->
                                     <input type="hidden" name="food_id" value="<?php echo $f->id; ?>">
-                                    <button type="submit" name="delete_food" style="background: #dc3232; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">Delete</button>
+                                    <button type="submit" name="delete_food" style="background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">Delete</button>
                                 </form>
                             </div>
                         </td>
@@ -230,7 +225,7 @@ function cmp_render_menu_manager() {
             </table>
         </div>
         
-        <div id="foodPagination" style="margin-top: 20px; display: flex; gap: 5px; justify-content: center; flex-wrap: wrap;"></div>
+        <div id="foodPagination" style="margin-top: 25px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;"></div>
 
     </div>
 
@@ -249,7 +244,8 @@ function cmp_render_menu_manager() {
         
         document.getElementById('form_title').innerText = "Update Food Item";
         document.getElementById('btn_save').innerText = "Update Food Item";
-        document.getElementById('btn_save').style.background = "#0073aa";
+        document.getElementById('btn_save').style.background = "#38bdf8";
+        document.getElementById('btn_save').style.color = "#0f172a";
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
@@ -258,7 +254,8 @@ function cmp_render_menu_manager() {
         document.getElementById('edit_id').value = "0";
         document.getElementById('form_title').innerText = "Add New Food Item";
         document.getElementById('btn_save').innerText = "Save Food Item";
-        document.getElementById('btn_save').style.background = "#46b450";
+        document.getElementById('btn_save').style.background = "#10b981";
+        document.getElementById('btn_save').style.color = "white";
     }
 
     // SEARCH, FILTER & PAGINATION ENGINE
@@ -314,19 +311,29 @@ function cmp_render_menu_manager() {
             const btn = document.createElement('button');
             btn.innerText = i;
             
-            btn.style.padding = "6px 14px";
-            btn.style.border = "1px solid #ccc";
-            btn.style.background = (i === currentPage) ? "#0073aa" : "#fff";
-            btn.style.color = (i === currentPage) ? "#fff" : "#333";
+            btn.style.padding = "8px 16px";
+            btn.style.border = "none";
+            btn.style.background = (i === currentPage) ? "#0f172a" : "#e2e8f0";
+            btn.style.color = (i === currentPage) ? "#38bdf8" : "#475569";
             btn.style.cursor = "pointer";
-            btn.style.borderRadius = "4px";
-            btn.style.margin = "0 2px";
+            btn.style.borderRadius = "6px";
             btn.style.fontWeight = "bold";
+            btn.style.transition = "all 0.2s";
+            
+            btn.onmouseover = function() { if(i !== currentPage) this.style.background = "#cbd5e1"; };
+            btn.onmouseout = function() { if(i !== currentPage) this.style.background = "#e2e8f0"; };
             
             btn.onclick = function(e) {
                 e.preventDefault();
                 currentPage = i;
                 filterAndPaginateFoods();
+                
+                // Scroll slightly up when paginating so the user stays oriented
+                const searchBar = document.getElementById('foodSearch');
+                if(searchBar) {
+                    const yOffset = searchBar.getBoundingClientRect().top + window.pageYOffset - 50;
+                    window.scrollTo({top: yOffset, behavior: 'smooth'});
+                }
             };
             paginationContainer.appendChild(btn);
         }
