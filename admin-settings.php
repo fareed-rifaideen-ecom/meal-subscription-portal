@@ -9,11 +9,13 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 // 1. Add the Menu Item to WordPress Backend (NESTED AS SUBMENU)
 add_action( 'admin_menu', 'cmp_add_settings_submenu', 99 ); 
 function cmp_add_settings_submenu() {
+    // UPDATED: Use a capability that both Admin and Menu Manager share, or explicitly allow both.
+    // The easiest way is to use 'read' and then do a strict check in the renderer.
     add_submenu_page( 
         'cmp-menu-manager', // The exact parent slug
         'Meal Subscription Portal: Global Settings', 
         'Meal Settings', 
-        'manage_options', 
+        'read', // Broad capability so Menu Manager can see it, strict checking happens in renderer 
         'cmp-settings', 
         'cmp_render_settings_page'
     );
@@ -22,19 +24,24 @@ function cmp_add_settings_submenu() {
 // 2. Register the Settings in the Database
 add_action( 'admin_init', 'cmp_register_settings' );
 function cmp_register_settings() {
-    register_setting( 'cmp_settings_group', 'cmp_cutoff_time' );
-    register_setting( 'cmp_settings_group', 'cmp_blackout_dates' );
-    register_setting( 'cmp_settings_group', 'cmp_map_url' );
-    register_setting( 'cmp_settings_group', 'cmp_kitchen_email' );
-    register_setting( 'cmp_settings_group', 'cmp_grace_period' );
-    register_setting( 'cmp_settings_group', 'cmp_label_chefs_choice' );
-    // NEW: WhatsApp Number Registration
-    register_setting( 'cmp_settings_group', 'cmp_whatsapp_number' ); 
+    // Ensure only admins and menu managers can actually save settings
+    if ( current_user_can('manage_options') || current_user_can('menu_manager') ) {
+        register_setting( 'cmp_settings_group', 'cmp_cutoff_time' );
+        register_setting( 'cmp_settings_group', 'cmp_blackout_dates' );
+        register_setting( 'cmp_settings_group', 'cmp_map_url' );
+        register_setting( 'cmp_settings_group', 'cmp_kitchen_email' );
+        register_setting( 'cmp_settings_group', 'cmp_grace_period' );
+        register_setting( 'cmp_settings_group', 'cmp_label_chefs_choice' );
+        register_setting( 'cmp_settings_group', 'cmp_whatsapp_number' ); 
+    }
 }
 
 // 3. Build the Backend User Interface
 function cmp_render_settings_page() {
-    if ( ! current_user_can( 'manage_options' ) ) { return; }
+    // UPDATED: Strict check to allow BOTH Admin and Menu Manager
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { 
+        wp_die('Access Denied. You do not have permission to view this page.'); 
+    }
     ?>
     <div class="wrap" style="max-width: 800px;">
         <h1 style="margin-bottom: 20px;">Meal Subscription Portal: Global Settings</h1>
