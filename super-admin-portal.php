@@ -33,52 +33,13 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
+    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET
+    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), '1.0.0' );
+
     $current_user = wp_get_current_user();
 
     ob_start();
     ?>
-    <style>
-        .sa-dashboard-wrapper { display: flex; min-height: 85vh; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        
-        /* SIDEBAR STYLING */
-        .sa-sidebar { width: 260px; background: #0f172a; color: #fff; display: flex; flex-direction: column; flex-shrink: 0; }
-        .sa-sidebar-header { padding: 30px 20px; border-bottom: 1px solid #1e293b; }
-        .sa-sidebar-header h2 { color: #fff; margin: 0 0 5px 0; font-size: 1.4em; }
-        .sa-sidebar-header p { color: #94a3b8; margin: 0; font-size: 0.85em; }
-        
-        .sa-nav { display: flex; flex-direction: column; padding: 20px 0; flex-grow: 1; }
-        .sa-nav-btn { background: none; border: none; color: #cbd5e1; text-align: left; padding: 15px 25px; font-size: 1.05em; font-weight: 600; cursor: pointer; transition: all 0.2s; border-left: 4px solid transparent; }
-        .sa-nav-btn:hover { background: #1e293b; color: #fff; }
-        .sa-nav-btn.active { background: #1e293b; color: #38bdf8; border-left-color: #38bdf8; }
-        
-        .sa-sidebar-footer { padding: 20px; border-top: 1px solid #1e293b; }
-        .sa-logout-btn { display: block; text-align: center; background: #ef4444; color: #fff; text-decoration: none; padding: 12px; border-radius: 6px; font-weight: bold; transition: background 0.2s; }
-        .sa-logout-btn:hover { background: #dc2626; color: #fff; }
-
-        /* CONTENT AREA STYLING */
-        .sa-content-area { flex-grow: 1; padding: 30px; overflow-y: auto; background: #f8fafc; width: calc(100% - 260px); }
-        .sa-tab-content { display: none; animation: fadeIn 0.3s ease-in-out; }
-        .sa-tab-content.active { display: block; }
-
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-
-        /* CSS HACKS TO HIDE REDUNDANT UI ELEMENTS FROM NESTED SHORTCODES */
-        .sa-content-area div[style*="background: #222"] { display: none !important; } /* Hides FOH and Menu black headers */
-        .sa-content-area .cmp-no-print a[href*="logout"] { display: none !important; } /* Hides Kitchen logout button */
-        .sa-content-area .cmp-no-print a[href*="kitchen-command-center"] { display: none !important; } /* Hides cross-links */
-        
-        /* Ensure mobile responsiveness */
-        @media (max-width: 900px) {
-            .sa-dashboard-wrapper { flex-direction: column; }
-            .sa-sidebar { width: 100%; flex-direction: row; align-items: center; padding: 10px; border-bottom: 2px solid #1e293b; }
-            .sa-sidebar-header, .sa-sidebar-footer { display: none; }
-            .sa-nav { flex-direction: row; padding: 0; width: 100%; justify-content: space-around; }
-            .sa-nav-btn { padding: 15px 10px; text-align: center; border-left: none; border-bottom: 3px solid transparent; font-size: 0.9em; }
-            .sa-nav-btn.active { border-left-color: transparent; border-bottom-color: #38bdf8; background: transparent; }
-            .sa-content-area { width: 100%; padding: 15px; }
-        }
-    </style>
-
     <div class="sa-dashboard-wrapper">
         <!-- SIDEBAR -->
         <div class="sa-sidebar">
