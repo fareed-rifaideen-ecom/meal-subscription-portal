@@ -33,35 +33,29 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
-    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET (With Cache Buster)
-    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
+    // 3. ENQUEUE THE NEW PREMIUM STYLESHEET
+    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), '1.0.0' );
 
     $current_user = wp_get_current_user();
 
     ob_start();
     ?>
     <div class="sa-dashboard-wrapper">
-        <!-- TOP NAVIGATION BAR -->
-        <div class="sa-topbar">
-            <div class="sa-topbar-header">
+        <!-- SIDEBAR -->
+        <div class="sa-sidebar">
+            <div class="sa-sidebar-header">
                 <h2>Command Center</h2>
-                <p>Logged in as: <strong><?php echo esc_html($current_user->display_name); ?></strong></p>
+                <p>Logged in as: <?php echo esc_html($current_user->display_name); ?></p>
             </div>
             
             <div class="sa-nav">
-                <!-- Primary Tabbed Views -->
-                <button class="sa-nav-btn" data-target="sa-foh">Customer Portal</button>
+                <button class="sa-nav-btn" data-target="sa-foh">Customers (FOH)</button>
                 <button class="sa-nav-btn" data-target="sa-kitchen">Kitchen Report</button>
-                
-                <!-- External Link Button for Menu Manager -->
-                <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-ext-btn">
-                    Menu Manager 
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                </a>
+                <button class="sa-nav-btn" data-target="sa-menu">Menu Manager</button>
             </div>
 
-            <div class="sa-topbar-footer">
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">Log Out</a>
+            <div class="sa-sidebar-footer">
+                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">Secure Log Out</a>
             </div>
         </div>
 
@@ -73,6 +67,9 @@ function cmp_render_super_admin_portal() {
             <div id="sa-kitchen" class="sa-tab-content">
                 <?php echo do_shortcode('[meal_kitchen_portal]'); ?>
             </div>
+            <div id="sa-menu" class="sa-tab-content">
+                <?php echo do_shortcode('[meal_menu_manager]'); ?>
+            </div>
         </div>
     </div>
 
@@ -81,31 +78,30 @@ function cmp_render_super_admin_portal() {
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
-        // DETECTION LOGIC: Check URL (GET) then POST then localStorage
-        const urlParams = new URLSearchParams(window.location.search);
-        let activeTab = urlParams.get('sa_tab'); 
-
-        if (!activeTab) {
-            activeTab = "<?php echo isset($_POST['sa_tab']) ? esc_js($_POST['sa_tab']) : ''; ?>";
-        }
-        
-        if (!activeTab || activeTab === 'sa-menu') {
-            activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
-        }
+        // Use localStorage to remember the active tab so page reloads (like Kitchen Date Filter) don't reset the view
+        let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
 
         function activateTab(targetId) {
             navBtns.forEach(btn => {
-                btn.classList.toggle('active', btn.getAttribute('data-target') === targetId);
+                if (btn.getAttribute('data-target') === targetId) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
             });
 
             contents.forEach(content => {
-                content.classList.toggle('active', content.id === targetId);
+                if (content.id === targetId) {
+                    content.classList.add('active');
+                } else {
+                    content.classList.remove('active');
+                }
             });
             
             localStorage.setItem('cmpSuperAdminTab', targetId);
         }
 
-        // Initialize view
+        // Initialize
         activateTab(activeTab);
 
         // Click listeners
