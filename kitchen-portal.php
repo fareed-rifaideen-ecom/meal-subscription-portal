@@ -15,7 +15,8 @@ function cmp_ajax_kitchen_action() {
     $field = sanitize_text_field($_POST['field']);
     $value = sanitize_text_field($_POST['value']);
     
-    $is_admin = current_user_can('manage_options');
+    // UPDATED: Treat menu_manager as an Admin for overrides
+    $is_admin = current_user_can('manage_options') || current_user_can('menu_manager');
     $is_chef = current_user_can('kitchen_staff');
     $is_foh = current_user_can('foh_manager');
 
@@ -34,13 +35,14 @@ function cmp_ajax_kitchen_action() {
     wp_send_json_success();
 }
 
-// NEW: AJAX HANDLER TO SAVE CHEF'S CHOICE ASSIGNMENTS
+// AJAX HANDLER TO SAVE CHEF'S CHOICE ASSIGNMENTS
 add_action('wp_ajax_cmp_assign_chef_meals', 'cmp_ajax_assign_chef_meals');
 function cmp_ajax_assign_chef_meals() {
     check_ajax_referer('cmp_kitchen_nonce', 'nonce');
     global $wpdb;
     
-    if (!current_user_can('manage_options') && !current_user_can('kitchen_staff')) {
+    // UPDATED: Allow menu_manager to assign meals
+    if (!current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('menu_manager')) {
         wp_send_json_error('Permission Denied');
     }
     
@@ -62,7 +64,8 @@ function cmp_ajax_assign_chef_meals() {
 
 add_action('wp_ajax_cmp_export_kitchen_csv', 'cmp_export_kitchen_csv');
 function cmp_export_kitchen_csv() {
-    if (!is_user_logged_in() || (!current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('foh_manager'))) {
+    // UPDATED: Allow menu_manager to export the CSV
+    if (!is_user_logged_in() || (!current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('foh_manager') && !current_user_can('menu_manager'))) {
         wp_die('Permission Denied');
     }
 
@@ -130,7 +133,7 @@ function cmp_export_kitchen_csv() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        // NEW: Chef's Choice assignment logic for CSV export
+        // Chef's Choice assignment logic for CSV export
         $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
 
@@ -175,7 +178,8 @@ function cmp_render_kitchen_portal() {
         return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">Kitchen Portal</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with your staff account.</p>' . wp_login_form( $login_args ) . '</div>';
     }
 
-    $is_admin = current_user_can('manage_options');
+    // UPDATED: Treat menu_manager as an Admin for page view access
+    $is_admin = current_user_can('manage_options') || current_user_can('menu_manager');
     $is_chef = current_user_can('kitchen_staff');
     $is_foh = current_user_can('foh_manager');
 
@@ -275,7 +279,6 @@ function cmp_render_kitchen_portal() {
             'delivery' => $log->delivery_result, 
             'pos' => $log->pos_updated, 
             'meals' => $meals_list,
-            // Added variables for Chef's Choice UI Rendering
             'is_chefs_choice' => $log->is_chefs_choice,
             'is_assigned' => $is_assigned,
             'allowed_categories' => $log->allowed_categories,
@@ -377,14 +380,12 @@ function cmp_render_kitchen_portal() {
                             </td>
                             <td><strong><?php echo esc_html($c['plan']); ?></strong></td>
                             <td>
-                                <!-- START CHEF'S CHOICE LOGIC -->
                                 <?php if ($c['is_chefs_choice']): ?>
                                     <?php 
                                     $display_style = $c['is_assigned'] ? 'block' : 'none'; 
                                     $form_style = $c['is_assigned'] ? 'none' : 'block'; 
                                     ?>
                                     
-                                    <!-- View 1: Assigned Meals Display -->
                                     <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
                                         <ul style="margin:0; padding-left:20px; line-height: 1.6;">
                                             <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
@@ -392,7 +393,6 @@ function cmp_render_kitchen_portal() {
                                         <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Assignment</button>
                                     </div>
                                     
-                                    <!-- View 2: Dropdown Assignment Form -->
                                     <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
                                         <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
                                         <?php 
@@ -449,12 +449,10 @@ function cmp_render_kitchen_portal() {
                                     </div>
                                     
                                 <?php else: ?>
-                                    <!-- Normal Customer Selection -->
                                     <ul style="margin:0; padding-left:20px; line-height: 1.6;">
                                         <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
                                     </ul>
                                 <?php endif; ?>
-                                <!-- END CHEF'S CHOICE LOGIC -->
                             </td>
                             <td style="text-align:center; background:#fcfcfc;">
                                 <input type="checkbox" class="chk-large cmp-dispatch-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['dispatch'] ? 'checked' : ''; ?> <?php echo $dispatch_disabled; ?>>
@@ -502,7 +500,6 @@ function cmp_render_kitchen_portal() {
             var container = btn.closest('.chef-assign-form');
             var logId = container.data('log-id');
             
-            // Validation: Ensure all selects have a value
             var missing = false;
             container.find('select').each(function() {
                 if ($(this).val() === '') missing = true;
@@ -530,7 +527,6 @@ function cmp_render_kitchen_portal() {
             
             $.post("<?php echo admin_url('admin-ajax.php'); ?>", data, function(res) {
                 if(res.success) {
-                    // Reload to cleanly refresh UI and backend CSV mapping
                     location.reload(); 
                 } else {
                     alert(res.data || 'Error saving assignment.');
