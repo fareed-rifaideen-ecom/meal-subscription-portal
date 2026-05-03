@@ -148,7 +148,8 @@ function cmp_render_customer_portal() {
         
         .cmp-mobile-label { display: none; }
         .macro-mobile { display: none; }
-        .macro-desktop { display: inline-block; white-space: nowrap; line-height: 1.4; font-size: 0.85em; }
+        /* FIXED: Removed nowrap and added word-wrap so long pending text breaks correctly */
+        .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; }
 
         .cmp-wa-float {
             position: fixed; bottom: 30px; right: 30px; background-color: #25d366; color: white; border-radius: 50px;
@@ -164,7 +165,8 @@ function cmp_render_customer_portal() {
             .cmp-table th:nth-child(2) { width: 145px; } 
             .cmp-table th:nth-child(3) { width: 105px; } 
             .cmp-table th:last-child { width: 95px; } 
-            .cmp-table th:nth-last-child(2) { width: 85px; } 
+            /* FIXED: Increased width to 110px to accommodate "Chef's Choice" cleanly */
+            .cmp-table th:nth-last-child(2) { width: 110px; } 
             .cmp-table th:nth-last-child(3) { width: 155px; } 
             .cmp-stacked-snack { margin-bottom: 8px; }
             .cmp-save-row { padding: 10px 5px !important; height: 42px; }
@@ -398,9 +400,9 @@ function cmp_render_customer_portal() {
                             
                             if ($log && !$is_juice) {
                                 if ($saved_chefs_choice && !$is_chef_assigned) {
-                                    // Chef hasn't picked them yet
-                                    $macros_desk = esc_html($label_chefs_choice) . ' (Pending)';
-                                    $macros_mob = esc_html($label_chefs_choice) . ' (Pending)';
+                                    // Chef hasn't picked them yet (FIXED: Added breaks and sizing for clean text wrapping)
+                                    $macros_desk = '<strong>' . esc_html($label_chefs_choice) . '</strong><br><span style="color:#d63638; font-size:0.9em;">(Pending)</span>';
+                                    $macros_mob  = '<strong>' . esc_html($label_chefs_choice) . '</strong> <span style="color:#d63638;">(Pending)</span>';
                                 } else {
                                     // Normal macro calculation (or Chef Assigned macro calculation)
                                     $cal=0; $fat=0; $carbs=0; $pro=0;
@@ -574,7 +576,8 @@ function cmp_render_customer_portal() {
             selects.each(function() { if ($(this).val() !== "") hasValues = true; });
 
             if (isChefsChoice && !hasValues) {
-                macroDisplay.html('<span class="macro-desktop">' + chefsChoiceLabel + ' (Pending)</span><span class="macro-mobile">' + chefsChoiceLabel + ' (Pending)</span>');
+                // FIXED: Included break tags and styling for cleanly wrapped JavaScript output
+                macroDisplay.html('<span class="macro-desktop"><strong>' + chefsChoiceLabel + '</strong><br><span style="color:#d63638; font-size:0.9em;">(Pending)</span></span><span class="macro-mobile"><strong>' + chefsChoiceLabel + '</strong> <span style="color:#d63638;">(Pending)</span></span>');
                 return;
             }
             
