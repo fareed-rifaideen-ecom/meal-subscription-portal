@@ -19,7 +19,7 @@ function cmp_render_super_admin_portal() {
             #cmp-sa-login .login-submit input[type="submit"] { width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; }
         </style>';
         return $custom_css . '<div style="max-width:400px; margin:50px auto; padding:30px; background:#fff; border-radius:8px; border:1px solid #ddd; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                    <h2 style="text-align:center; margin-top:0; color:#0f172a;">Command Center Login</h2>
+                    <h2 style="text-align:center; margin-top:0; color:#0f172a;">Admin Center Login</h2>
                     <p style="text-align:center; color:#666; margin-bottom:20px;">Secure access for authorized personnel only.</p>' 
                     . wp_login_form( $login_args ) . 
                 '</div>';
@@ -69,7 +69,7 @@ function cmp_render_super_admin_portal() {
         <!-- TOP NAVIGATION BAR -->
         <div class="sa-topbar">
             <div class="sa-topbar-header">
-                <h2>Command Center</h2>
+                <h2>Super Admin Center</h2>
                 <p>Logged in as: <?php echo esc_html($current_user->display_name); ?></p>
             </div>
             
