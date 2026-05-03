@@ -4,7 +4,7 @@
 
 .sa-dashboard-wrapper { 
     display: flex; 
-    flex-direction: column; 
+    flex-direction: column; /* Stack top bar over content area */
     min-height: 85vh; 
     background: #f8fafc; 
     border: 1px solid #e2e8f0; 
@@ -22,11 +22,11 @@
     color: #fff; 
     display: flex; 
     align-items: center;
-    justify-content: space-between; /* Spreads the three zones apart */
+    justify-content: space-between;
     padding: 0 30px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     z-index: 10;
-    height: 90px; /* Increased height for more vertical breathing room */
+    height: 90px;
 }
 
 /* Zone 1: Branding & User Info */
@@ -34,7 +34,7 @@
     display: flex;
     align-items: center;
     gap: 20px;
-    min-width: 250px;
+    min-width: 280px;
 }
 
 .sa-topbar-header h2 { 
@@ -58,7 +58,8 @@
 .sa-nav { 
     display: flex; 
     justify-content: center;
-    gap: 10px; /* Space between the two tabs */
+    align-items: center;
+    gap: 10px;
     height: 100%;
 }
 
@@ -88,13 +89,34 @@
     border-bottom-color: #38bdf8; 
 }
 
-/* Zone 3: External Actions (Right Aligned) */
+/* Zone 3: Actions (Right Aligned) */
 .sa-topbar-footer { 
     display: flex;
     align-items: center;
-    gap: 15px; /* Generous space between Menu Manager and Log Out */
-    min-width: 280px;
     justify-content: flex-end;
+}
+
+/* External Link Button */
+.sa-ext-btn {
+    background: #38bdf8;
+    color: #0f172a !important;
+    text-decoration: none !important;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.95em;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    margin-left: 15px;
+}
+
+.sa-ext-btn:hover {
+    background: #0ea5e9;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(56, 189, 248, 0.3);
 }
 
 .sa-logout-btn { 
@@ -115,14 +137,18 @@
     transform: translateY(-1px);
 }
 
-/* --- 3. Workspace Adjustments --- */
+/* --- 3. Workspace Area --- */
 .sa-content-area { 
     flex-grow: 1; 
-    padding: 35px; /* More padding in the main work area */
+    padding: 35px;
     background: #f8fafc; 
 }
 
-/* Shortcode UI Clean-up */
+.sa-tab-content { display: none; animation: fadeIn 0.4s ease; }
+.sa-tab-content.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Reclaim width from inner containers */
 .sa-content-area div[style*="background: #222"],
 .sa-content-area .cmp-no-print a[href*="logout"] { display: none !important; } 
 
