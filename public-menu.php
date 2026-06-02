@@ -71,7 +71,7 @@ function cmp_render_public_menu() {
         }
         .cmp-menu-tab-btn:hover { background: #e2e8f0; color: #0f172a; }
         .cmp-menu-tab-btn.active {
-            background: #0073aa;
+            background: #379237;
             color: #ffffff;
             box-shadow: 0 4px 8px rgba(0, 115, 170, 0.25);
             transform: scale(1.02);
