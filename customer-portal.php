@@ -9,8 +9,7 @@ add_action('wp_ajax_cmp_save_daily_log', 'cmp_ajax_save_daily_log');
 function cmp_ajax_save_daily_log() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
     global $wpdb;
-    date_default_timezone_set('Asia/Dubai');
-    
+
     if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
     $log_id       = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
@@ -18,6 +17,27 @@ function cmp_ajax_save_daily_log() {
     $target_date  = sanitize_text_field($_POST['date']);
     $is_admin     = current_user_can('manage_options') || current_user_can('foh_manager');
 
+    // Cut-off enforcement: customers cannot save tomorrow after the configured cutoff hour
+    if ( ! $is_admin ) {
+        $tz           = new DateTimeZone('Asia/Dubai');
+        $now          = new DateTime('now', $tz);
+        $current_hour = (int) $now->format('H');
+        $cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
+        $tomorrow     = ( clone $now )->modify('+1 day')->format('Y-m-d');
+        $day_after    = ( clone $now )->modify('+2 days')->format('Y-m-d');
+
+        $earliest_allowed = ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
+
+        if ( $target_date < $earliest_allowed ) {
+            wp_send_json_error(
+                'This date is no longer available. The cutoff time of ' .
+                str_pad($cutoff_hour, 2, '0', STR_PAD_LEFT) .
+                ':00 GST has passed. The earliest available date is ' .
+                date('D, d M Y', strtotime($earliest_allowed)) . '.'
+            );
+        }
+    }
+    
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
@@ -628,6 +648,11 @@ function cmp_render_customer_portal() {
                 var nextDate = new Date(selectedDate);
                 nextDate.setDate(nextDate.getDate() + 1);
                 var nextDateString = nextDate.toISOString().split('T')[0];
+
+                // Keep the date cascade aligned with the global cutoff floor
+                var globalFloor = "<?php echo esc_js($global_min_date); ?>";
+                if (nextDateString < globalFloor) nextDateString = globalFloor;
+
                 for(var i = rowNumber + 1; i <= (totalDays + 10); i++) { 
                     var targetInput = container.find('.cmp-date-picker[data-row="' + i + '"]');
                     if (targetInput.length) {
