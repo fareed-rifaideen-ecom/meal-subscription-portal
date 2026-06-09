@@ -340,6 +340,7 @@ function cmp_render_customer_portal() {
                 
                 <div style="flex:1; min-width:250px;">
                     <h3 style="margin:0 0 10px 0; color:#0073aa; font-size:1.3em;">Account Details</h3>
+                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> #<?php echo esc_html($sub->wc_order_id); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <?php echo $order ? esc_html($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : esc_html($current_user->display_name); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
