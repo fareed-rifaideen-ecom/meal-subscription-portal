@@ -357,6 +357,7 @@ function cmp_render_customer_portal() {
 
                 <div style="width: 100%; border-top: 1px solid #eee; margin-top: 10px; padding-top: 20px; display: flex; justify-content: space-between; align-items: center;">
                     <p style="color: <?php echo $note_color; ?>; font-size: 0.9em; font-weight: bold; margin: 0;"><em><?php echo $note_text; ?></em></p>
+                    <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_customer_csv&sub_id=' . $sub->id)); ?>" style="background:#1d6f42; color:#fff; padding:8px 15px; border-radius:4px; font-weight:bold; text-decoration:none; font-size:0.9em; margin-right:10px;">Export to Excel</a>
                     <a href="<?php echo $order ? $order->get_view_order_url() : '#'; ?>" target="_blank" style="background:#e2e8f0; color:#334155; padding:8px 15px; border-radius:4px; font-weight:bold; text-decoration:none; font-size:0.9em;">Download Receipt</a>
                 </div>
             </div>
