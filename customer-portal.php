@@ -742,3 +742,73 @@ function cmp_render_customer_portal() {
     <?php
     return ob_get_clean();
 }
+// ==========================================
+// 3. EXPORT CUSTOMER MEAL PLAN TO CSV
+// ==========================================
+add_action('wp_ajax_cmp_export_customer_csv', 'cmp_export_customer_csv');
+add_action('wp_ajax_nopriv_cmp_export_customer_csv', 'cmp_export_customer_csv');
+
+function cmp_export_customer_csv() {
+    if (!isset($_GET['sub_id'])) wp_die('No subscription ID provided.');
+    global $wpdb;
+    $sub_id = intval($_GET['sub_id']);
+    
+    $is_admin = current_user_can('manage_options') || current_user_can('foh_manager');
+    $user_id = get_current_user_id();
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $sub_id));
+    
+    // Security check: Must be admin or the owner of the subscription
+    if (!$sub || (!$is_admin && $sub->user_id != $user_id)) {
+        wp_die('Unauthorized Access');
+    }
+
+    $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
+    $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
+    $food_map = array(); 
+    foreach($foods as $f) { $food_map[$f->id] = $f->food_name; }
+
+    $is_juice = ($sub->allowed_categories === 'Juices');
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="Meal_Schedule_' . esc_attr(str_replace(' ', '_', $sub->plan_name)) . '.csv"');
+    $output = fopen('php://output', 'w');
+    fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM for Excel
+
+    if ($is_juice) {
+        fputcsv($output, array('Date', 'Juice 1', 'Juice 2', 'Juice 3', 'Chefs Choice', 'Delivery Status'));
+    } else {
+        fputcsv($output, array('Date', 'Breakfast', 'Lunch', 'Dinner', 'Snacks', 'Chefs Choice', 'Delivery Status'));
+    }
+
+    foreach ($logs as $log) {
+        $chefs_choice_text = $log->is_chefs_choice ? 'Yes' : 'No';
+        $status = $log->delivery_result ?: 'Pending';
+
+        if ($is_juice) {
+            fputcsv($output, array(
+                $log->target_date,
+                isset($food_map[$log->juice_1_id]) ? $food_map[$log->juice_1_id] : '',
+                isset($food_map[$log->juice_2_id]) ? $food_map[$log->juice_2_id] : '',
+                isset($food_map[$log->juice_3_id]) ? $food_map[$log->juice_3_id] : '',
+                $chefs_choice_text,
+                $status
+            ));
+        } else {
+            $snacks = array_filter(array(
+                isset($food_map[$log->snack_1_id]) ? $food_map[$log->snack_1_id] : '',
+                isset($food_map[$log->snack_2_id]) ? $food_map[$log->snack_2_id] : ''
+            ));
+            fputcsv($output, array(
+                $log->target_date,
+                isset($food_map[$log->breakfast_id]) ? $food_map[$log->breakfast_id] : '',
+                isset($food_map[$log->lunch_id]) ? $food_map[$log->lunch_id] : '',
+                isset($food_map[$log->dinner_id]) ? $food_map[$log->dinner_id] : '',
+                implode(' + ', $snacks),
+                $chefs_choice_text,
+                $status
+            ));
+        }
+    }
+    fclose($output);
+    exit;
+}
