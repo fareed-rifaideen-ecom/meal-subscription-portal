@@ -758,16 +758,38 @@ function cmp_export_customer_csv() {
     $user_id = get_current_user_id();
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $sub_id));
     
-    // Security check: Must be admin or the owner of the subscription
-    if (!$sub || (!$is_admin && $sub->user_id != $user_id)) {
-        wp_die('Unauthorized Access');
-    }
+    if (!$sub || (!$is_admin && $sub->user_id != $user_id)) wp_die('Unauthorized Access');
 
+    // Fetch Customer Details
+    $order = wc_get_order($sub->wc_order_id);
+    $user_info = get_userdata($sub->user_id);
+    
+    $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $user_info->display_name;
+    $email = $order ? $order->get_billing_email() : $user_info->user_email;
+    $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
+    
+    $timing = $order ? ($order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing')) : get_user_meta($sub->user_id, 'delivery_timing', true);
+    $time_slot = $order ? ($order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot')) : get_user_meta($sub->user_id, 'time_slot', true);
+    $method = $order ? ($order->get_meta('_cmp_logistics_method') ?: $order->get_meta('delivery_method')) : get_user_meta($sub->user_id, 'delivery_method', true);
+    $pickup = $order ? ($order->get_meta('_cmp_pickup_location') ?: $order->get_meta('pickup_location')) : get_user_meta($sub->user_id, 'pickup_location', true);
+    $allergies = $order ? $order->get_customer_note() : get_user_meta($sub->user_id, 'allergies', true);
+
+    $address = 'Address not provided';
+    if ($order) {
+        $addr_parts = array_filter([$order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city()]);
+        if (empty($addr_parts)) $addr_parts = array_filter([$order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city()]);
+        if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
+    }
+    if ($address === 'Address not provided') {
+        $addr_parts = array_filter([get_user_meta($sub->user_id, 'billing_address_1', true), get_user_meta($sub->user_id, 'billing_address_2', true), get_user_meta($sub->user_id, 'billing_city', true)]);
+        if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
+    }
+    $method_display = $method === 'Pickup' && !empty($pickup) ? $method . ' (' . $pickup . ')' : $method;
+
+    // Fetch Logs and Foods
     $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
     $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
-    $food_map = array(); 
-    foreach($foods as $f) { $food_map[$f->id] = $f->food_name; }
-
+    $food_map = array(); foreach($foods as $f) { $food_map[$f->id] = $f->food_name; }
     $is_juice = ($sub->allowed_categories === 'Juices');
 
     header('Content-Type: text/csv; charset=utf-8');
@@ -775,41 +797,28 @@ function cmp_export_customer_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM for Excel
 
-    if ($is_juice) {
-        fputcsv($output, array('Date', 'Juice 1', 'Juice 2', 'Juice 3', 'Chefs Choice', 'Delivery Status'));
-    } else {
-        fputcsv($output, array('Date', 'Breakfast', 'Lunch', 'Dinner', 'Snacks', 'Chefs Choice', 'Delivery Status'));
-    }
+    // Write Customer Info Block
+    fputcsv($output, array('CUSTOMER DETAILS'));
+    fputcsv($output, array('Name:', $full_name, 'Email:', $email, 'Phone:', $phone));
+    fputcsv($output, array('Address:', $address));
+    fputcsv($output, array('Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot));
+    fputcsv($output, array('Allergies:', $allergies ?: 'None'));
+    fputcsv($output, array('')); // Blank row separator
 
+    // Write Table Headers
+    if ($is_juice) { fputcsv($output, array('Date', 'Juice 1', 'Juice 2', 'Juice 3', 'Chefs Choice', 'Delivery Status')); } 
+    else { fputcsv($output, array('Date', 'Breakfast', 'Lunch', 'Dinner', 'Snacks', 'Chefs Choice', 'Delivery Status')); }
+
+    // Write Data
     foreach ($logs as $log) {
-        $chefs_choice_text = $log->is_chefs_choice ? 'Yes' : 'No';
+        $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
         $status = $log->delivery_result ?: 'Pending';
-
         if ($is_juice) {
-            fputcsv($output, array(
-                $log->target_date,
-                isset($food_map[$log->juice_1_id]) ? $food_map[$log->juice_1_id] : '',
-                isset($food_map[$log->juice_2_id]) ? $food_map[$log->juice_2_id] : '',
-                isset($food_map[$log->juice_3_id]) ? $food_map[$log->juice_3_id] : '',
-                $chefs_choice_text,
-                $status
-            ));
+            fputcsv($output, array($log->target_date, $food_map[$log->juice_1_id]??'', $food_map[$log->juice_2_id]??'', $food_map[$log->juice_3_id]??'', $chefs, $status));
         } else {
-            $snacks = array_filter(array(
-                isset($food_map[$log->snack_1_id]) ? $food_map[$log->snack_1_id] : '',
-                isset($food_map[$log->snack_2_id]) ? $food_map[$log->snack_2_id] : ''
-            ));
-            fputcsv($output, array(
-                $log->target_date,
-                isset($food_map[$log->breakfast_id]) ? $food_map[$log->breakfast_id] : '',
-                isset($food_map[$log->lunch_id]) ? $food_map[$log->lunch_id] : '',
-                isset($food_map[$log->dinner_id]) ? $food_map[$log->dinner_id] : '',
-                implode(' + ', $snacks),
-                $chefs_choice_text,
-                $status
-            ));
+            $snacks = array_filter([$food_map[$log->snack_1_id]??'', $food_map[$log->snack_2_id]??'']);
+            fputcsv($output, array($log->target_date, $food_map[$log->breakfast_id]??'', $food_map[$log->lunch_id]??'', $food_map[$log->dinner_id]??'', implode(' + ', $snacks), $chefs, $status));
         }
     }
-    fclose($output);
-    exit;
+    fclose($output); exit;
 }
