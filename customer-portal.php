@@ -253,14 +253,17 @@ function cmp_render_customer_portal() {
 
     <div class="cmp-dashboard-wrap">
         
-        <div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center;">
+<div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h1 style="margin:0; color:#fff;">Dashboard</h1>
                 <p style="margin:5px 0 0 0; color:#ccc;">Welcome back, <?php echo esc_html(wp_get_current_user()->display_name); ?></p>
             </div>
-            <a href="<?php echo wp_logout_url(get_permalink()); ?>" style="background:#dc3232; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Log Out</a>
+            <div style="display: flex; gap: 10px;">
+                <a id="cmp-global-export-btn" href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_customer_csv&sub_id=' . $subs[0]->id)); ?>" style="background:#1d6f42; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Export to Excel</a>
+                <a href="<?php echo wp_logout_url(get_permalink()); ?>" style="background:#dc3232; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Log Out</a>
+            </div>
         </div>
-
+        
         <div class="cmp-tab-nav">
             <?php 
             $first_tab = true;
