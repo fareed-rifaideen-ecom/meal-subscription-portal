@@ -168,7 +168,6 @@ function cmp_render_customer_portal() {
         
         .cmp-mobile-label { display: none; }
         .macro-mobile { display: none; }
-        /* FIXED: Removed nowrap and added word-wrap so long pending text breaks correctly */
         .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; }
 
         .cmp-wa-float {
@@ -185,7 +184,6 @@ function cmp_render_customer_portal() {
             .cmp-table th:nth-child(2) { width: 145px; } 
             .cmp-table th:nth-child(3) { width: 105px; } 
             .cmp-table th:last-child { width: 95px; } 
-            /* FIXED: Increased width to 110px to accommodate "Chef's Choice" cleanly */
             .cmp-table th:nth-last-child(2) { width: 110px; } 
             .cmp-table th:nth-last-child(3) { width: 155px; } 
             .cmp-stacked-snack { margin-bottom: 8px; }
@@ -253,7 +251,7 @@ function cmp_render_customer_portal() {
 
     <div class="cmp-dashboard-wrap">
         
-<div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+        <div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h1 style="margin:0; color:#fff;">Dashboard</h1>
                 <p style="margin:5px 0 0 0; color:#ccc;">Welcome back, <?php echo esc_html(wp_get_current_user()->display_name); ?></p>
@@ -423,11 +421,9 @@ function cmp_render_customer_portal() {
                             
                             if ($log && !$is_juice) {
                                 if ($saved_chefs_choice && !$is_chef_assigned) {
-                                    // Chef hasn't picked them yet (FIXED: Added breaks and sizing for clean text wrapping)
                                     $macros_desk = '<strong>' . esc_html($label_chefs_choice) . '</strong><br><span style="color:#d63638; font-size:0.9em;">(Pending)</span>';
                                     $macros_mob  = '<strong>' . esc_html($label_chefs_choice) . '</strong> <span style="color:#d63638;">(Pending)</span>';
                                 } else {
-                                    // Normal macro calculation (or Chef Assigned macro calculation)
                                     $cal=0; $fat=0; $carbs=0; $pro=0;
                                     $meal_ids = array($log->breakfast_id, $log->lunch_id, $log->dinner_id, $log->snack_1_id, $log->snack_2_id);
                                     foreach ($meal_ids as $m_id) {
@@ -442,7 +438,6 @@ function cmp_render_customer_portal() {
                                     $deskHtml = "<strong>Cal:</strong> {$cal}<br><strong>Fat:</strong> {$fat}g<br><strong>Carb:</strong> {$carbs}g<br><strong>Pro:</strong> {$pro}g";
                                     $mobHtml = '<div class="mob-grid"><div><strong>Cal:</strong> '.$cal.'</div><div><strong>Fat:</strong> '.$fat.'g</div><div><strong>Carb:</strong> '.$carbs.'g</div><div><strong>Pro:</strong> '.$pro.'g</div></div>';
 
-                                    // If Chef Assigned, add a visual badge so the customer knows
                                     if ($saved_chefs_choice && $is_chef_assigned) {
                                         $badge = '<div style="color:#379237; font-size:0.85em; font-weight:bold; margin-bottom:4px;">(Chef Assigned)</div>';
                                         $macros_desk = $badge . $deskHtml;
@@ -551,6 +546,13 @@ function cmp_render_customer_portal() {
         for (var i = 0; i < btns.length; i++) btns[i].classList.remove("active");
         document.getElementById(tabId).classList.add("active");
         evt.currentTarget.classList.add("active");
+
+        // Dynamically update the Global Export Button URL to match the active tab
+        var subId = tabId.replace('plan-tab-', '');
+        var exportBtn = document.getElementById('cmp-global-export-btn');
+        if (exportBtn) {
+            exportBtn.href = "<?php echo admin_url('admin-ajax.php?action=cmp_export_customer_csv&sub_id='); ?>" + subId;
+        }
     }
 
     jQuery(document).ready(function($) {
@@ -599,7 +601,6 @@ function cmp_render_customer_portal() {
             selects.each(function() { if ($(this).val() !== "") hasValues = true; });
 
             if (isChefsChoice && !hasValues) {
-                // FIXED: Included break tags and styling for cleanly wrapped JavaScript output
                 macroDisplay.html('<span class="macro-desktop"><strong>' + chefsChoiceLabel + '</strong><br><span style="color:#d63638; font-size:0.9em;">(Pending)</span></span><span class="macro-mobile"><strong>' + chefsChoiceLabel + '</strong> <span style="color:#d63638;">(Pending)</span></span>');
                 return;
             }
@@ -652,7 +653,6 @@ function cmp_render_customer_portal() {
                 nextDate.setDate(nextDate.getDate() + 1);
                 var nextDateString = nextDate.toISOString().split('T')[0];
 
-                // Keep the date cascade aligned with the global cutoff floor
                 var globalFloor = "<?php echo esc_js($global_min_date); ?>";
                 if (nextDateString < globalFloor) nextDateString = globalFloor;
 
@@ -678,7 +678,6 @@ function cmp_render_customer_portal() {
             
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
 
-            // STRICT VALIDATION: Block saving empty meals
             if (!isChefsChoice && !isAdminOverride) {
                 var missingSelections = false;
                 rowElement.find('select:not(:disabled)').each(function() {
@@ -745,6 +744,7 @@ function cmp_render_customer_portal() {
     <?php
     return ob_get_clean();
 }
+
 // ==========================================
 // 3. EXPORT CUSTOMER MEAL PLAN TO CSV
 // ==========================================
