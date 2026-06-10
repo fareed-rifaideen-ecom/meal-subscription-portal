@@ -16,10 +16,10 @@ function cmp_render_super_admin_portal() {
         <style>
             #cmp-sa-login label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; text-align: left; }
             #cmp-sa-login input[type="text"], #cmp-sa-login input[type="password"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-            #cmp-sa-login .login-submit input[type="submit"] { width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+            #cmp-sa-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; }
         </style>';
         return $custom_css . '<div style="max-width:400px; margin:50px auto; padding:30px; background:#fff; border-radius:8px; border:1px solid #ddd; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                    <h2 style="text-align:center; margin-top:0; color:#0f172a;">Super Admin Portal Login</h2>
+                    <h2 style="text-align:center; margin-top:0; color:#222;">Super Admin Portal Login</h2>
                     <p style="text-align:center; color:#666; margin-bottom:20px;">Secure access for authorized personnel only.</p>' 
                     . wp_login_form( $login_args ) . 
                 '</div>';
@@ -33,9 +33,6 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
-    // 3. ENQUEUE EXTERNAL STYLESHEET
-    wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
-
     // Grab current user and extract First Name (fallback to Display Name if First Name is blank)
     $current_user = wp_get_current_user();
     $first_name = !empty($current_user->user_firstname) ? $current_user->user_firstname : $current_user->display_name;
@@ -44,105 +41,55 @@ function cmp_render_super_admin_portal() {
     ?>
     
     <style>
-        .sa-dashboard-wrapper { 
-            background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; 
-            overflow: hidden; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05); 
-            font-family: inherit; margin: 20px auto; max-width: 1400px;
+        /* Base Nav Button Styles */
+        .sa-nav-btn { 
+            background: #475569; color: white; border: none; padding: 10px 20px; 
+            border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s; 
+            font-family: inherit; font-size: 0.9em; box-sizing: border-box;
         }
+        .sa-nav-btn:hover { background: #334155; }
         
-        /* Unified Topbar Layout */
-        .sa-topbar { 
-            background: #0f172a; padding: 15px 25px; display: flex; 
-            flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; 
-        }
+        /* Active State matches standard FOH Blue */
+        .sa-nav-btn.active { background: #0073aa; }
         
-        /* Left Side: Heading & User Info */
-        .sa-topbar-left { display: flex; align-items: baseline; gap: 15px; flex-wrap: wrap; }
-        .sa-topbar-left h2 { color: #f8fafc; margin: 0; font-size: 1.5rem; font-weight: bold; line-height: 1; }
-        .sa-topbar-left p { color: #94a3b8; margin: 0; font-size: 0.85rem; }
-        .sa-topbar-left p strong { color: #e2e8f0; }
-        
-        /* Right Side: 4 Access Buttons */
-        .sa-topbar-right { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-        
-        .sa-nav-btn, .sa-ext-btn, .sa-logout-btn { 
-            display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; 
-            border-radius: 6px; font-size: 0.95rem; font-weight: 600; text-decoration: none; 
-            border: none; cursor: pointer; transition: all 0.2s ease; box-sizing: border-box;
-            font-family: inherit; line-height: 1;
-        }
-        
-        /* Tab Buttons */
-        .sa-nav-btn { background: #1e293b; color: #cbd5e1; }
-        .sa-nav-btn:hover { background: #334155; color: #fff; }
-        .sa-nav-btn.active { background: #38bdf8; color: #0f172a; box-shadow: 0 4px 12px rgba(56,189,248,0.25); }
-        
-        /* External Link Button */
-        .sa-ext-btn { background: #10b981; color: #fff; }
-        .sa-ext-btn:hover { background: #059669; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,185,129,0.25); }
-        
-        /* Logout Button */
-        .sa-logout-btn { background: #ef4444; color: #fff; }
-        .sa-logout-btn:hover { background: #dc2626; }
-        
-        /* Content Area */
-        .sa-content-area { padding: 25px; min-height: 500px; background: #f8fafc; }
-        .sa-tab-content { display: none; animation: saFadeIn 0.3s ease-out forwards; }
+        .sa-tab-content { display: none; }
         .sa-tab-content.active { display: block; }
-        
-        @keyframes saFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        /* Responsive */
-        @media (max-width: 900px) { 
-            .sa-topbar { flex-direction: column; text-align: left; align-items: flex-start; } 
-            .sa-topbar-right { width: 100%; justify-content: flex-start; }
-            .sa-content-area { padding: 15px; }
-        }
 
         /* =========================================================
-           THE EXPERT FIX: PURE CSS INJECTION
-           These rules accurately hide the redundant FOH header and 
-           correct the search bar layout without altering foh-portal.php
+           PURE CSS INJECTION TO HIDE DUPLICATE HEADERS
+           This safely hides the internal headers of the FOH & Kitchen 
+           shortcodes so the Super Admin header acts as the master.
            ========================================================= */
-        #sa-foh > div > div:first-child { 
+        #sa-foh > div > div:first-child,
+        #sa-kitchen > div > div:first-child { 
             display: none !important; 
         }
-        #sa-foh > div > div[style*="background: #f8f9fa"] { 
-            border-radius: 8px !important; 
-            border-top: 1px solid #ddd !important; 
+        
+        /* Ensures the FOH search bar connects cleanly to the master header */
+        #sa-foh > div > div[style*="background: #f8f9fa"] {
+            border-radius: 0 0 8px 8px !important;
+            border-top: none !important;
         }
     </style>
 
-    <div class="sa-dashboard-wrapper">
-        <div class="sa-topbar">
+    <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
+        
+        <div style="background: #222; color: #fff; padding: 20px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             
-            <div class="sa-topbar-left">
-                <h2>Super Admin</h2>
-                <p>Logged in as: <strong><?php echo esc_html($first_name); ?></strong></p>
+            <div style="display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;">
+                <h2 style="margin: 0; color: #fff;">Super Admin</h2>
+                <span style="color: #ccc; font-size: 0.85em;">Logged in as: <strong><?php echo esc_html($first_name); ?></strong></span>
             </div>
             
-            <div class="sa-topbar-right">
-                <button class="sa-nav-btn active" data-target="sa-foh">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                    FOH Portal
-                </button>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="sa-nav-btn active" data-target="sa-foh">FOH Portal</button>
+                <button class="sa-nav-btn" data-target="sa-kitchen">Kitchen Report</button>
                 
-                <button class="sa-nav-btn" data-target="sa-kitchen">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10.4 12.6a2 2 0 1 1 3 3L8 21l-4 1 1-4Z"></path><path d="M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z"></path></svg>
-                    Kitchen Report
-                </button>
+                <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" style="background: #1d6f42; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; font-size: 0.9em; display: inline-flex; align-items: center;">Menu Manager</a>
                 
-                <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-ext-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-                    Menu Manager 
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                </a>
-
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-                    Log Out
-                </a>
+                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; font-size: 0.9em; display: inline-flex; align-items: center;">Log Out</a>
             </div>
+            
         </div>
 
         <div class="sa-content-area">
@@ -153,6 +100,7 @@ function cmp_render_super_admin_portal() {
                 <?php echo do_shortcode('[meal_kitchen_portal]'); ?>
             </div>
         </div>
+
     </div>
 
     <script>
@@ -160,8 +108,10 @@ function cmp_render_super_admin_portal() {
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
+        // Use localStorage to remember the active tab
         let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
 
+        // Safety check: if the stored tab was 'sa-menu' (which is now external), default back to 'sa-foh'
         if (activeTab === 'sa-menu') { activeTab = 'sa-foh'; }
 
         function activateTab(targetId) {
@@ -184,8 +134,10 @@ function cmp_render_super_admin_portal() {
             localStorage.setItem('cmpSuperAdminTab', targetId);
         }
 
+        // Initialize view
         activateTab(activeTab);
 
+        // Click listeners
         navBtns.forEach(btn => {
             btn.addEventListener('click', function() {
                 activateTab(this.getAttribute('data-target'));
