@@ -33,7 +33,7 @@ function cmp_render_super_admin_portal() {
                 </div>';
     }
 
-    // 3. ENQUEUE EXTERNAL STYLESHEET (If you have one)
+    // 3. ENQUEUE EXTERNAL STYLESHEET
     wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
 
     // Grab current user and extract First Name (fallback to Display Name if First Name is blank)
@@ -134,23 +134,51 @@ function cmp_render_super_admin_portal() {
 
         <div class="sa-content-area">
             <div id="sa-foh" class="sa-tab-content active">
-                <?php echo do_shortcode('[meal_foh_portal is_embedded="true"]'); ?>
+                <?php echo do_shortcode('[meal_foh_portal]'); ?>
             </div>
             <div id="sa-kitchen" class="sa-tab-content">
-                <?php echo do_shortcode('[meal_kitchen_portal is_embedded="true"]'); ?>
+                <?php echo do_shortcode('[meal_kitchen_portal]'); ?>
             </div>
         </div>
     </div>
 
     <script>
     document.addEventListener("DOMContentLoaded", function() {
+        
+        // ========================================================
+        // THE EXPERT FIX: DYNAMICALLY REMOVE DUPLICATE FOH HEADER
+        // ========================================================
+        setTimeout(function() {
+            const fohContainer = document.querySelector('#sa-foh > div');
+            if (fohContainer) {
+                // Find and hide the black FOH header by checking its inline background color
+                const duplicateHeader = Array.from(fohContainer.children).find(el => {
+                    const styleStr = el.getAttribute('style') || '';
+                    return styleStr.includes('background: #222') || styleStr.includes('background: rgb(34, 34, 34)');
+                });
+                
+                if (duplicateHeader) {
+                    duplicateHeader.style.display = 'none';
+                }
+                
+                // Find the search bar block and fix its top borders so it sits perfectly
+                const searchBar = Array.from(fohContainer.children).find(el => {
+                    const styleStr = el.getAttribute('style') || '';
+                    return styleStr.includes('background: #f8f9fa') || styleStr.includes('background: rgb(248, 249, 250)');
+                });
+                
+                if (searchBar) {
+                    searchBar.style.borderRadius = '8px';
+                    searchBar.style.borderTop = '1px solid #ddd';
+                }
+            }
+        }, 50); // Run instantly after DOM generation
+        // ========================================================
+
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
-        // Use localStorage to remember the active tab
         let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
-
-        // Safety check: if the stored tab was 'sa-menu' (which is now external), default back to 'sa-foh'
         if (activeTab === 'sa-menu') { activeTab = 'sa-foh'; }
 
         function activateTab(targetId) {
@@ -173,10 +201,8 @@ function cmp_render_super_admin_portal() {
             localStorage.setItem('cmpSuperAdminTab', targetId);
         }
 
-        // Initialize view
         activateTab(activeTab);
 
-        // Click listeners
         navBtns.forEach(btn => {
             btn.addEventListener('click', function() {
                 activateTab(this.getAttribute('data-target'));
