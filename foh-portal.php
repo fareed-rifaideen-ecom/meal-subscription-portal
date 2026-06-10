@@ -45,8 +45,9 @@ function cmp_render_foh_portal() {
         $notification = '<div style="background:#cce5ff; color:#004085; padding:12px; border-radius:4px; margin-bottom:20px;">Subscription is now ' . esc_html($_POST['new_status']) . '.</div>';
     }
 
-    $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID ORDER BY s.id DESC");
-    $unique_plans = $wpdb->get_col("SELECT DISTINCT plan_name FROM $table_subs ORDER BY plan_name ASC");
+    // EXCLUDE PENDING PAYMENTS FROM DASHBOARD
+    $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
+    $unique_plans = $wpdb->get_col("SELECT DISTINCT plan_name FROM $table_subs WHERE status != 'pending' ORDER BY plan_name ASC");
     
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
     $today = date('Y-m-d H:i:s');
@@ -122,6 +123,7 @@ function cmp_render_foh_portal() {
                 <table class="sub-table">
                     <thead>
                         <tr>
+                            <th>Order ID</th>
                             <th>Customer Info</th>
                             <th>Plan Details</th>
                             <th style="text-align: center;">Tracking Metrics</th>
@@ -131,7 +133,7 @@ function cmp_render_foh_portal() {
                     </thead>
                     <tbody>
                         <?php if(empty($tabs[$tab_key])): ?>
-                            <tr class="empty-row"><td colspan="5" style="text-align:center; padding:30px; color:#666;">No subscriptions found in this category.</td></tr>
+                            <tr class="empty-row"><td colspan="6" style="text-align:center; padding:30px; color:#666;">No subscriptions found in this category.</td></tr>
                         <?php else: foreach($tabs[$tab_key] as $sub): 
                             $order = wc_get_order($sub->wc_order_id);
                             $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $sub->display_name;
@@ -142,6 +144,9 @@ function cmp_render_foh_portal() {
                             $plan_data = esc_attr($sub->plan_name);
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
+                            
+                            <td style="font-size: 1.1em; font-weight: bold; color: #334155;">#<?php echo esc_html($sub->wc_order_id); ?></td>
+                            
                             <td>
                                 <strong style="font-size: 1.1em; color: #0073aa;"><?php echo esc_html($full_name ?: 'Customer'); ?></strong><br>
                                 <span style="color: #555;"><?php echo esc_html($sub->user_email); ?></span><br>
@@ -235,7 +240,8 @@ function cmp_render_foh_portal() {
         if (!noResultsRow) {
             noResultsRow = document.createElement('tr');
             noResultsRow.className = 'no-search-results';
-            noResultsRow.innerHTML = '<td colspan="5" style="text-align:center; padding:30px; color:#666;">No customers match your search criteria.</td>';
+            // CHANGED COLSPAN TO 6
+            noResultsRow.innerHTML = '<td colspan="6" style="text-align:center; padding:30px; color:#666;">No customers match your search criteria.</td>';
             document.querySelector('#' + currentTab + ' tbody').appendChild(noResultsRow);
         }
         
