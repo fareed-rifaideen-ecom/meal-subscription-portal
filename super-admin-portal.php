@@ -98,6 +98,19 @@ function cmp_render_super_admin_portal() {
             .sa-topbar-right { width: 100%; justify-content: flex-start; }
             .sa-content-area { padding: 15px; }
         }
+
+        /* =========================================================
+           THE EXPERT FIX: PURE CSS INJECTION
+           These rules accurately hide the redundant FOH header and 
+           correct the search bar layout without altering foh-portal.php
+           ========================================================= */
+        #sa-foh > div > div:first-child { 
+            display: none !important; 
+        }
+        #sa-foh > div > div[style*="background: #f8f9fa"] { 
+            border-radius: 8px !important; 
+            border-top: 1px solid #ddd !important; 
+        }
     </style>
 
     <div class="sa-dashboard-wrapper">
@@ -144,41 +157,11 @@ function cmp_render_super_admin_portal() {
 
     <script>
     document.addEventListener("DOMContentLoaded", function() {
-        
-        // ========================================================
-        // THE EXPERT FIX: DYNAMICALLY REMOVE DUPLICATE FOH HEADER
-        // ========================================================
-        setTimeout(function() {
-            const fohContainer = document.querySelector('#sa-foh > div');
-            if (fohContainer) {
-                // Find and hide the black FOH header by checking its inline background color
-                const duplicateHeader = Array.from(fohContainer.children).find(el => {
-                    const styleStr = el.getAttribute('style') || '';
-                    return styleStr.includes('background: #222') || styleStr.includes('background: rgb(34, 34, 34)');
-                });
-                
-                if (duplicateHeader) {
-                    duplicateHeader.style.display = 'none';
-                }
-                
-                // Find the search bar block and fix its top borders so it sits perfectly
-                const searchBar = Array.from(fohContainer.children).find(el => {
-                    const styleStr = el.getAttribute('style') || '';
-                    return styleStr.includes('background: #f8f9fa') || styleStr.includes('background: rgb(248, 249, 250)');
-                });
-                
-                if (searchBar) {
-                    searchBar.style.borderRadius = '8px';
-                    searchBar.style.borderTop = '1px solid #ddd';
-                }
-            }
-        }, 50); // Run instantly after DOM generation
-        // ========================================================
-
         const navBtns = document.querySelectorAll('.sa-nav-btn');
         const contents = document.querySelectorAll('.sa-tab-content');
         
         let activeTab = localStorage.getItem('cmpSuperAdminTab') || 'sa-foh';
+
         if (activeTab === 'sa-menu') { activeTab = 'sa-foh'; }
 
         function activateTab(targetId) {
