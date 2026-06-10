@@ -36,9 +36,9 @@ function cmp_render_super_admin_portal() {
     // 3. ENQUEUE EXTERNAL STYLESHEET (If you have one)
     wp_enqueue_style( 'cmp-super-admin-css', plugin_dir_url( __FILE__ ) . 'assets/sa-style.css', array(), time() );
 
+    // Grab current user and extract First Name (fallback to Display Name if First Name is blank)
     $current_user = wp_get_current_user();
-    // Extract first name, fallback to first word of display name if first name is empty
-    $first_name = !empty($current_user->user_firstname) ? $current_user->user_firstname : explode(' ', $current_user->display_name)[0];
+    $first_name = !empty($current_user->user_firstname) ? $current_user->user_firstname : $current_user->display_name;
 
     ob_start();
     ?>
@@ -49,32 +49,30 @@ function cmp_render_super_admin_portal() {
             overflow: hidden; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05); 
             font-family: inherit; margin: 20px auto; max-width: 1400px;
         }
+        
+        /* Unified Topbar Layout */
         .sa-topbar { 
-            background: #0f172a; padding: 20px 30px; display: flex; 
+            background: #0f172a; padding: 15px 25px; display: flex; 
             flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; 
         }
         
-        /* Heading and User Info */
-        .sa-topbar-header h2 { 
-            color: #f8fafc; margin: 0 0 5px 0; font-size: 1.6rem; 
-            display: flex; align-items: center; gap: 10px; line-height: 1;
-        }
-        .sa-topbar-header p { 
-            color: #94a3b8; margin: 0; font-size: 0.85rem; /* Made text smaller as requested */
-        }
-        .sa-topbar-header p strong { color: #e2e8f0; }
+        /* Left Side: Heading & User Info */
+        .sa-topbar-left { display: flex; align-items: baseline; gap: 15px; flex-wrap: wrap; }
+        .sa-topbar-left h2 { color: #f8fafc; margin: 0; font-size: 1.5rem; font-weight: bold; line-height: 1; }
+        .sa-topbar-left p { color: #94a3b8; margin: 0; font-size: 0.85rem; }
+        .sa-topbar-left p strong { color: #e2e8f0; }
         
-        /* Unified Button Group */
-        .sa-nav { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: flex-end; flex: 1; }
+        /* Right Side: 4 Access Buttons */
+        .sa-topbar-right { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
         
         .sa-nav-btn, .sa-ext-btn, .sa-logout-btn { 
-            display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; 
+            display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; 
             border-radius: 6px; font-size: 0.95rem; font-weight: 600; text-decoration: none; 
             border: none; cursor: pointer; transition: all 0.2s ease; box-sizing: border-box;
             font-family: inherit; line-height: 1;
         }
         
-        /* Internal Tab Buttons */
+        /* Tab Buttons */
         .sa-nav-btn { background: #1e293b; color: #cbd5e1; }
         .sa-nav-btn:hover { background: #334155; color: #fff; }
         .sa-nav-btn.active { background: #38bdf8; color: #0f172a; box-shadow: 0 4px 12px rgba(56,189,248,0.25); }
@@ -85,7 +83,7 @@ function cmp_render_super_admin_portal() {
         
         /* Logout Button */
         .sa-logout-btn { background: #ef4444; color: #fff; }
-        .sa-logout-btn:hover { background: #dc2626; transform: translateY(-2px); }
+        .sa-logout-btn:hover { background: #dc2626; }
         
         /* Content Area */
         .sa-content-area { padding: 25px; min-height: 500px; background: #f8fafc; }
@@ -94,11 +92,10 @@ function cmp_render_super_admin_portal() {
         
         @keyframes saFadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* Responsive adjustments */
+        /* Responsive */
         @media (max-width: 900px) { 
-            .sa-topbar { flex-direction: column; text-align: center; } 
-            .sa-topbar-header h2 { justify-content: center; }
-            .sa-nav { justify-content: center; }
+            .sa-topbar { flex-direction: column; text-align: left; align-items: flex-start; } 
+            .sa-topbar-right { width: 100%; justify-content: flex-start; }
             .sa-content-area { padding: 15px; }
         }
     </style>
@@ -106,15 +103,12 @@ function cmp_render_super_admin_portal() {
     <div class="sa-dashboard-wrapper">
         <div class="sa-topbar">
             
-            <div class="sa-topbar-header">
-                <h2>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                    Super Admin
-                </h2>
+            <div class="sa-topbar-left">
+                <h2>Super Admin</h2>
                 <p>Logged in as: <strong><?php echo esc_html($first_name); ?></strong></p>
             </div>
             
-            <div class="sa-nav">
+            <div class="sa-topbar-right">
                 <button class="sa-nav-btn active" data-target="sa-foh">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                     FOH Portal
@@ -128,15 +122,14 @@ function cmp_render_super_admin_portal() {
                 <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-ext-btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
                     Menu Manager 
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                 </a>
-                
+
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" class="sa-logout-btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
                     Log Out
                 </a>
             </div>
-            
         </div>
 
         <div class="sa-content-area">
