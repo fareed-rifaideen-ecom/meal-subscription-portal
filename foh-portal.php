@@ -7,6 +7,29 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 // ==========================================
 add_shortcode( 'meal_foh_portal', 'cmp_render_foh_portal' );
 
+// 1. AJAX HANDLER: Update Expiry Date
+add_action('wp_ajax_cmp_foh_update_expiry', 'cmp_ajax_foh_update_expiry');
+function cmp_ajax_foh_update_expiry() {
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) ) { wp_send_json_error('Access Denied'); }
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $wpdb->update($table_subs, array('expiry_date' => sanitize_text_field($_POST['new_expiry']) . ' 23:59:59'), array('id' => intval($_POST['sub_id'])));
+    wp_send_json_success();
+}
+
+// 2. AJAX HANDLER: Toggle Pause/Resume Status
+add_action('wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status');
+function cmp_ajax_foh_toggle_status() {
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) ) { wp_send_json_error('Access Denied'); }
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $wpdb->update($table_subs, array('status' => sanitize_text_field($_POST['new_status'])), array('id' => intval($_POST['sub_id'])));
+    wp_send_json_success();
+}
+
+
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
 
@@ -33,17 +56,6 @@ function cmp_render_foh_portal() {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
-    $notification = '';
-
-    // Action Handlers
-    if ( isset($_POST['update_expiry']) && isset($_POST['sub_id']) && isset($_POST['new_expiry']) ) {
-        $wpdb->update($table_subs, array('expiry_date' => sanitize_text_field($_POST['new_expiry']) . ' 23:59:59'), array('id' => intval($_POST['sub_id'])));
-        $notification = '<div style="background:#d4edda; color:#155724; padding:12px; border-radius:4px; margin-bottom:20px;">Expiry date updated!</div>';
-    }
-    if ( isset($_POST['toggle_status']) && isset($_POST['sub_id']) && isset($_POST['new_status']) ) {
-        $wpdb->update($table_subs, array('status' => sanitize_text_field($_POST['new_status'])), array('id' => intval($_POST['sub_id'])));
-        $notification = '<div style="background:#cce5ff; color:#004085; padding:12px; border-radius:4px; margin-bottom:20px;">Subscription is now ' . esc_html($_POST['new_status']) . '.</div>';
-    }
 
     // EXCLUDE PENDING PAYMENTS FROM DASHBOARD
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
@@ -94,8 +106,6 @@ function cmp_render_foh_portal() {
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
-
-        <?php echo $notification; ?>
 
         <div style="background: #f8f9fa; padding: 15px; border-radius: 0 0 8px 8px; border: 1px solid #ddd; border-top: none; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
             <div style="flex: 2; min-width: 250px;">
@@ -168,18 +178,20 @@ function cmp_render_foh_portal() {
                             </td>
                             <td>
                                 <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
-                                <form method="POST" style="display: flex; gap: 5px; margin-top: 5px;">
+                                <!-- AJAX Expiry Form -->
+                                <form class="ajax-expiry-form" style="display: flex; gap: 5px; margin-top: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                     <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
-                                    <button type="submit" name="update_expiry" style="background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;">Update</button>
+                                    <button type="submit" class="expiry-btn" style="background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
                                 </form>
                             </td>
                             <td style="text-align: center;">
                                 <?php if($tab_key !== 'inactive'): ?>
-                                <form method="POST" style="margin-bottom: 5px;">
+                                <!-- AJAX Status Toggle Form -->
+                                <form class="ajax-status-form" style="margin-bottom: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                     <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                    <button type="submit" name="toggle_status" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box;">
+                                    <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;">
                                         <?php echo $is_paused ? 'Resume Plan' : 'Pause Plan'; ?>
                                     </button>
                                 </form>
@@ -199,6 +211,112 @@ function cmp_render_foh_portal() {
     </div>
 
     <script>
+    // Variables for AJAX requests
+    const fohAjaxUrl = '<?php echo admin_url("admin-ajax.php"); ?>';
+    const fohNonce   = '<?php echo wp_create_nonce("cmp_foh_nonce"); ?>';
+
+    document.addEventListener("DOMContentLoaded", function() {
+        
+        // 1. AJAX for Expiry Date Updates
+        document.querySelectorAll('.ajax-expiry-form').forEach(form => {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const btn = this.querySelector('.expiry-btn');
+                const subId = this.querySelector('input[name="sub_id"]').value;
+                const newExpiry = this.querySelector('input[name="new_expiry"]').value;
+
+                const originalText = btn.innerText;
+                const originalBg = btn.style.background;
+
+                btn.innerText = '...';
+                btn.disabled = true;
+
+                const formData = new URLSearchParams();
+                formData.append('action', 'cmp_foh_update_expiry');
+                formData.append('nonce', fohNonce);
+                formData.append('sub_id', subId);
+                formData.append('new_expiry', newExpiry);
+
+                fetch(fohAjaxUrl, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(response => {
+                    if(response.success) {
+                        btn.innerText = '✓ Saved';
+                        btn.style.background = '#46b450';
+                        setTimeout(() => {
+                            btn.innerText = originalText;
+                            btn.style.background = originalBg;
+                            btn.disabled = false;
+                        }, 2000);
+                    } else {
+                        alert('Error updating expiry.');
+                        btn.innerText = originalText;
+                        btn.disabled = false;
+                    }
+                }).catch(() => {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                });
+            });
+        });
+
+        // 2. AJAX for Pause/Resume Toggles
+        document.querySelectorAll('.ajax-status-form').forEach(form => {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const btn = this.querySelector('.status-btn');
+                const subId = this.querySelector('input[name="sub_id"]').value;
+                const statusInput = this.querySelector('input[name="new_status"]');
+                const newStatus = statusInput.value;
+
+                btn.disabled = true;
+                btn.style.opacity = '0.7';
+
+                const formData = new URLSearchParams();
+                formData.append('action', 'cmp_foh_toggle_status');
+                formData.append('nonce', fohNonce);
+                formData.append('sub_id', subId);
+                formData.append('new_status', newStatus);
+
+                fetch(fohAjaxUrl, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(response => {
+                    if(response.success) {
+                        if (newStatus === 'active') {
+                            btn.innerText = 'Pause Plan';
+                            btn.style.background = '#dba617';
+                            statusInput.value = 'paused';
+                        } else {
+                            btn.innerText = 'Resume Plan';
+                            btn.style.background = '#0073aa';
+                            statusInput.value = 'active';
+                        }
+                        btn.style.opacity = '1';
+                        btn.disabled = false;
+                    } else {
+                        alert('Error updating status.');
+                        btn.style.opacity = '1';
+                        btn.disabled = false;
+                    }
+                }).catch(() => {
+                    btn.style.opacity = '1';
+                    btn.disabled = false;
+                });
+            });
+        });
+
+        // Existing Pagination & Search Logic
+        document.getElementById('fohSearch').addEventListener('keyup', function() {
+            currentPage = 1;
+            renderTable();
+        });
+        document.getElementById('fohPlanFilter').addEventListener('change', function() {
+            currentPage = 1;
+            renderTable();
+        });
+        renderTable();
+    });
+
     const rowsPerPage = 10;
     let currentPage = 1;
     let currentTab = 'active-tab';
@@ -240,7 +358,6 @@ function cmp_render_foh_portal() {
         if (!noResultsRow) {
             noResultsRow = document.createElement('tr');
             noResultsRow.className = 'no-search-results';
-            // CHANGED COLSPAN TO 6
             noResultsRow.innerHTML = '<td colspan="6" style="text-align:center; padding:30px; color:#666;">No customers match your search criteria.</td>';
             document.querySelector('#' + currentTab + ' tbody').appendChild(noResultsRow);
         }
@@ -281,18 +398,6 @@ function cmp_render_foh_portal() {
             paginationContainer.appendChild(btn);
         }
     }
-
-    document.addEventListener("DOMContentLoaded", function() {
-        document.getElementById('fohSearch').addEventListener('keyup', function() {
-            currentPage = 1;
-            renderTable();
-        });
-        document.getElementById('fohPlanFilter').addEventListener('change', function() {
-            currentPage = 1;
-            renderTable();
-        });
-        renderTable();
-    });
     </script>
     <?php
     return ob_get_clean();
