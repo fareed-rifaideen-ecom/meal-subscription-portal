@@ -379,7 +379,7 @@ function cmp_render_kitchen_portal() {
                                 <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                 
                                 <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">
-                                    Meal Selection Date: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
+                                    Eating on: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
                                 </span>
                                 <br>
                                 
