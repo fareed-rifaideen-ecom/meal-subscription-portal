@@ -15,7 +15,6 @@ function cmp_ajax_kitchen_action() {
     $field = sanitize_text_field($_POST['field']);
     $value = sanitize_text_field($_POST['value']);
     
-    // UPDATED: Treat menu_manager as an Admin for overrides
     $is_admin = current_user_can('manage_options') || current_user_can('menu_manager');
     $is_chef = current_user_can('kitchen_staff');
     $is_foh = current_user_can('foh_manager');
@@ -35,13 +34,11 @@ function cmp_ajax_kitchen_action() {
     wp_send_json_success();
 }
 
-// AJAX HANDLER TO SAVE CHEF'S CHOICE ASSIGNMENTS
 add_action('wp_ajax_cmp_assign_chef_meals', 'cmp_ajax_assign_chef_meals');
 function cmp_ajax_assign_chef_meals() {
     check_ajax_referer('cmp_kitchen_nonce', 'nonce');
     global $wpdb;
     
-    // UPDATED: Allow menu_manager to assign meals
     if (!current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('menu_manager')) {
         wp_send_json_error('Permission Denied');
     }
@@ -64,7 +61,6 @@ function cmp_ajax_assign_chef_meals() {
 
 add_action('wp_ajax_cmp_export_kitchen_csv', 'cmp_export_kitchen_csv');
 function cmp_export_kitchen_csv() {
-    // UPDATED: Allow menu_manager to export the CSV
     if (!is_user_logged_in() || (!current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('foh_manager') && !current_user_can('menu_manager'))) {
         wp_die('Permission Denied');
     }
@@ -72,14 +68,16 @@ function cmp_export_kitchen_csv() {
     global $wpdb;
     $prep_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
     
-    // FETCH allowed_categories alongside other data
+    // FETCH 3-DAY WINDOW TO ALLOW FOR TIME SHIFTING
+    $end_date = date('Y-m-d', strtotime($prep_date . ' + 2 days'));
+    
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date = %s AND l.is_locked = 1", 
-        $prep_date
+         WHERE l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1", 
+        $prep_date, $end_date
     ) );
 
     $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
@@ -90,7 +88,7 @@ function cmp_export_kitchen_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Food / Meals', 'Dispatched', 'Delivery Result', 'POS Check'));
+    fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Food / Meals', 'Dispatched', 'Delivery Result', 'POS Check'));
 
     foreach ($logs as $log) {
         $order = wc_get_order($log->wc_order_id);
@@ -99,10 +97,22 @@ function cmp_export_kitchen_csv() {
         $email = $order ? $order->get_billing_email() : $log->user_email;
         $phone = $order ? $order->get_billing_phone() : get_user_meta($log->user_id, 'billing_phone', true);
 
-        // BULLETPROOF FETCHING
         $timing = '';
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
+
+        // --- TIME SHIFT MATH FOR EXPORT ---
+        $days_to_subtract = 1; // Default to Same Day
+        if (stripos($timing, 'Day Before') !== false) {
+            $days_to_subtract = 2;
+        }
+        $calculated_prep_date = date('Y-m-d', strtotime($log->target_date . " -{$days_to_subtract} days"));
+        
+        // If it doesn't belong on today's prep list, skip it!
+        if ($calculated_prep_date !== $prep_date) {
+            continue;
+        }
+        // ----------------------------------
 
         $time_slot = '';
         if ($order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
@@ -133,7 +143,6 @@ function cmp_export_kitchen_csv() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        // Chef's Choice assignment logic for CSV export
         $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
 
@@ -156,7 +165,7 @@ function cmp_export_kitchen_csv() {
         $meals_formatted = implode("\n", $meals_list); 
 
         fputcsv($output, array(
-            $full_name, $email, $phone, $address, $method, $timing, $time_slot, $allergies,
+            $full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies,
             $log->plan_name, $meals_formatted, $log->dispatch_status ? 'Yes' : 'No',
             $log->delivery_result ?: 'Pending', $log->pos_updated ? 'Yes' : 'No'
         ));
@@ -178,7 +187,6 @@ function cmp_render_kitchen_portal() {
         return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">Kitchen Portal</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with your staff account.</p>' . wp_login_form( $login_args ) . '</div>';
     }
 
-    // UPDATED: Treat menu_manager as an Admin for page view access
     $is_admin = current_user_can('manage_options') || current_user_can('menu_manager');
     $is_chef = current_user_can('kitchen_staff');
     $is_foh = current_user_can('foh_manager');
@@ -190,14 +198,17 @@ function cmp_render_kitchen_portal() {
     global $wpdb;
     $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
 
-    // FETCH allowed_categories alongside other data
+    // FETCH 3-DAY WINDOW TO ALLOW FOR TIME SHIFTING
+    $end_date = date('Y-m-d', strtotime($selected_date . ' + 2 days'));
+
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date = %s AND l.is_locked = 1", 
-        $selected_date
+         WHERE l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 
+         ORDER BY l.target_date ASC", 
+        $selected_date, $end_date
     ) );
 
     $foods = $wpdb->get_results("SELECT id, food_name, category_name FROM {$wpdb->prefix}cmp_foods WHERE is_active = 1 ORDER BY category_name, food_name");
@@ -216,6 +227,19 @@ function cmp_render_kitchen_portal() {
         $timing = '';
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
+
+        // --- TIME SHIFT MATH FOR KITCHEN UI ---
+        $days_to_subtract = 1; // Default to Same Day
+        if (stripos($timing, 'Day Before') !== false) {
+            $days_to_subtract = 2;
+        }
+        $calculated_prep_date = date('Y-m-d', strtotime($log->target_date . " -{$days_to_subtract} days"));
+        
+        // If it doesn't belong on today's prep list, skip it!
+        if ($calculated_prep_date !== $selected_date) {
+            continue;
+        }
+        // --------------------------------------
 
         $time_slot = '';
         if ($order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
@@ -246,7 +270,6 @@ function cmp_render_kitchen_portal() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        // Display Meal Logic (Shared with CSV logic)
         $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
 
@@ -282,6 +305,7 @@ function cmp_render_kitchen_portal() {
             'is_chefs_choice' => $log->is_chefs_choice,
             'is_assigned' => $is_assigned,
             'allowed_categories' => $log->allowed_categories,
+            'target_date' => $log->target_date, // Added for UI Badge
             'raw_log' => $log
         );
     }
@@ -328,7 +352,7 @@ function cmp_render_kitchen_portal() {
         </div>
 
         <?php if(empty($customers)): ?>
-            <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc;">No orders found for this date.</p>
+            <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc;">No orders found for this prep date.</p>
         <?php else: ?>
             <div style="overflow-x: auto;">
                 <table class="k-table">
@@ -352,7 +376,12 @@ function cmp_render_kitchen_portal() {
                         ?>
                         <tr>
                             <td>
-                                <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
+                                <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                
+                                <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">
+                                    Eating On: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
+                                </span>
+                                <br>
                                 
                                 <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;">
                                     <svg xmlns="http://www.w3.org/2000/svg" style="width: 14px !important; height: 14px !important; flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
