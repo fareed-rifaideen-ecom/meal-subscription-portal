@@ -44,6 +44,30 @@ function cmp_ajax_assign_chef_meals() {
     }
     
     $log_id = intval($_POST['log_id']);
+
+    // --- NEW: BACKEND CHEF QUOTA ENFORCEMENT ---
+    $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
+    if ($log_row) {
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name, allowed_categories FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id));
+        if ($sub) {
+            $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
+            preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
+            $allowed_quota = isset($m[1]) ? intval($m[1]) : 0;
+
+            if (!$is_juice && $allowed_quota > 0) {
+                $submitted_count = 0;
+                if (!empty($_POST['breakfast'])) $submitted_count++;
+                if (!empty($_POST['lunch'])) $submitted_count++;
+                if (!empty($_POST['dinner'])) $submitted_count++;
+
+                if ($submitted_count > $allowed_quota) {
+                    wp_send_json_error("Quota Exceeded! This customer's plan only allows {$allowed_quota} main meal(s).");
+                }
+            }
+        }
+    }
+    // --------------------------------------------
+
     $data = array(
         'breakfast_id' => !empty($_POST['breakfast']) ? intval($_POST['breakfast']) : null,
         'lunch_id'     => !empty($_POST['lunch']) ? intval($_POST['lunch']) : null,
@@ -101,18 +125,14 @@ function cmp_export_kitchen_csv() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        // --- TIME SHIFT MATH FOR EXPORT ---
-        $days_to_subtract = 1; // Default to Same Day
+        // TIME SHIFT MATH FOR EXPORT
+        $days_to_subtract = 1; 
         if (stripos($timing, 'Day Before') !== false) {
             $days_to_subtract = 2;
         }
         $calculated_prep_date = date('Y-m-d', strtotime($log->target_date . " -{$days_to_subtract} days"));
         
-        // If it doesn't belong on today's prep list, skip it!
-        if ($calculated_prep_date !== $prep_date) {
-            continue;
-        }
-        // ----------------------------------
+        if ($calculated_prep_date !== $prep_date) { continue; }
 
         $time_slot = '';
         if ($order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
@@ -198,7 +218,6 @@ function cmp_render_kitchen_portal() {
     global $wpdb;
     $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
 
-    // FETCH 3-DAY WINDOW TO ALLOW FOR TIME SHIFTING
     $end_date = date('Y-m-d', strtotime($selected_date . ' + 2 days'));
 
     $logs = $wpdb->get_results( $wpdb->prepare(
@@ -223,23 +242,18 @@ function cmp_render_kitchen_portal() {
         $email = $order ? $order->get_billing_email() : $log->user_email;
         $phone = $order ? $order->get_billing_phone() : get_user_meta($log->user_id, 'billing_phone', true);
 
-        // BULLETPROOF FETCHING
         $timing = '';
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        // --- TIME SHIFT MATH FOR KITCHEN UI ---
-        $days_to_subtract = 1; // Default to Same Day
+        // TIME SHIFT MATH FOR KITCHEN UI
+        $days_to_subtract = 1; 
         if (stripos($timing, 'Day Before') !== false) {
             $days_to_subtract = 2;
         }
         $calculated_prep_date = date('Y-m-d', strtotime($log->target_date . " -{$days_to_subtract} days"));
         
-        // If it doesn't belong on today's prep list, skip it!
-        if ($calculated_prep_date !== $selected_date) {
-            continue;
-        }
-        // --------------------------------------
+        if ($calculated_prep_date !== $selected_date) { continue; }
 
         $time_slot = '';
         if ($order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
@@ -305,7 +319,7 @@ function cmp_render_kitchen_portal() {
             'is_chefs_choice' => $log->is_chefs_choice,
             'is_assigned' => $is_assigned,
             'allowed_categories' => $log->allowed_categories,
-            'target_date' => $log->target_date, // Added for UI Badge
+            'target_date' => $log->target_date, 
             'raw_log' => $log
         );
     }
@@ -379,7 +393,7 @@ function cmp_render_kitchen_portal() {
                                 <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                 
                                 <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">
-                                    Eating on: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
+                                    Eating On: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
                                 </span>
                                 <br>
                                 
@@ -422,19 +436,29 @@ function cmp_render_kitchen_portal() {
                                         <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
                                     </div>
                                     
-                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
+                                    <?php 
+                                    // --- NEW: THE FLEXIBLE QUOTA LOGIC FOR CHEFS ---
+                                    $is_juice_plan = (stripos($c['allowed_categories'], 'Juices') !== false || stripos($c['plan'], 'juice') !== false || stripos($c['plan'], 'cleanse') !== false);
+                                    preg_match('/(\d+)\s*Meal/i', $c['plan'], $m);
+                                    $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
+                                    
+                                    if (!$is_juice_plan) {
+                                        // Overriding the DB legacy categories so the chef sees everything
+                                        $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
+                                        $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
+                                    } else {
+                                        $allowed_cats = ['Juices'];
+                                        $snack_count = 0;
+                                    }
+                                    $raw = $c['raw_log'];
+                                    ?>
+                                    
+                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
                                         <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
-                                        <?php 
-                                        $allowed_cats = explode(',', $c['allowed_categories']);
-                                        $is_juice_plan = ($c['allowed_categories'] === 'Juices');
-                                        $meal_count = count($allowed_cats);
-                                        $snack_count = ($meal_count >= 2) ? 2 : 1;
-                                        $raw = $c['raw_log'];
-                                        ?>
                                         
                                         <?php if(!$is_juice_plan): ?>
                                             <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
-                                                <select class="chef-meal-select" data-cat="<?php echo $cat; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
                                                     <option value="">- <?php echo $cat; ?> -</option>
                                                     <?php foreach($foods as $f) if($f->category_name == $cat) {
                                                         $sel = ($raw->{strtolower($cat).'_id'} == $f->id) ? 'selected' : '';
@@ -517,6 +541,49 @@ function cmp_render_kitchen_portal() {
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
 
+        // --- NEW: SMART CHEF QUOTA JAVASCRIPT ---
+        function enforceChefMealQuota(container) {
+            var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
+            var isJuice = container.data('is-juice') == '1';
+            
+            if (allowedMeals <= 0 || isJuice) return; 
+
+            var mainSelects = container.find('.chef-main-meal');
+            var selectedCount = 0;
+            
+            mainSelects.each(function() {
+                if ($(this).val() !== "") selectedCount++;
+            });
+
+            if (selectedCount >= allowedMeals) {
+                // Lock the empty ones
+                mainSelects.each(function() {
+                    if ($(this).val() === "") {
+                        $(this).prop('disabled', true).addClass('quota-locked');
+                    } else {
+                        $(this).prop('disabled', false).removeClass('quota-locked');
+                    }
+                });
+            } else {
+                // Unlock all
+                mainSelects.each(function() {
+                    $(this).prop('disabled', false).removeClass('quota-locked');
+                });
+            }
+        }
+
+        // Initialize Quota logic on page load
+        $('.chef-assign-form').each(function() {
+            enforceChefMealQuota($(this));
+        });
+
+        // Trigger on selection change
+        $(document).on('change', '.chef-main-meal', function() {
+            enforceChefMealQuota($(this).closest('.chef-assign-form'));
+        });
+        // ----------------------------------------
+
+
         // CHEF'S CHOICE ASSIGNMENT LOGIC
         $('.edit-chef-assign').on('click', function() {
             var cell = $(this).closest('td');
@@ -528,15 +595,31 @@ function cmp_render_kitchen_portal() {
             var btn = $(this);
             var container = btn.closest('.chef-assign-form');
             var logId = container.data('log-id');
+            var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
+            var isJuice = container.data('is-juice') == '1';
             
-            var missing = false;
-            container.find('select').each(function() {
-                if ($(this).val() === '') missing = true;
-            });
-            if(missing) { 
-                alert("Please select all meals to complete the assignment."); 
-                return; 
+            // --- NEW: JS Validation before saving ---
+            if (!isJuice && allowedMeals > 0) {
+                var selectedMainCount = 0;
+                container.find('.chef-main-meal').each(function() {
+                    if ($(this).val() !== "") selectedMainCount++;
+                });
+                
+                if (selectedMainCount < allowedMeals) {
+                    alert("Please select exactly " + allowedMeals + " main meal(s) to complete the assignment."); 
+                    return; 
+                }
+            } else if (isJuice) {
+                var missingJuice = false;
+                container.find('select').each(function() {
+                    if ($(this).val() === '') missingJuice = true;
+                });
+                if(missingJuice) { 
+                    alert("Please select all juices to complete the assignment."); 
+                    return; 
+                }
             }
+            // -----------------------------------------
             
             btn.text('Saving...').prop('disabled', true).css('opacity', '0.7');
             
