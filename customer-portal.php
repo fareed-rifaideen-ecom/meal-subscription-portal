@@ -17,7 +17,6 @@ function cmp_ajax_save_daily_log() {
     $target_date  = sanitize_text_field($_POST['date']);
     $is_admin     = current_user_can('manage_options') || current_user_can('foh_manager');
 
-    // Cut-off enforcement: customers cannot save tomorrow after the configured cutoff hour
     if ( ! $is_admin ) {
         $tz           = new DateTimeZone('Asia/Dubai');
         $now          = new DateTime('now', $tz);
@@ -44,7 +43,6 @@ function cmp_ajax_save_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    // --- BACKEND QUOTA ENFORCEMENT ---
     $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
     preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
     $allowed_quota = isset($m[1]) ? intval($m[1]) : 0;
@@ -94,18 +92,8 @@ function cmp_render_customer_portal() {
 
     if ( ! is_user_logged_in() ) {
         $login_args = array('echo' => false, 'form_id' => 'cmp-login', 'label_username' => __('Email Address'), 'label_password' => __('Password'));
-        $custom_css = '
-        <style>
-            #cmp-login label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; text-align: left; }
-            #cmp-login input[type="text"], #cmp-login input[type="password"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-            #cmp-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; }
-            #cmp-login .login-remember { text-align: left; margin-bottom: 15px; }
-        </style>';
-        return $custom_css . '<div style="max-width:400px; margin:50px auto; padding:30px; background:#f8f9fa; border-radius:8px; border:1px solid #ddd; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
-                    <h2 style="text-align:center; margin-top:0; color:#222;">Dashboard Login</h2>
-                    <p style="text-align:center; color:#666; margin-bottom:20px;">Please log in to manage your plan.</p>' 
-                    . wp_login_form( $login_args ) . 
-                '</div>';
+        $custom_css = '<style>#cmp-login label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; text-align: left; } #cmp-login input[type="text"], #cmp-login input[type="password"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; } #cmp-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; } #cmp-login .login-remember { text-align: left; margin-bottom: 15px; }</style>';
+        return $custom_css . '<div style="max-width:400px; margin:50px auto; padding:30px; background:#f8f9fa; border-radius:8px; border:1px solid #ddd; box-shadow: 0 2px 10px rgba(0,0,0,0.05);"><h2 style="text-align:center; margin-top:0; color:#222;">Dashboard Login</h2><p style="text-align:center; color:#666; margin-bottom:20px;">Please log in to manage your plan.</p>' . wp_login_form( $login_args ) . '</div>';
     }
 
     global $wpdb;
@@ -118,7 +106,6 @@ function cmp_render_customer_portal() {
     $label_chefs_choice = get_option('cmp_label_chefs_choice', "Chef's Choice");
     $blackout_string = get_option('cmp_blackout_dates', '');
     $blackout_dates_array = !empty($blackout_string) ? explode(',', str_replace(' ', '', $blackout_string)) : array();
-
     $raw_wa = get_option('cmp_whatsapp_number', '');
     $clean_wa = preg_replace('/[^0-9]/', '', $raw_wa);
 
@@ -146,12 +133,24 @@ function cmp_render_customer_portal() {
     }
 
     if ( empty($subs) ) {
-        return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;">
-                    <h3 style="color:#0073aa;">No Active Plans Found</h3>
-                    <p style="color:#666;">It looks like your plans have expired or been completed.</p>
-                    <br><a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold;">Log Out</a>
-                </div>';
+        return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;"><h3 style="color:#0073aa;">No Active Plans Found</h3><p style="color:#666;">It looks like your plans have expired or been completed.</p><br><a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold;">Log Out</a></div>';
     }
+
+    // --- FIX 1: Bulletproof Greeting Name Logic ---
+    if ($is_admin_override && !empty($subs)) {
+        $override_user_id = $subs[0]->user_id;
+        $override_user = get_userdata($override_user_id);
+        $fname = get_user_meta($override_user_id, 'first_name', true) ?: get_user_meta($override_user_id, 'billing_first_name', true);
+        $lname = get_user_meta($override_user_id, 'last_name', true) ?: get_user_meta($override_user_id, 'billing_last_name', true);
+        $override_name = trim($fname . ' ' . $lname);
+        $greeting_name = !empty($override_name) ? $override_name : ($override_user ? $override_user->display_name : 'Customer');
+    } else {
+        $fname = get_user_meta($current_user->ID, 'first_name', true) ?: get_user_meta($current_user->ID, 'billing_first_name', true);
+        $lname = get_user_meta($current_user->ID, 'last_name', true) ?: get_user_meta($current_user->ID, 'billing_last_name', true);
+        $curr_name = trim($fname . ' ' . $lname);
+        $greeting_name = !empty($curr_name) ? $curr_name : $current_user->display_name;
+    }
+    // ----------------------------------------------
 
     $foods = $wpdb->get_results("SELECT * FROM $table_foods WHERE is_active = 1 ORDER BY category_name, food_name");
     $foods_map = array(); foreach ($foods as $food) { $foods_map[$food->id] = $food; }
@@ -193,7 +192,6 @@ function cmp_render_customer_portal() {
         }
         .cmp-wa-float:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(37, 211, 102, 0.5); color: white; }
 
-        /* --- UPDATED RESPONSIVE WIDTHS TO FIT NEW STATUS COLUMN --- */
         @media (min-width: 769px) {
             .cmp-table select { width: 100%; padding: 8px; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 42px; }
             .cmp-table input[type="date"] { width: 100% !important; padding: 6px !important; box-sizing: border-box !important; height: 42px !important; }
@@ -201,10 +199,10 @@ function cmp_render_customer_portal() {
             .cmp-table th:nth-child(2) { width: 145px; } 
             .cmp-table th:nth-child(3) { width: 100px; } 
             
-            .cmp-table th:last-child { width: 85px; }         /* Action */
-            .cmp-table th:nth-last-child(2) { width: 105px; } /* Status */
-            .cmp-table th:nth-last-child(3) { width: 110px; } /* Macros */
-            .cmp-table th:nth-last-child(4) { width: 135px; } /* Snacks */
+            .cmp-table th:last-child { width: 85px; }         
+            .cmp-table th:nth-last-child(2) { width: 105px; } 
+            .cmp-table th:nth-last-child(3) { width: 110px; } 
+            .cmp-table th:nth-last-child(4) { width: 135px; } 
             
             .cmp-stacked-snack { margin-bottom: 8px; }
             .cmp-save-row { padding: 10px 5px !important; height: 42px; }
@@ -270,11 +268,10 @@ function cmp_render_customer_portal() {
     </style>
 
     <div class="cmp-dashboard-wrap">
-        
         <div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h1 style="margin:0; color:#fff;">Dashboard</h1>
-                <p style="margin:5px 0 0 0; color:#ccc;">Welcome back, <?php echo esc_html(wp_get_current_user()->display_name); ?></p>
+                <p style="margin:5px 0 0 0; color:#ccc;">Welcome back, <?php echo esc_html($greeting_name); ?></p>
             </div>
             <div style="display: flex; gap: 10px;">
                 <a id="cmp-global-export-btn" href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_customer_csv&sub_id=' . $subs[0]->id)); ?>" style="background:#1d6f42; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Export to Excel</a>
@@ -301,26 +298,37 @@ function cmp_render_customer_portal() {
             $first_content = false;
             
             $order = wc_get_order($sub->wc_order_id);
+            $sub_user = get_userdata($sub->user_id);
             
+            // --- FIX 2: Bulletproof Customer Name Fetching ---
+            $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
+            $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+            $fallback_name = trim($fname . ' ' . $lname);
+            if (empty($fallback_name)) $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
+            
+            $display_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+            if (empty(trim($display_name))) { $display_name = $fallback_name; }
+
+            // Ensure we use $sub->user_id instead of FOH override user meta
             $timing = !empty($sub->delivery_timing) ? $sub->delivery_timing : '';
             if (empty($timing) && $order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
-            if (empty($timing)) $timing = get_user_meta($user_id, 'delivery_timing', true);
+            if (empty($timing)) $timing = get_user_meta($sub->user_id, 'delivery_timing', true);
 
             $time_slot = !empty($sub->time_slot) ? $sub->time_slot : '';
             if (empty($time_slot) && $order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
-            if (empty($time_slot)) $time_slot = get_user_meta($user_id, 'time_slot', true);
+            if (empty($time_slot)) $time_slot = get_user_meta($sub->user_id, 'time_slot', true);
 
             $method = !empty($sub->delivery_method) ? $sub->delivery_method : '';
             if (empty($method) && $order) $method = $order->get_meta('_cmp_logistics_method') ?: $order->get_meta('delivery_method');
-            if (empty($method)) $method = get_user_meta($user_id, 'delivery_method', true);
+            if (empty($method)) $method = get_user_meta($sub->user_id, 'delivery_method', true);
 
             $pickup = !empty($sub->pickup_location) ? $sub->pickup_location : '';
             if (empty($pickup) && $order) $pickup = $order->get_meta('_cmp_pickup_location') ?: $order->get_meta('pickup_location');
-            if (empty($pickup)) $pickup = get_user_meta($user_id, 'pickup_location', true);
+            if (empty($pickup)) $pickup = get_user_meta($sub->user_id, 'pickup_location', true);
 
             $allergies = !empty($sub->allergies) ? $sub->allergies : '';
             if (empty($allergies) && $order) $allergies = $order->get_customer_note();
-            if (empty($allergies)) $allergies = get_user_meta($user_id, 'allergies', true);
+            if (empty($allergies)) $allergies = get_user_meta($sub->user_id, 'allergies', true);
 
             $address = 'Address not provided';
             if ($order) {
@@ -329,15 +337,15 @@ function cmp_render_customer_portal() {
                 if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
             }
             if ($address === 'Address not provided') {
-                $addr1 = get_user_meta($user_id, 'billing_address_1', true);
-                $addr2 = get_user_meta($user_id, 'billing_address_2', true);
-                $city = get_user_meta($user_id, 'billing_city', true);
+                $addr1 = get_user_meta($sub->user_id, 'billing_address_1', true);
+                $addr2 = get_user_meta($sub->user_id, 'billing_address_2', true);
+                $city = get_user_meta($sub->user_id, 'billing_city', true);
                 $addr_parts = array_filter([$addr1, $addr2, $city]);
                 if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
             }
             
-            $phone = $order ? $order->get_billing_phone() : get_user_meta($user_id, 'billing_phone', true);
-            $email = $order ? $order->get_billing_email() : $current_user->user_email;
+            $email = $order ? $order->get_billing_email() : ($sub_user ? $sub_user->user_email : '');
+            $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
 
             $method_display = $method ?: 'N/A';
             if ($method === 'Pickup' && !empty($pickup)) { $method_display .= ' (' . esc_html($pickup) . ')'; }
@@ -363,7 +371,7 @@ function cmp_render_customer_portal() {
                 <div style="flex:1; min-width:250px;">
                     <h3 style="margin:0 0 10px 0; color:#0073aa; font-size:1.3em;">Account Details</h3>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> #<?php echo esc_html($sub->wc_order_id); ?></p>
-                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <?php echo $order ? esc_html($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : esc_html($current_user->display_name); ?></p>
+                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <?php echo esc_html($display_name); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
                     <p style="margin:0; color:#334155;"><strong>Address:</strong> <?php echo esc_html($address); ?></p>
@@ -440,7 +448,6 @@ function cmp_render_customer_portal() {
                                 }
                             }
 
-                            // --- SMART DELIVERY STATUS LOGIC ---
                             $status_badge = '<span style="color:#666; font-size:0.9em; background:#f1f5f9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Pending</span>';
                             
                             if ($log && !$is_void) {
@@ -456,7 +463,6 @@ function cmp_render_customer_portal() {
                             } elseif ($is_void && $log) {
                                 $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                             }
-                            // -----------------------------------
 
                             $macros_desk = '<strong>Cal:</strong> 0<br><strong>Fat:</strong> 0g<br><strong>Carb:</strong> 0g<br><strong>Pro:</strong> 0g';
                             $macros_mob = '<div class="mob-grid"><div><strong>Cal:</strong> 0</div><div><strong>Fat:</strong> 0g</div><div><strong>Carb:</strong> 0g</div><div><strong>Pro:</strong> 0g</div></div>';
@@ -706,13 +712,11 @@ function cmp_render_customer_portal() {
             }
         }
 
-        // Initialize state on page load
         $('.cmp-day-row').each(function() {
             calculateMacros($(this));
             enforceMealQuota($(this));
         });
 
-        // Trigger on selection change
         $('.cmp-meal-select').on('change', function() { 
             calculateMacros($(this).closest('tr')); 
             enforceMealQuota($(this).closest('tr'));
@@ -817,7 +821,6 @@ function cmp_render_customer_portal() {
                         rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
                         btn.prop('disabled', true);
 
-                        // Also update the UI to show Confirmed instead of Pending so they know it worked
                         var newBadge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                         rowElement.find('td:nth-last-child(2)').html(newBadge);
 
@@ -863,10 +866,18 @@ function cmp_export_customer_csv() {
     if (!$sub || (!$is_admin && $sub->user_id != $user_id)) wp_die('Unauthorized Access');
 
     $order = wc_get_order($sub->wc_order_id);
-    $user_info = get_userdata($sub->user_id);
+    $sub_user = get_userdata($sub->user_id);
     
-    $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $user_info->display_name;
-    $email = $order ? $order->get_billing_email() : $user_info->user_email;
+    // --- FIX 3: Bulletproof CSV Name Fetching ---
+    $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
+    $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+    $fallback_name = trim($fname . ' ' . $lname);
+    if (empty($fallback_name)) $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
+    
+    $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+    if (empty(trim($full_name))) { $full_name = $fallback_name; }
+
+    $email = $order ? $order->get_billing_email() : ($sub_user ? $sub_user->user_email : '');
     $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
     
     $timing = $order ? ($order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing')) : get_user_meta($sub->user_id, 'delivery_timing', true);
@@ -896,7 +907,7 @@ function cmp_export_customer_csv() {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="Meal_Schedule_' . esc_attr(str_replace(' ', '_', $sub->plan_name)) . '.csv"');
     $output = fopen('php://output', 'w');
-    fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM for Excel
+    fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
     fputcsv($output, array('CUSTOMER DETAILS'));
     fputcsv($output, array('Name:', $full_name, 'Email:', $email, 'Phone:', $phone));
@@ -914,7 +925,6 @@ function cmp_export_customer_csv() {
     foreach ($logs as $log) {
         $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
         
-        // CSV Status Logic matches UI Status Logic
         $status = 'Pending';
         if ($log->pos_updated == 1 && $log->delivery_result === 'Successful') { $status = 'Delivered'; }
         elseif ($log->pos_updated == 1 && in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
