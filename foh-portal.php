@@ -57,7 +57,6 @@ function cmp_render_foh_portal() {
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
 
-    // EXCLUDE PENDING PAYMENTS FROM DASHBOARD
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
     $unique_plans = $wpdb->get_col("SELECT DISTINCT plan_name FROM $table_subs WHERE status != 'pending' ORDER BY plan_name ASC");
     
@@ -70,7 +69,7 @@ function cmp_render_foh_portal() {
         
         $sub->filled = $filled_days;
         $sub->usage = $usage_days;
-        $sub->balance = max(0, $sub->total_days - $usage_days); // Calculate Balance Days
+        $sub->balance = max(0, $sub->total_days - $usage_days);
         
         if ($sub->status === 'paused') {
             $tabs['paused'][] = $sub;
@@ -146,8 +145,17 @@ function cmp_render_foh_portal() {
                             <tr class="empty-row"><td colspan="6" style="text-align:center; padding:30px; color:#666;">No subscriptions found in this category.</td></tr>
                         <?php else: foreach($tabs[$tab_key] as $sub): 
                             $order = wc_get_order($sub->wc_order_id);
-                            $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $sub->display_name;
-                            $phone = $order ? $order->get_billing_phone() : 'N/A';
+                            
+                            // --- FIX 6: Bulletproof FOH Portal Name Fetching ---
+                            $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
+                            $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+                            $fallback_name = trim($fname . ' ' . $lname);
+                            if (empty($fallback_name)) $fallback_name = $sub->display_name;
+                            
+                            $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+                            if (empty(trim($full_name))) { $full_name = $fallback_name; }
+
+                            $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
                             $is_paused = ($sub->status === 'paused');
                             
                             $search_data = esc_attr(strtolower($full_name . ' ' . $sub->user_email . ' ' . $phone));
@@ -155,7 +163,9 @@ function cmp_render_foh_portal() {
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
-                            <td style="font-size: 1.1em; font-weight: bold; color: #334155;">#<?php echo esc_html($sub->wc_order_id); ?></td>
+                            <td style="font-size: 1.1em; font-weight: bold; color: #334155;">
+                                <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : '<span style="color:#d63638;">Manual</span>'; ?>
+                            </td>
                             
                             <td>
                                 <strong style="font-size: 1.1em; color: #0073aa;"><?php echo esc_html($full_name ?: 'Customer'); ?></strong><br>
@@ -178,7 +188,6 @@ function cmp_render_foh_portal() {
                             </td>
                             <td>
                                 <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
-                                <!-- AJAX Expiry Form -->
                                 <form class="ajax-expiry-form" style="display: flex; gap: 5px; margin-top: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                     <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
@@ -187,7 +196,6 @@ function cmp_render_foh_portal() {
                             </td>
                             <td style="text-align: center;">
                                 <?php if($tab_key !== 'inactive'): ?>
-                                <!-- AJAX Status Toggle Form -->
                                 <form class="ajax-status-form" style="margin-bottom: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                     <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
@@ -211,13 +219,11 @@ function cmp_render_foh_portal() {
     </div>
 
     <script>
-    // Variables for AJAX requests
     const fohAjaxUrl = '<?php echo admin_url("admin-ajax.php"); ?>';
     const fohNonce   = '<?php echo wp_create_nonce("cmp_foh_nonce"); ?>';
 
     document.addEventListener("DOMContentLoaded", function() {
         
-        // 1. AJAX for Expiry Date Updates
         document.querySelectorAll('.ajax-expiry-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -260,7 +266,6 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // 2. AJAX for Pause/Resume Toggles
         document.querySelectorAll('.ajax-status-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -305,7 +310,6 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Existing Pagination & Search Logic
         document.getElementById('fohSearch').addEventListener('keyup', function() {
             currentPage = 1;
             renderTable();
