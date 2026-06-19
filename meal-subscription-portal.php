@@ -110,6 +110,7 @@ $files_to_include = array(
     'foh-portal.php',
     'menu-manager-portal.php',
     'super-admin-portal.php'
+    'chef-assignment-portal.php'
 );
 
 foreach ( $files_to_include as $file ) {
