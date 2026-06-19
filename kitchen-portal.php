@@ -115,7 +115,6 @@ function cmp_export_kitchen_csv() {
         $order = wc_get_order($log->wc_order_id);
         $sub_user = get_userdata($log->user_id);
         
-        // --- FIX 4: Bulletproof Kitchen CSV Name Fetching ---
         $fname = get_user_meta($log->user_id, 'first_name', true) ?: get_user_meta($log->user_id, 'billing_first_name', true);
         $lname = get_user_meta($log->user_id, 'last_name', true) ?: get_user_meta($log->user_id, 'billing_last_name', true);
         $fallback_name = trim($fname . ' ' . $lname);
@@ -244,7 +243,6 @@ function cmp_render_kitchen_portal() {
         $order = wc_get_order($log->wc_order_id);
         $sub_user = get_userdata($log->user_id);
         
-        // --- FIX 5: Bulletproof Kitchen Portal UI Name Fetching ---
         $fname = get_user_meta($log->user_id, 'first_name', true) ?: get_user_meta($log->user_id, 'billing_first_name', true);
         $lname = get_user_meta($log->user_id, 'last_name', true) ?: get_user_meta($log->user_id, 'billing_last_name', true);
         $fallback_name = trim($fname . ' ' . $lname);
@@ -340,6 +338,21 @@ function cmp_render_kitchen_portal() {
     $chef_disabled = ($is_admin || $is_chef) ? '' : 'disabled';
     $foh_disabled = ($is_admin || $is_foh) ? '' : 'disabled';
 
+    // --- NEW: Calculate Tab Counts ---
+    $count_all = count($customers);
+    $count_pending = 0;
+    $count_assigned = 0;
+    foreach ($customers as $c) {
+        if ($c['is_chefs_choice']) {
+            if ($c['is_assigned']) {
+                $count_assigned++;
+            } else {
+                $count_pending++;
+            }
+        }
+    }
+    // ---------------------------------
+
     ob_start();
     ?>
     <style>
@@ -349,6 +362,9 @@ function cmp_render_kitchen_portal() {
         .chk-large { transform: scale(1.5); cursor: pointer; }
         .logistics-box { margin-top: 15px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 0.9em; line-height: 1.5; }
         
+        .k-tab-btn { background: #f1f1f1; border: 1px solid #ccc; padding: 10px 20px; border-radius: 4px; font-weight: bold; color: #333; cursor: pointer; transition: 0.2s; }
+        .k-tab-btn.active { background: #0073aa !important; color: #fff !important; border-color: #0073aa !important; }
+
         @media print {
             .cmp-no-print { display: none !important; }
             body, html { background: #fff !important; margin: 0 !important; padding: 0 !important; }
@@ -372,10 +388,21 @@ function cmp_render_kitchen_portal() {
             </div>
         </div>
 
-        <div style="text-align: center; border-bottom: 2px solid #222; margin-bottom: 30px; padding-bottom: 10px;">
+        <div style="text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding-bottom: 10px;">
             <h1 style="margin: 0; font-size: 2em; color: #222;">Order Preparation Report</h1>
             <h3 style="margin: 5px 0 0 0; color: #0073aa;">Food Orders for the Date: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
             <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">(Processing Date: <?php echo date('d/m/Y', strtotime($selected_date)); ?>)</p>
+        </div>
+
+        <div class="cmp-no-print" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px; margin-bottom: 20px; background:#f8fafc; padding:15px; border:1px solid #e2e8f0; border-radius:6px;">
+            <div class="k-tabs-container" style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button class="k-tab-btn active" data-filter="all">All Orders (<?php echo $count_all; ?>)</button>
+                <button class="k-tab-btn" data-filter="pending">Pending Chef's Choice <?php if($count_pending > 0) echo '<span style="background:#dc3232; color:#fff; border-radius:10px; padding:2px 8px; font-size:0.8em; margin-left:5px;">'.$count_pending.'</span>'; ?></button>
+                <button class="k-tab-btn" data-filter="assigned">Completed Assignments (<?php echo $count_assigned; ?>)</button>
+            </div>
+            <div style="flex-grow:1; min-width:200px; max-width:350px;">
+                <input type="text" id="k-search" placeholder="🔍 Search customers..." style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; font-size:1em;">
+            </div>
         </div>
 
         <?php if(empty($customers)): ?>
@@ -400,8 +427,15 @@ function cmp_render_kitchen_portal() {
                             $dispatch_disabled = (!empty($chef_disabled) || $c['pos']) ? 'disabled' : '';
                             $delivery_disabled = (!$c['dispatch'] || !empty($chef_disabled) || $c['pos']) ? 'disabled' : '';
                             $pos_disabled = (!$c['dispatch'] || $c['delivery'] === 'Pending' || !empty($foh_disabled)) ? 'disabled' : '';
+
+                            // Filter classes for Tabs
+                            $row_filter_class = 'filter-standard';
+                            if ($c['is_chefs_choice']) {
+                                $row_filter_class = $c['is_assigned'] ? 'filter-assigned' : 'filter-pending';
+                            }
+                            $search_name = esc_attr(strtolower($c['name']));
                         ?>
-                        <tr>
+                        <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
                                 <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                 
@@ -542,15 +576,69 @@ function cmp_render_kitchen_portal() {
         <?php endif; ?>
     </div>
 
-    <style>
-        @media print { .print-only { display: inline !important; } }
-    </style>
-
     <script>
     jQuery(document).ready(function($) {
         
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
+
+        // --- NEW: Tab Memory & Search Logic ---
+        var urlParams = new URLSearchParams(window.location.search);
+        var initialTab = urlParams.get('k_tab') || 'all';
+        
+        $('.k-tab-btn').removeClass('active');
+        $('.k-tab-btn[data-filter="'+initialTab+'"]').addClass('active');
+
+        function applyKitchenFilters() {
+            var activeFilter = $('.k-tab-btn.active').data('filter');
+            var searchQuery = $('#k-search').val().toLowerCase();
+
+            $('.k-table tbody tr.k-row').each(function() {
+                var row = $(this);
+                var customerName = row.data('name');
+                
+                var matchTab = false;
+                if (activeFilter === 'all') matchTab = true;
+                else if (activeFilter === 'pending' && row.hasClass('filter-pending')) matchTab = true;
+                else if (activeFilter === 'assigned' && row.hasClass('filter-assigned')) matchTab = true;
+
+                var matchSearch = customerName.indexOf(searchQuery) > -1;
+
+                if (matchTab && matchSearch) {
+                    row.show();
+                } else {
+                    row.hide();
+                }
+            });
+
+            if ($('.k-table tbody tr.k-row:visible').length === 0) {
+                if ($('#k-empty-msg').length === 0) {
+                    $('.k-table tbody').append('<tr id="k-empty-msg"><td colspan="6" style="text-align:center; padding:30px; color:#666; font-size:1.1em;">No customers match your criteria.</td></tr>');
+                } else {
+                    $('#k-empty-msg').show();
+                }
+            } else {
+                $('#k-empty-msg').hide();
+            }
+        }
+
+        applyKitchenFilters();
+
+        $('.k-tab-btn').on('click', function() {
+            $('.k-tab-btn').removeClass('active');
+            $(this).addClass('active');
+            
+            var url = new URL(window.location);
+            url.searchParams.set('k_tab', $(this).data('filter'));
+            window.history.pushState({}, '', url);
+
+            applyKitchenFilters();
+        });
+
+        $('#k-search').on('keyup', function() {
+            applyKitchenFilters();
+        });
+        // --------------------------------------
 
         function enforceChefMealQuota(container) {
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
