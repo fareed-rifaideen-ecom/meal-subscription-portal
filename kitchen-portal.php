@@ -45,7 +45,6 @@ function cmp_ajax_assign_chef_meals() {
     
     $log_id = intval($_POST['log_id']);
 
-    // --- NEW: BACKEND CHEF QUOTA ENFORCEMENT ---
     $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
     if ($log_row) {
         $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name, allowed_categories FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id));
@@ -66,7 +65,6 @@ function cmp_ajax_assign_chef_meals() {
             }
         }
     }
-    // --------------------------------------------
 
     $data = array(
         'breakfast_id' => !empty($_POST['breakfast']) ? intval($_POST['breakfast']) : null,
@@ -92,7 +90,6 @@ function cmp_export_kitchen_csv() {
     global $wpdb;
     $prep_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
     
-    // FETCH 3-DAY WINDOW TO ALLOW FOR TIME SHIFTING
     $end_date = date('Y-m-d', strtotime($prep_date . ' + 2 days'));
     
     $logs = $wpdb->get_results( $wpdb->prepare(
@@ -116,16 +113,24 @@ function cmp_export_kitchen_csv() {
 
     foreach ($logs as $log) {
         $order = wc_get_order($log->wc_order_id);
+        $sub_user = get_userdata($log->user_id);
         
-        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $log->display_name;
-        $email = $order ? $order->get_billing_email() : $log->user_email;
+        // --- FIX 4: Bulletproof Kitchen CSV Name Fetching ---
+        $fname = get_user_meta($log->user_id, 'first_name', true) ?: get_user_meta($log->user_id, 'billing_first_name', true);
+        $lname = get_user_meta($log->user_id, 'last_name', true) ?: get_user_meta($log->user_id, 'billing_last_name', true);
+        $fallback_name = trim($fname . ' ' . $lname);
+        if (empty($fallback_name)) $fallback_name = $log->display_name;
+        
+        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+        if (empty(trim($full_name))) { $full_name = $fallback_name; }
+
+        $email = $order ? $order->get_billing_email() : ($sub_user ? $sub_user->user_email : $log->user_email);
         $phone = $order ? $order->get_billing_phone() : get_user_meta($log->user_id, 'billing_phone', true);
 
         $timing = '';
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        // TIME SHIFT MATH FOR EXPORT
         $days_to_subtract = 1; 
         if (stripos($timing, 'Day Before') !== false) {
             $days_to_subtract = 2;
@@ -237,16 +242,24 @@ function cmp_render_kitchen_portal() {
 
     foreach ($logs as $log) {
         $order = wc_get_order($log->wc_order_id);
+        $sub_user = get_userdata($log->user_id);
         
-        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $log->display_name;
-        $email = $order ? $order->get_billing_email() : $log->user_email;
+        // --- FIX 5: Bulletproof Kitchen Portal UI Name Fetching ---
+        $fname = get_user_meta($log->user_id, 'first_name', true) ?: get_user_meta($log->user_id, 'billing_first_name', true);
+        $lname = get_user_meta($log->user_id, 'last_name', true) ?: get_user_meta($log->user_id, 'billing_last_name', true);
+        $fallback_name = trim($fname . ' ' . $lname);
+        if (empty($fallback_name)) $fallback_name = $log->display_name;
+        
+        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+        if (empty(trim($full_name))) { $full_name = $fallback_name; }
+
+        $email = $order ? $order->get_billing_email() : ($sub_user ? $sub_user->user_email : $log->user_email);
         $phone = $order ? $order->get_billing_phone() : get_user_meta($log->user_id, 'billing_phone', true);
 
         $timing = '';
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        // TIME SHIFT MATH FOR KITCHEN UI
         $days_to_subtract = 1; 
         if (stripos($timing, 'Day Before') !== false) {
             $days_to_subtract = 2;
@@ -303,7 +316,7 @@ function cmp_render_kitchen_portal() {
 
         $customers[] = array(
             'log_id' => $log->id, 
-            'name' => $full_name ?: 'Customer', 
+            'name' => $full_name, 
             'phone' => $phone, 
             'email' => $email, 
             'address' => $address,
@@ -437,13 +450,11 @@ function cmp_render_kitchen_portal() {
                                     </div>
                                     
                                     <?php 
-                                    // --- NEW: THE FLEXIBLE QUOTA LOGIC FOR CHEFS ---
                                     $is_juice_plan = (stripos($c['allowed_categories'], 'Juices') !== false || stripos($c['plan'], 'juice') !== false || stripos($c['plan'], 'cleanse') !== false);
                                     preg_match('/(\d+)\s*Meal/i', $c['plan'], $m);
                                     $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
                                     
                                     if (!$is_juice_plan) {
-                                        // Overriding the DB legacy categories so the chef sees everything
                                         $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
                                         $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
                                     } else {
@@ -541,7 +552,6 @@ function cmp_render_kitchen_portal() {
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
 
-        // --- NEW: SMART CHEF QUOTA JAVASCRIPT ---
         function enforceChefMealQuota(container) {
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
             var isJuice = container.data('is-juice') == '1';
@@ -556,7 +566,6 @@ function cmp_render_kitchen_portal() {
             });
 
             if (selectedCount >= allowedMeals) {
-                // Lock the empty ones
                 mainSelects.each(function() {
                     if ($(this).val() === "") {
                         $(this).prop('disabled', true).addClass('quota-locked');
@@ -565,26 +574,20 @@ function cmp_render_kitchen_portal() {
                     }
                 });
             } else {
-                // Unlock all
                 mainSelects.each(function() {
                     $(this).prop('disabled', false).removeClass('quota-locked');
                 });
             }
         }
 
-        // Initialize Quota logic on page load
         $('.chef-assign-form').each(function() {
             enforceChefMealQuota($(this));
         });
 
-        // Trigger on selection change
         $(document).on('change', '.chef-main-meal', function() {
             enforceChefMealQuota($(this).closest('.chef-assign-form'));
         });
-        // ----------------------------------------
 
-
-        // CHEF'S CHOICE ASSIGNMENT LOGIC
         $('.edit-chef-assign').on('click', function() {
             var cell = $(this).closest('td');
             cell.find('.chef-assigned-view').hide();
@@ -598,7 +601,6 @@ function cmp_render_kitchen_portal() {
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
             var isJuice = container.data('is-juice') == '1';
             
-            // --- NEW: JS Validation before saving ---
             if (!isJuice && allowedMeals > 0) {
                 var selectedMainCount = 0;
                 container.find('.chef-main-meal').each(function() {
@@ -619,7 +621,6 @@ function cmp_render_kitchen_portal() {
                     return; 
                 }
             }
-            // -----------------------------------------
             
             btn.text('Saving...').prop('disabled', true).css('opacity', '0.7');
             
@@ -647,7 +648,6 @@ function cmp_render_kitchen_portal() {
             });
         });
 
-        // CORE LOGISTICS LOGIC
         function saveAction(logId, field, val) {
             $.post("<?php echo admin_url('admin-ajax.php'); ?>", {
                 action: 'cmp_kitchen_action',
