@@ -140,7 +140,7 @@ function cmp_render_chef_assignment_desk() {
                 <p style="margin:5px 0 0 0; color:#ccc;">Select meals for "Chef's Choice" customers.</p>
             </div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/kitchen-portal/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Report ⇗</a>
+                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Report ⇗</a>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
