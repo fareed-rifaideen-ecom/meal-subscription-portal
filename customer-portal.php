@@ -16,11 +16,12 @@ function cmp_ajax_save_daily_log() {
     $sub_id       = intval($_POST['sub_id']);
     $target_date  = sanitize_text_field($_POST['date']);
     
-    // Check if the user has FOH Admin or Kitchen privileges
+    // Check privileges
     $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
     $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
     $is_privileged = $is_admin || $is_chef;
 
+    // Both Admin and Chef can bypass the 11am cutoff time
     if ( ! $is_privileged ) {
         $tz           = new DateTimeZone('Asia/Dubai');
         $now          = new DateTime('now', $tz);
@@ -51,14 +52,16 @@ function cmp_ajax_save_daily_log() {
     preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
     $allowed_quota = isset($m[1]) ? intval($m[1]) : 0;
 
-    if (!$is_juice && $allowed_quota > 0 && !$is_privileged) {
+    // --- FIX 1: BACKEND QUOTA ENFORCEMENT ---
+    // Only the Admin ($is_admin) can bypass the quota. The Chef MUST obey the quota.
+    if (!$is_juice && $allowed_quota > 0 && !$is_admin) {
         $submitted_count = 0;
         if (!empty($_POST['breakfast'])) $submitted_count++;
         if (!empty($_POST['lunch'])) $submitted_count++;
         if (!empty($_POST['dinner'])) $submitted_count++;
 
         if ($submitted_count > $allowed_quota) {
-            wp_send_json_error("Quota Exceeded! Your plan only allows {$allowed_quota} main meal(s) per day.");
+            wp_send_json_error("Quota Exceeded! This plan only allows {$allowed_quota} main meal(s) per day.");
         }
     }
 
@@ -113,7 +116,7 @@ function cmp_render_customer_portal() {
     $raw_wa = get_option('cmp_whatsapp_number', '');
     $clean_wa = preg_replace('/[^0-9]/', '', $raw_wa);
 
-    // --- NEW: DETECT CHEF OR ADMIN OVERRIDE ---
+    // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager'));
     $is_chef_override  = isset($_GET['chef_override_sub']) && (current_user_can('manage_options') || current_user_can('kitchen_staff') || current_user_can('menu_manager') || current_user_can('foh_manager'));
     
@@ -144,7 +147,6 @@ function cmp_render_customer_portal() {
         return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;"><h3 style="color:#0073aa;">No Active Plans Found</h3><p style="color:#666;">It looks like your plans have expired or been completed.</p><br><a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold;">Log Out</a></div>';
     }
 
-    // --- BULLETPROOF GREETING NAME LOGIC ---
     if (($is_admin_override || $is_chef_override) && !empty($subs)) {
         $override_user_id = $subs[0]->user_id;
         $override_user = get_userdata($override_user_id);
@@ -447,30 +449,21 @@ function cmp_render_customer_portal() {
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
-                            // ----------------------------------------------------
-                            // THE CHEF SANDBOX SECURITY RULES
-                            // ----------------------------------------------------
                             $base_input_disabled = ($is_void || (!$is_admin_override && !$is_chef_override && ($is_locked || $is_paused))) ? 'disabled' : '';
                             
                             if ($is_chef_override) {
-                                // Rule 1: Chef can NEVER check or uncheck the Chef's Choice box
                                 $chefs_choice_checkbox_disabled = 'disabled';
-                                
                                 if ($saved_chefs_choice) {
-                                    // Rule 2: If it IS Chef's Choice, the dropdowns are OPEN for the Chef
                                     $meal_select_disabled = '';
                                 } else {
-                                    // Rule 3: If it's NOT Chef's Choice, the dropdowns are LOCKED (Customer Canvas)
                                     $meal_select_disabled = 'disabled';
                                 }
-                                $date_picker_disabled = 'disabled'; // Chef shouldn't change the date
+                                $date_picker_disabled = 'disabled';
                             } else {
-                                // Normal Admin or Customer rules
                                 $chefs_choice_checkbox_disabled = $base_input_disabled;
                                 $meal_select_disabled = ($base_input_disabled || $saved_chefs_choice) ? 'disabled' : '';
                                 $date_picker_disabled = $base_input_disabled;
                             }
-                            // ----------------------------------------------------
 
                             $row_status_class = 'status-pending';
                             if ($is_void) { $row_status_class = 'status-void row-void'; } 
@@ -603,9 +596,6 @@ function cmp_render_customer_portal() {
 
                                 <td style="text-align:center;">
                                     <?php 
-                                    // ----------------------------------------------------
-                                    // THE CHEF SANDBOX BUTTON LOGIC
-                                    // ----------------------------------------------------
                                     if ($is_chef_override) {
                                         if ($saved_chefs_choice) {
                                             $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
@@ -615,7 +605,6 @@ function cmp_render_customer_portal() {
                                             echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
                                         }
                                     } else {
-                                        // Normal Admin / Customer Logic
                                         if(!$is_locked && !$is_void) {
                                             echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Save</button>';
                                         } else {
@@ -738,7 +727,11 @@ function cmp_render_customer_portal() {
             if (allowedMeals <= 0) return; 
 
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
-            if (isChefsChoice) return; 
+            
+            // --- FIX 2: JS QUOTA LOCK ENFORCEMENT ---
+            // If the customer checked Chef's Choice, ignore quota for them.
+            // But if it is the Chef Override, we MUST enforce the quota limit visually!
+            if (isChefsChoice && !isChefOverride) return; 
 
             var mainSelects = rowElement.find('.cmp-main-meal');
             
@@ -833,15 +826,24 @@ function cmp_render_customer_portal() {
             
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
 
-            // Quota Validation
-            if (!isChefsChoice && !isAdminOverride && !isChefOverride && allowedMeals > 0) {
+            // --- FIX 3: STRICT JS BUTTON VALIDATION ---
+            var requireQuotaCheck = false;
+            if (allowedMeals > 0 && !isAdminOverride) { // Only Admin can bypass
+                if (isChefOverride) {
+                    requireQuotaCheck = true; // Chef MUST fulfill exact quota
+                } else if (!isChefsChoice) {
+                    requireQuotaCheck = true; // Customer MUST fulfill quota (if not Chef Choice)
+                }
+            }
+
+            if (requireQuotaCheck) {
                 var selectedMainCount = 0;
                 rowElement.find('.cmp-main-meal').each(function() {
                     if ($(this).val() !== "") selectedMainCount++;
                 });
                 
-                if (selectedMainCount < allowedMeals) {
-                    alert('Please select ' + allowedMeals + ' main meal(s) before saving.');
+                if (selectedMainCount !== allowedMeals) {
+                    alert('Please select exactly ' + allowedMeals + ' main meal(s) before saving.');
                     return;
                 }
             }
@@ -874,9 +876,7 @@ function cmp_render_customer_portal() {
                     
                     rowElement.removeClass('status-pending').addClass('status-saved');
 
-                    // THE CHEF SANDBOX JAVASCRIPT LOCK
                     if (!isAdminOverride && !isChefOverride) {
-                        // Standard Customer Logic: Everything Locks
                         rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
                         btn.prop('disabled', true);
 
@@ -892,7 +892,6 @@ function cmp_render_customer_portal() {
                             }
                         }
                     } else {
-                        // Admin or Chef Override Logic: Keep button enabled so they can update again
                         btn.prop('disabled', false); 
                     }
                     
