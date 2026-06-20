@@ -975,10 +975,11 @@ function cmp_export_customer_csv() {
     fputcsv($output, array('Allergies:', $allergies ?: 'None'));
     fputcsv($output, array('')); 
 
+    // --- FIX: DYNAMIC SPREADSHEET COLUMNS ---
     if ($is_juice) { 
         fputcsv($output, array('Date', 'Juice 1', 'Juice 2', 'Juice 3', 'Chefs Choice', 'Delivery Status')); 
     } else { 
-        fputcsv($output, array('Date', 'Breakfast', 'Lunch', 'Dinner', 'Snacks', 'Chefs Choice', 'Delivery Status')); 
+        fputcsv($output, array('Date', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Chefs Choice', 'Delivery Status')); 
     }
 
     foreach ($logs as $log) {
@@ -990,11 +991,33 @@ function cmp_export_customer_csv() {
         elseif ($log->dispatch_status == 1) { $status = 'Out for Delivery'; }
         elseif ($log->id > 0) { $status = 'Confirmed'; }
 
+        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
+        $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+        $pending_tag = "[Pending Chef]";
+
         if ($is_juice) {
-            fputcsv($output, array($log->target_date, $food_map[$log->juice_1_id]??'', $food_map[$log->juice_2_id]??'', $food_map[$log->juice_3_id]??'', $chefs, $status));
+            $j1 = '-'; $j2 = '-'; $j3 = '-';
+            if ($log->is_chefs_choice && !$is_assigned) {
+                $j1 = $pending_tag; $j2 = $pending_tag; $j3 = $pending_tag;
+            } else {
+                if ($log->juice_1_id) $j1 = ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
+                if ($log->juice_2_id) $j2 = ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
+                if ($log->juice_3_id) $j3 = ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
+            }
+            fputcsv($output, array($log->target_date, $j1, $j2, $j3, $chefs, $status));
+            
         } else {
-            $snacks = array_filter([$food_map[$log->snack_1_id]??'', $food_map[$log->snack_2_id]??'']);
-            fputcsv($output, array($log->target_date, $food_map[$log->breakfast_id]??'', $food_map[$log->lunch_id]??'', $food_map[$log->dinner_id]??'', implode(' + ', $snacks), $chefs, $status));
+            $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
+            if ($log->is_chefs_choice && !$is_assigned) {
+                $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
+            } else {
+                if ($log->breakfast_id) $b = ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
+                if ($log->lunch_id)     $l = ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
+                if ($log->dinner_id)    $d = ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
+                if ($log->snack_1_id)   $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
+                if ($log->snack_2_id)   $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
+            }
+            fputcsv($output, array($log->target_date, $b, $l, $d, $s1, $s2, $chefs, $status));
         }
     }
     fclose($output); exit;
