@@ -109,8 +109,8 @@ $files_to_include = array(
     'kitchen-portal.php',
     'foh-portal.php',
     'menu-manager-portal.php',
-    'super-admin-portal.php'
-    'chef-assignment-portal.php'
+    'super-admin-portal.php',
+    'chef-assignment-portal.php' // <-- THIS LINE ACTIVATES THE DASHBOARD
 );
 
 foreach ( $files_to_include as $file ) {
