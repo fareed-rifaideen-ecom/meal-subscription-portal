@@ -139,12 +139,13 @@ function cmp_render_chef_assignment_desk() {
                 <h1 style="margin:0; color:#fff;">Assignment Desk</h1>
                 <p style="margin:5px 0 0 0; color:#ccc;">Select meals for "Chef's Choice" customers.</p>
             </div>
+            
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="<?php echo site_url('/kitchen-command-center/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Report ⇗</a>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
-        
+
         <div class="chef-tabs">
             <button class="chef-tab-btn active" onclick="switchChefTab(event, 'tab-pending')">
                 Pending Chef's Selections <span style="background:#d63638; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em; margin-left:5px;"><?php echo count($pending_customers); ?></span>
@@ -152,7 +153,6 @@ function cmp_render_chef_assignment_desk() {
             <button class="chef-tab-btn" onclick="switchChefTab(event, 'tab-all')">All Active Customers</button>
         </div>
 
-        <!-- TAB 1: PENDING -->
         <div id="tab-pending" class="chef-tab-content active">
             <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by name, email, or phone...">
             <div style="overflow-x: auto;">
@@ -200,7 +200,6 @@ function cmp_render_chef_assignment_desk() {
             </div>
         </div>
 
-        <!-- TAB 2: ALL CUSTOMERS -->
         <div id="tab-all" class="chef-tab-content">
             <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers...">
             <div style="overflow-x: auto;">
