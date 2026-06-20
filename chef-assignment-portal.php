@@ -17,7 +17,7 @@ function cmp_render_chef_assignment_desk() {
         return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">Chef Assignment Desk</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with your Kitchen account.</p>' . wp_login_form( $login_args ) . '</div>';
     }
 
-    // 2. Security Check: Only allow Kitchen, Menu Manager, FOH, or Admins
+    // 2. Security Check
     if ( !current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('menu_manager') && !current_user_can('foh_manager') ) {
         return '<p style="padding: 20px; background: #fff; border-left: 4px solid #dc3232;">Access Denied. Kitchen Staff only.</p>';
     }
@@ -26,17 +26,17 @@ function cmp_render_chef_assignment_desk() {
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
 
-    // 3. Fetch All Active Subscriptions
-    $raw_subs = $wpdb->get_results("SELECT * FROM $table_subs WHERE status = 'active' ORDER BY id DESC");
+    // 3. Fetch All Active & Paused Subscriptions
+    $raw_subs = $wpdb->get_results("SELECT * FROM $table_subs WHERE status IN ('active', 'paused') ORDER BY id DESC");
 
     $pending_customers = array();
     $all_customers = array();
 
     foreach ($raw_subs as $sub) {
-        // Bulletproof Customer Details Fetching (Ignores the logged-in Chef's details)
         $order = wc_get_order($sub->wc_order_id);
         $sub_user = get_userdata($sub->user_id);
         
+        // Bulletproof Customer Name Fetching
         $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
         $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
         $fallback_name = trim($fname . ' ' . $lname);
@@ -88,14 +88,13 @@ function cmp_render_chef_assignment_desk() {
         $all_customers[] = $customer_data;
 
         // 4. Check if they have PENDING Chef's Choice days
-        // A day is pending if is_chefs_choice = 1 AND no food IDs have been assigned yet
         $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1", $sub->id));
         $is_pending = false;
         
         foreach($chef_logs as $log) {
             if (!$log->breakfast_id && !$log->lunch_id && !$log->dinner_id && !$log->juice_1_id) {
                 $is_pending = true;
-                break; // We found at least one empty day, so they go into pending
+                break;
             }
         }
 
@@ -206,7 +205,10 @@ function cmp_render_chef_assignment_desk() {
                             $search_str = strtolower($c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
                         ?>
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id'] > 0 ? '#'.esc_html($c['order_id']) : '<span style="color:#d63638;">Manual</span>'; ?></strong></td>
+                                <td>
+                                    <strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id'] > 0 ? '#'.esc_html($c['order_id']) : '<span style="color:#d63638;">Manual</span>'; ?></strong>
+                                    <?php if($c['status'] === 'paused') echo '<br><span style="font-size:0.8em; background:#fef3c7; color:#b45309; padding:2px 6px; border-radius:4px; font-weight:bold;">Paused</span>'; ?>
+                                </td>
                                 <td>
                                     <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
                                     <span style="color: #666;"><?php echo esc_html($c['email']); ?></span><br>
