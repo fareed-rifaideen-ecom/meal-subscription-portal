@@ -338,7 +338,6 @@ function cmp_render_kitchen_portal() {
     $chef_disabled = ($is_admin || $is_chef) ? '' : 'disabled';
     $foh_disabled = ($is_admin || $is_foh) ? '' : 'disabled';
 
-    // --- NEW: Calculate Tab Counts ---
     $count_all = count($customers);
     $count_pending = 0;
     $count_assigned = 0;
@@ -351,7 +350,6 @@ function cmp_render_kitchen_portal() {
             }
         }
     }
-    // ---------------------------------
 
     ob_start();
     ?>
@@ -381,7 +379,9 @@ function cmp_render_kitchen_portal() {
                 <label style="font-weight: bold; font-size: 1.1em;">Food Processing for the Date:</label>
                 <input type="date" name="prep_date" value="<?php echo esc_attr($selected_date); ?>" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;" onchange="document.getElementById('cmp-kitchen-date-form').submit();">
             </form>
+
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <a href="<?php echo site_url('/chef-dashboard/'); ?>" style="background: #0073aa; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
                 <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export to Excel</a>
                 <button onclick="window.print()" style="background: #46b450; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Print PDF</button>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Log Out</a>
