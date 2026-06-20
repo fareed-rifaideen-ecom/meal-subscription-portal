@@ -283,7 +283,7 @@ function cmp_render_customer_portal() {
     </style>
 
     <div class="cmp-dashboard-wrap">
-        <div style="background: <?php echo $is_chef_override ? '#d63638' : '#222'; ?>; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+        <div style="background: <?php echo $is_chef_override ? '#222222' : '#222'; ?>; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h1 style="margin:0; color:#fff;">Dashboard</h1>
                 <p style="margin:5px 0 0 0; color:#fff; font-weight:bold;"><?php echo esc_html($greeting_name); ?></p>
