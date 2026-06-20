@@ -15,9 +15,13 @@ function cmp_ajax_save_daily_log() {
     $log_id       = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
     $sub_id       = intval($_POST['sub_id']);
     $target_date  = sanitize_text_field($_POST['date']);
-    $is_admin     = current_user_can('manage_options') || current_user_can('foh_manager');
+    
+    // Check if the user has FOH Admin or Kitchen privileges
+    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
+    $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
+    $is_privileged = $is_admin || $is_chef;
 
-    if ( ! $is_admin ) {
+    if ( ! $is_privileged ) {
         $tz           = new DateTimeZone('Asia/Dubai');
         $now          = new DateTime('now', $tz);
         $current_hour = (int) $now->format('H');
@@ -47,7 +51,7 @@ function cmp_ajax_save_daily_log() {
     preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
     $allowed_quota = isset($m[1]) ? intval($m[1]) : 0;
 
-    if (!$is_juice && $allowed_quota > 0 && !$is_admin) {
+    if (!$is_juice && $allowed_quota > 0 && !$is_privileged) {
         $submitted_count = 0;
         if (!empty($_POST['breakfast'])) $submitted_count++;
         if (!empty($_POST['lunch'])) $submitted_count++;
@@ -109,10 +113,14 @@ function cmp_render_customer_portal() {
     $raw_wa = get_option('cmp_whatsapp_number', '');
     $clean_wa = preg_replace('/[^0-9]/', '', $raw_wa);
 
+    // --- NEW: DETECT CHEF OR ADMIN OVERRIDE ---
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager'));
+    $is_chef_override  = isset($_GET['chef_override_sub']) && (current_user_can('manage_options') || current_user_can('kitchen_staff') || current_user_can('menu_manager') || current_user_can('foh_manager'));
     
     if ($is_admin_override) {
         $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval($_GET['admin_edit_sub'])) );
+    } elseif ($is_chef_override) {
+        $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval($_GET['chef_override_sub'])) );
     } else {
         $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d AND status IN ('active','paused') ORDER BY id DESC", $user_id) );
     }
@@ -121,7 +129,7 @@ function cmp_render_customer_portal() {
     $today = date('Y-m-d H:i:s');
     if ($raw_subs) {
         foreach ($raw_subs as $sub) {
-            if ($is_admin_override) {
+            if ($is_admin_override || $is_chef_override) {
                 $subs[] = $sub; 
             } else {
                 $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
@@ -136,27 +144,32 @@ function cmp_render_customer_portal() {
         return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;"><h3 style="color:#0073aa;">No Active Plans Found</h3><p style="color:#666;">It looks like your plans have expired or been completed.</p><br><a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold;">Log Out</a></div>';
     }
 
-    // --- FIX 1: Bulletproof Greeting Name Logic ---
-    if ($is_admin_override && !empty($subs)) {
+    // --- BULLETPROOF GREETING NAME LOGIC ---
+    if (($is_admin_override || $is_chef_override) && !empty($subs)) {
         $override_user_id = $subs[0]->user_id;
         $override_user = get_userdata($override_user_id);
         $fname = get_user_meta($override_user_id, 'first_name', true) ?: get_user_meta($override_user_id, 'billing_first_name', true);
         $lname = get_user_meta($override_user_id, 'last_name', true) ?: get_user_meta($override_user_id, 'billing_last_name', true);
         $override_name = trim($fname . ' ' . $lname);
-        $greeting_name = !empty($override_name) ? $override_name : ($override_user ? $override_user->display_name : 'Customer');
+        $customer_display_name = !empty($override_name) ? $override_name : ($override_user ? $override_user->display_name : 'Customer');
+        
+        if ($is_chef_override) {
+            $greeting_name = "Chef Mode (Managing: " . esc_html($customer_display_name) . ")";
+        } else {
+            $greeting_name = esc_html($customer_display_name) . " (Admin Override)";
+        }
     } else {
         $fname = get_user_meta($current_user->ID, 'first_name', true) ?: get_user_meta($current_user->ID, 'billing_first_name', true);
         $lname = get_user_meta($current_user->ID, 'last_name', true) ?: get_user_meta($current_user->ID, 'billing_last_name', true);
         $curr_name = trim($fname . ' ' . $lname);
         $greeting_name = !empty($curr_name) ? $curr_name : $current_user->display_name;
     }
-    // ----------------------------------------------
 
     $foods = $wpdb->get_results("SELECT * FROM $table_foods WHERE is_active = 1 ORDER BY category_name, food_name");
     $foods_map = array(); foreach ($foods as $food) { $foods_map[$food->id] = $food; }
 
     $current_hour = (int) date('H');
-    if ( $current_hour >= $dynamic_cutoff_hour && !$is_admin_override ) {
+    if ( $current_hour >= $dynamic_cutoff_hour && !$is_admin_override && !$is_chef_override ) {
         $global_min_date = date( 'Y-m-d', strtotime('+2 days') );
         $note_text = "Note: It is past " . str_pad($dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT) . ":00 GST. Meal selections are now locked for tomorrow.";
         $note_color = "#d63638"; 
@@ -205,7 +218,7 @@ function cmp_render_customer_portal() {
             .cmp-table th:nth-last-child(4) { width: 135px; } 
             
             .cmp-stacked-snack { margin-bottom: 8px; }
-            .cmp-save-row { padding: 10px 5px !important; height: 42px; }
+            .cmp-save-row { padding: 10px 5px !important; height: 42px; width: 100%; box-sizing: border-box; }
         }
 
         @media (max-width: 768px) {
@@ -268,14 +281,16 @@ function cmp_render_customer_portal() {
     </style>
 
     <div class="cmp-dashboard-wrap">
-        <div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+        <div style="background: <?php echo $is_chef_override ? '#d63638' : '#222'; ?>; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h1 style="margin:0; color:#fff;">Dashboard</h1>
-                <p style="margin:5px 0 0 0; color:#ccc;">Welcome back, <?php echo esc_html($greeting_name); ?></p>
+                <p style="margin:5px 0 0 0; color:#fff; font-weight:bold;"><?php echo esc_html($greeting_name); ?></p>
             </div>
             <div style="display: flex; gap: 10px;">
                 <a id="cmp-global-export-btn" href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_customer_csv&sub_id=' . $subs[0]->id)); ?>" style="background:#1d6f42; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Export to Excel</a>
-                <a href="<?php echo wp_logout_url(get_permalink()); ?>" style="background:#dc3232; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Log Out</a>
+                <?php if(!$is_chef_override && !$is_admin_override): ?>
+                    <a href="<?php echo wp_logout_url(get_permalink()); ?>" style="background:#dc3232; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">Log Out</a>
+                <?php endif; ?>
             </div>
         </div>
         
@@ -300,7 +315,6 @@ function cmp_render_customer_portal() {
             $order = wc_get_order($sub->wc_order_id);
             $sub_user = get_userdata($sub->user_id);
             
-            // --- FIX 2: Bulletproof Customer Name Fetching ---
             $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
             $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
             $fallback_name = trim($fname . ' ' . $lname);
@@ -309,7 +323,6 @@ function cmp_render_customer_portal() {
             $display_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
             if (empty(trim($display_name))) { $display_name = $fallback_name; }
 
-            // Ensure we use $sub->user_id instead of FOH override user meta
             $timing = !empty($sub->delivery_timing) ? $sub->delivery_timing : '';
             if (empty($timing) && $order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
             if (empty($timing)) $timing = get_user_meta($sub->user_id, 'delivery_timing', true);
@@ -434,9 +447,31 @@ function cmp_render_customer_portal() {
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
-                            $input_disabled = ($is_void || (!$is_admin_override && ($is_locked || $is_paused))) ? 'disabled' : '';
-                            $meal_select_disabled = ($input_disabled || $saved_chefs_choice) ? 'disabled' : '';
+                            // ----------------------------------------------------
+                            // THE CHEF SANDBOX SECURITY RULES
+                            // ----------------------------------------------------
+                            $base_input_disabled = ($is_void || (!$is_admin_override && !$is_chef_override && ($is_locked || $is_paused))) ? 'disabled' : '';
                             
+                            if ($is_chef_override) {
+                                // Rule 1: Chef can NEVER check or uncheck the Chef's Choice box
+                                $chefs_choice_checkbox_disabled = 'disabled';
+                                
+                                if ($saved_chefs_choice) {
+                                    // Rule 2: If it IS Chef's Choice, the dropdowns are OPEN for the Chef
+                                    $meal_select_disabled = '';
+                                } else {
+                                    // Rule 3: If it's NOT Chef's Choice, the dropdowns are LOCKED (Customer Canvas)
+                                    $meal_select_disabled = 'disabled';
+                                }
+                                $date_picker_disabled = 'disabled'; // Chef shouldn't change the date
+                            } else {
+                                // Normal Admin or Customer rules
+                                $chefs_choice_checkbox_disabled = $base_input_disabled;
+                                $meal_select_disabled = ($base_input_disabled || $saved_chefs_choice) ? 'disabled' : '';
+                                $date_picker_disabled = $base_input_disabled;
+                            }
+                            // ----------------------------------------------------
+
                             $row_status_class = 'status-pending';
                             if ($is_void) { $row_status_class = 'status-void row-void'; } 
                             elseif ($log_id > 0) { $row_status_class = 'status-saved'; }
@@ -502,10 +537,10 @@ function cmp_render_customer_portal() {
                                     <strong>Day <?php echo $i; ?></strong>
                                 </td>
                                 <td>
-                                    <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" min="<?php echo esc_attr($active_min_date); ?>" value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $input_disabled; ?>>
+                                    <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" min="<?php echo esc_attr($active_min_date); ?>" value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $date_picker_disabled; ?>>
                                 </td>
                                 <td style="text-align: center;">
-                                    <input type="checkbox" class="cmp-chefs-choice" data-row="<?php echo $i; ?>" <?php echo $input_disabled; ?> <?php if($saved_chefs_choice) echo 'checked'; ?>>
+                                    <input type="checkbox" class="cmp-chefs-choice" data-row="<?php echo $i; ?>" <?php echo $chefs_choice_checkbox_disabled; ?> <?php if($saved_chefs_choice) echo 'checked'; ?>>
                                 </td>
                                 <?php if(!$is_juice): ?>
                                     <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): ?>
@@ -551,7 +586,7 @@ function cmp_render_customer_portal() {
                                 <?php else: ?>
                                     <?php for($j=1; $j<=3; $j++): ?>
                                         <td>
-                                            <select class="cmp-juice-<?php echo $j; ?>" <?php echo $input_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box;">
+                                            <select class="cmp-juice-<?php echo $j; ?>" <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box;">
                                                 <option value="">- Select Juice <?php echo $j; ?> -</option>
                                                 <?php foreach($foods as $f) if($f->category_name == 'Juices') {
                                                     $sel = ($log && $log->{'juice_'.$j.'_id'} == $f->id) ? 'selected' : '';
@@ -567,11 +602,29 @@ function cmp_render_customer_portal() {
                                 </td>
 
                                 <td style="text-align:center;">
-                                    <?php if(!$is_locked && !$is_void): ?>
-                                        <button class="cmp-save-row" data-sub-id="<?php echo $sub->id; ?>" data-log-id="<?php echo $log_id; ?>" data-row="<?php echo $i; ?>" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer;">Save</button>
-                                    <?php else: ?>
-                                        <button class="cmp-save-row" data-sub-id="<?php echo $sub->id; ?>" data-log-id="<?php echo $log_id; ?>" data-row="<?php echo $i; ?>" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer;" <?php if(!$is_admin_override) echo 'disabled'; ?>><?php echo $is_admin_override ? 'Update' : 'Saved'; ?></button>
-                                    <?php endif; ?>
+                                    <?php 
+                                    // ----------------------------------------------------
+                                    // THE CHEF SANDBOX BUTTON LOGIC
+                                    // ----------------------------------------------------
+                                    if ($is_chef_override) {
+                                        if ($saved_chefs_choice) {
+                                            $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
+                                            $chef_btn_color = ($is_chef_assigned) ? '#46b450' : '#0073aa';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">'.$chef_btn_text.'</button>';
+                                        } else {
+                                            echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
+                                        }
+                                    } else {
+                                        // Normal Admin / Customer Logic
+                                        if(!$is_locked && !$is_void) {
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Save</button>';
+                                        } else {
+                                            $btn_attr = (!$is_admin_override) ? 'disabled' : '';
+                                            $btn_txt = ($is_admin_override) ? 'Update' : 'Saved';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;" '.$btn_attr.'>'.$btn_txt.'</button>';
+                                        }
+                                    }
+                                    ?>
                                 </td>
                             </tr>
                         <?php } ?>
@@ -581,7 +634,7 @@ function cmp_render_customer_portal() {
         </div>
         <?php endforeach; ?>
         
-        <?php if (!empty($clean_wa)): ?>
+        <?php if (!empty($clean_wa) && !$is_chef_override): ?>
         <a href="https://wa.me/<?php echo esc_attr($clean_wa); ?>?text=Hi,%20I%20need%20help%20with%20my%20meal%20plan." target="_blank" class="cmp-wa-float">
             <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
             <span class="cmp-wa-text">Support</span>
@@ -608,6 +661,7 @@ function cmp_render_customer_portal() {
 
     jQuery(document).ready(function($) {
         var isAdminOverride = <?php echo $is_admin_override ? 'true' : 'false'; ?>;
+        var isChefOverride  = <?php echo $is_chef_override ? 'true' : 'false'; ?>;
         var chefsChoiceLabel = "<?php echo esc_js($label_chefs_choice); ?>";
         var blackoutDates = <?php echo json_encode($blackout_dates_array); ?>;
 
@@ -688,7 +742,7 @@ function cmp_render_customer_portal() {
 
             var mainSelects = rowElement.find('.cmp-main-meal');
             
-            if (mainSelects.first().is(':disabled') && !mainSelects.first().hasClass('quota-locked') && !isAdminOverride) {
+            if (mainSelects.first().is(':disabled') && !mainSelects.first().hasClass('quota-locked') && !isAdminOverride && !isChefOverride) {
                 return;
             }
 
@@ -779,7 +833,8 @@ function cmp_render_customer_portal() {
             
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
 
-            if (!isChefsChoice && !isAdminOverride && allowedMeals > 0) {
+            // Quota Validation
+            if (!isChefsChoice && !isAdminOverride && !isChefOverride && allowedMeals > 0) {
                 var selectedMainCount = 0;
                 rowElement.find('.cmp-main-meal').each(function() {
                     if ($(this).val() !== "") selectedMainCount++;
@@ -812,12 +867,16 @@ function cmp_render_customer_portal() {
 
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if(response.success) {
-                    btn.text(isAdminOverride ? 'Update' : 'Saved').css({'background':'#46b450', 'box-shadow':'none'});
+                    var newBtnText = (isAdminOverride || isChefOverride) ? 'Update' : 'Saved';
+                    btn.text(newBtnText).css({'background':'#46b450', 'box-shadow':'none'});
+                    
                     if(response.data && response.data.new_log_id) { btn.data('log-id', response.data.new_log_id); }
                     
                     rowElement.removeClass('status-pending').addClass('status-saved');
 
-                    if (!isAdminOverride) {
+                    // THE CHEF SANDBOX JAVASCRIPT LOCK
+                    if (!isAdminOverride && !isChefOverride) {
+                        // Standard Customer Logic: Everything Locks
                         rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
                         btn.prop('disabled', true);
 
@@ -833,8 +892,10 @@ function cmp_render_customer_portal() {
                             }
                         }
                     } else {
+                        // Admin or Chef Override Logic: Keep button enabled so they can update again
                         btn.prop('disabled', false); 
                     }
+                    
                     rowElement.find('.cmp-date-picker').trigger('change');
                 } else {
                     alert('Error: ' + response.data);
@@ -859,7 +920,7 @@ function cmp_export_customer_csv() {
     global $wpdb;
     $sub_id = intval($_GET['sub_id']);
     
-    $is_admin = current_user_can('manage_options') || current_user_can('foh_manager');
+    $is_admin = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('kitchen_staff') || current_user_can('menu_manager');
     $user_id = get_current_user_id();
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $sub_id));
     
@@ -868,7 +929,6 @@ function cmp_export_customer_csv() {
     $order = wc_get_order($sub->wc_order_id);
     $sub_user = get_userdata($sub->user_id);
     
-    // --- FIX 3: Bulletproof CSV Name Fetching ---
     $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
     $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
     $fallback_name = trim($fname . ' ' . $lname);
