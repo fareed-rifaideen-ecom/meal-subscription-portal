@@ -89,7 +89,6 @@ function cmp_export_kitchen_csv() {
 
     global $wpdb;
     $prep_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
-    $export_type = isset($_GET['type']) ? sanitize_text_field($_GET['type']) : 'meals'; // 'meals' or 'juices'
     
     $end_date = date('Y-m-d', strtotime($prep_date . ' + 2 days'));
     
@@ -105,28 +104,14 @@ function cmp_export_kitchen_csv() {
     $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
     $food_map = array(); foreach ($foods as $f) { $food_map[$f->id] = $f->food_name; }
 
-    // Setup CSV formatting based on the selected export type
-    $filename_suffix = ($export_type === 'juices') ? 'Juice_Plans' : 'Meal_Plans';
-    
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="Kitchen_Report_' . $filename_suffix . '_' . $prep_date . '.csv"');
+    header('Content-Disposition: attachment; filename="Kitchen_Report_' . $prep_date . '.csv"');
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    if ($export_type === 'juices') {
-        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Dispatched', 'Delivery Result', 'POS Check'));
-    } else {
-        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Dispatched', 'Delivery Result', 'POS Check'));
-    }
+    fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Food / Meals', 'Dispatched', 'Delivery Result', 'POS Check'));
 
     foreach ($logs as $log) {
-        // Determine if this row is a juice plan or a meal plan
-        $is_juice_plan = (stripos($log->allowed_categories, 'Juices') !== false || stripos($log->plan_name, 'juice') !== false || stripos($log->plan_name, 'cleanse') !== false);
-        
-        // Filter out rows that don't belong in this specific CSV export
-        if ($export_type === 'juices' && !$is_juice_plan) continue;
-        if ($export_type === 'meals' && $is_juice_plan) continue;
-
         $order = wc_get_order($log->wc_order_id);
         $sub_user = get_userdata($log->user_id);
         
@@ -182,38 +167,32 @@ function cmp_export_kitchen_csv() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
+        $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
-        $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
-        $pending_tag = "[Pending Chef]";
 
-        $dispatched = $log->dispatch_status ? 'Yes' : 'No';
-        $delivery = $log->delivery_result ?: 'Pending';
-        $pos_check = $log->pos_updated ? 'Yes' : 'No';
-
-        if ($export_type === 'juices') {
-            $j1 = '-'; $j2 = '-'; $j3 = '-';
-            if ($log->is_chefs_choice && !$is_assigned) {
-                $j1 = $pending_tag; $j2 = $pending_tag; $j3 = $pending_tag;
-            } else {
-                if ($log->juice_1_id) $j1 = ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
-                if ($log->juice_2_id) $j2 = ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
-                if ($log->juice_3_id) $j3 = ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
-            }
-            fputcsv($output, array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies, $log->plan_name, $j1, $j2, $j3, $dispatched, $delivery, $pos_check));
-        
+        if ($log->is_chefs_choice && !$is_assigned) {
+            $meals_list[] = "Chef's Choice (Pending Assignment)";
+        } elseif ($log->juice_1_id) {
+            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+            $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
+            $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
+            $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
         } else {
-            $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
-            if ($log->is_chefs_choice && !$is_assigned) {
-                $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
-            } else {
-                if ($log->breakfast_id) $b = ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
-                if ($log->lunch_id)     $l = ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
-                if ($log->dinner_id)    $d = ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
-                if ($log->snack_1_id)   $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
-                if ($log->snack_2_id)   $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
-            }
-            fputcsv($output, array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies, $log->plan_name, $b, $l, $d, $s1, $s2, $dispatched, $delivery, $pos_check));
+            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
+            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
+            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
+            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
+            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
         }
+
+        $meals_formatted = implode("\n", $meals_list); 
+
+        fputcsv($output, array(
+            $full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies,
+            $log->plan_name, $meals_formatted, $log->dispatch_status ? 'Yes' : 'No',
+            $log->delivery_result ?: 'Pending', $log->pos_updated ? 'Yes' : 'No'
+        ));
     }
     fclose($output);
     exit;
@@ -322,17 +301,15 @@ function cmp_render_kitchen_portal() {
         if ($log->is_chefs_choice && !$is_assigned) {
             $meals_list[] = "Chef's Choice (Pending Assignment)";
         } elseif ($log->juice_1_id) {
-            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
-            $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
-            $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
-            $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
+            $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown');
+            $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown');
+            $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown');
         } else {
-            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
-            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
-            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
-            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
-            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
-            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
+            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown');
+            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown');
+            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown');
+            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown');
+            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown');
         }
 
         $customers[] = array(
@@ -405,11 +382,7 @@ function cmp_render_kitchen_portal() {
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="<?php echo site_url('/chef-dashboard/'); ?>" style="background: #0073aa; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
-                
-                <!-- FIX: DUAL EXPORT BUTTONS -->
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date)); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
-                
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export to Excel</a>
                 <button onclick="window.print()" style="background: #46b450; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Print PDF</button>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Log Out</a>
             </div>
