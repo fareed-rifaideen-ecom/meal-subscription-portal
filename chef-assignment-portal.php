@@ -139,9 +139,12 @@ function cmp_render_chef_assignment_desk() {
                 <h1 style="margin:0; color:#fff;">Assignment Desk</h1>
                 <p style="margin:5px 0 0 0; color:#ccc;">Select meals for "Chef's Choice" customers.</p>
             </div>
-            <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <a href="<?php echo site_url('/kitchen-portal/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Report ⇗</a>
+                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
+            </div>
         </div>
-
+        
         <div class="chef-tabs">
             <button class="chef-tab-btn active" onclick="switchChefTab(event, 'tab-pending')">
                 Pending Chef's Selections <span style="background:#d63638; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em; margin-left:5px;"><?php echo count($pending_customers); ?></span>
