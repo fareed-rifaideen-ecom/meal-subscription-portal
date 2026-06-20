@@ -26,26 +26,36 @@ function cmp_render_chef_assignment_desk() {
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
 
-    // 3. Fetch All Active & Paused Subscriptions
-    $raw_subs = $wpdb->get_results("SELECT * FROM $table_subs WHERE status IN ('active', 'paused') ORDER BY id DESC");
+    $today_time = date('Y-m-d H:i:s');
+    $today_date = date('Y-m-d');
+
+    // 3. Fetch Subs (using same robust join as FOH Portal)
+    $raw_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status = 'active' ORDER BY s.id DESC");
 
     $pending_customers = array();
     $all_customers = array();
 
     foreach ($raw_subs as $sub) {
+        
+        // --- FIX 1: FILTER OUT OLD/WIPED OUT DATA ---
+        // Ensure the plan isn't expired and hasn't consumed all its days
+        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        if ($usage_days >= $sub->total_days || $sub->expiry_date < $today_time) {
+            continue; // Skip this customer, they are done.
+        }
+
         $order = wc_get_order($sub->wc_order_id);
-        $sub_user = get_userdata($sub->user_id);
         
         // Bulletproof Customer Name Fetching
         $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
         $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
         $fallback_name = trim($fname . ' ' . $lname);
-        if (empty($fallback_name)) $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
+        if (empty($fallback_name)) $fallback_name = $sub->display_name;
         
         $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
         if (empty(trim($full_name))) { $full_name = $fallback_name; }
 
-        $email = $order ? $order->get_billing_email() : ($sub_user ? $sub_user->user_email : '');
+        $email = $order ? $order->get_billing_email() : $sub->user_email;
         $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
 
         $timing = !empty($sub->delivery_timing) ? $sub->delivery_timing : '';
@@ -87,8 +97,9 @@ function cmp_render_chef_assignment_desk() {
 
         $all_customers[] = $customer_data;
 
-        // 4. Check if they have PENDING Chef's Choice days
-        $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1", $sub->id));
+        // --- FIX 2: PENDING LOGIC (FUTURE DATES ONLY) ---
+        // Only look at TODAY and FUTURE dates. Ignore past empty days.
+        $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1 AND target_date >= %s", $sub->id, $today_date));
         $is_pending = false;
         
         foreach($chef_logs as $log) {
@@ -138,6 +149,7 @@ function cmp_render_chef_assignment_desk() {
             <button class="chef-tab-btn" onclick="switchChefTab(event, 'tab-all')">All Active Customers</button>
         </div>
 
+        <!-- TAB 1: PENDING -->
         <div id="tab-pending" class="chef-tab-content active">
             <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by name, email, or phone...">
             <div style="overflow-x: auto;">
@@ -185,6 +197,7 @@ function cmp_render_chef_assignment_desk() {
             </div>
         </div>
 
+        <!-- TAB 2: ALL CUSTOMERS -->
         <div id="tab-all" class="chef-tab-content">
             <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers...">
             <div style="overflow-x: auto;">
@@ -205,10 +218,7 @@ function cmp_render_chef_assignment_desk() {
                             $search_str = strtolower($c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
                         ?>
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td>
-                                    <strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id'] > 0 ? '#'.esc_html($c['order_id']) : '<span style="color:#d63638;">Manual</span>'; ?></strong>
-                                    <?php if($c['status'] === 'paused') echo '<br><span style="font-size:0.8em; background:#fef3c7; color:#b45309; padding:2px 6px; border-radius:4px; font-weight:bold;">Paused</span>'; ?>
-                                </td>
+                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id'] > 0 ? '#'.esc_html($c['order_id']) : '<span style="color:#d63638;">Manual</span>'; ?></strong></td>
                                 <td>
                                     <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
                                     <span style="color: #666;"><?php echo esc_html($c['email']); ?></span><br>
