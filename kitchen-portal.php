@@ -45,8 +45,16 @@ function cmp_ajax_assign_chef_meals() {
     
     $log_id = intval($_POST['log_id']);
 
-    $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
+    $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id, target_date FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
+    
     if ($log_row) {
+        
+        // --- NEW: STRICT MENU BOUNDARY BACKEND CHECK ---
+        $menu_boundary = get_option('cmp_menu_boundary', '');
+        if (!empty($menu_boundary) && $log_row->target_date > $menu_boundary) {
+            wp_send_json_error('The menu for this date is pending release. Meals cannot be assigned yet.');
+        }
+
         $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name, allowed_categories FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id));
         if ($sub) {
             $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
@@ -89,6 +97,7 @@ function cmp_export_kitchen_csv() {
 
     global $wpdb;
     $prep_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
+    $export_type = isset($_GET['type']) ? sanitize_text_field($_GET['type']) : 'meals'; 
     
     $end_date = date('Y-m-d', strtotime($prep_date . ' + 2 days'));
     
@@ -104,14 +113,25 @@ function cmp_export_kitchen_csv() {
     $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
     $food_map = array(); foreach ($foods as $f) { $food_map[$f->id] = $f->food_name; }
 
+    $filename_suffix = ($export_type === 'juices') ? 'Juice_Plans' : 'Meal_Plans';
+    
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="Kitchen_Report_' . $prep_date . '.csv"');
+    header('Content-Disposition: attachment; filename="Kitchen_Report_' . $filename_suffix . '_' . $prep_date . '.csv"');
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Food / Meals', 'Dispatched', 'Delivery Result', 'POS Check'));
+    if ($export_type === 'juices') {
+        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Dispatched', 'Delivery Result', 'POS Check'));
+    } else {
+        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Dispatched', 'Delivery Result', 'POS Check'));
+    }
 
     foreach ($logs as $log) {
+        $is_juice_plan = (stripos($log->allowed_categories, 'Juices') !== false || stripos($log->plan_name, 'juice') !== false || stripos($log->plan_name, 'cleanse') !== false);
+        
+        if ($export_type === 'juices' && !$is_juice_plan) continue;
+        if ($export_type === 'meals' && $is_juice_plan) continue;
+
         $order = wc_get_order($log->wc_order_id);
         $sub_user = get_userdata($log->user_id);
         
@@ -167,32 +187,38 @@ function cmp_export_kitchen_csv() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
+        $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+        $pending_tag = "[Pending Chef]";
 
-        if ($log->is_chefs_choice && !$is_assigned) {
-            $meals_list[] = "Chef's Choice (Pending Assignment)";
-        } elseif ($log->juice_1_id) {
-            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
-            $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
-            $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
-            $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
+        $dispatched = $log->dispatch_status ? 'Yes' : 'No';
+        $delivery = $log->delivery_result ?: 'Pending';
+        $pos_check = $log->pos_updated ? 'Yes' : 'No';
+
+        if ($export_type === 'juices') {
+            $j1 = '-'; $j2 = '-'; $j3 = '-';
+            if ($log->is_chefs_choice && !$is_assigned) {
+                $j1 = $pending_tag; $j2 = $pending_tag; $j3 = $pending_tag;
+            } else {
+                if ($log->juice_1_id) $j1 = ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
+                if ($log->juice_2_id) $j2 = ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
+                if ($log->juice_3_id) $j3 = ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
+            }
+            fputcsv($output, array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies, $log->plan_name, $j1, $j2, $j3, $dispatched, $delivery, $pos_check));
+        
         } else {
-            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
-            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
-            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
-            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
-            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
-            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
+            $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
+            if ($log->is_chefs_choice && !$is_assigned) {
+                $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
+            } else {
+                if ($log->breakfast_id) $b = ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
+                if ($log->lunch_id)     $l = ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
+                if ($log->dinner_id)    $d = ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
+                if ($log->snack_1_id)   $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
+                if ($log->snack_2_id)   $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
+            }
+            fputcsv($output, array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies, $log->plan_name, $b, $l, $d, $s1, $s2, $dispatched, $delivery, $pos_check));
         }
-
-        $meals_formatted = implode("\n", $meals_list); 
-
-        fputcsv($output, array(
-            $full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies,
-            $log->plan_name, $meals_formatted, $log->dispatch_status ? 'Yes' : 'No',
-            $log->delivery_result ?: 'Pending', $log->pos_updated ? 'Yes' : 'No'
-        ));
     }
     fclose($output);
     exit;
@@ -221,8 +247,8 @@ function cmp_render_kitchen_portal() {
 
     global $wpdb;
     $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
-
     $end_date = date('Y-m-d', strtotime($selected_date . ' + 2 days'));
+    $menu_boundary = get_option('cmp_menu_boundary', ''); // Fetch boundary for UI rendering
 
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
@@ -382,7 +408,10 @@ function cmp_render_kitchen_portal() {
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="<?php echo site_url('/chef-dashboard/'); ?>" style="background: #0073aa; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export to Excel</a>
+                
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date)); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
+                
                 <button onclick="window.print()" style="background: #46b450; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Print PDF</button>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Log Out</a>
             </div>
@@ -471,82 +500,92 @@ function cmp_render_kitchen_portal() {
                             <td><strong><?php echo esc_html($c['plan']); ?></strong></td>
                             <td>
                                 <?php if ($c['is_chefs_choice']): ?>
-                                    <?php 
-                                    $display_style = $c['is_assigned'] ? 'block' : 'none'; 
-                                    $form_style = $c['is_assigned'] ? 'none' : 'block'; 
-                                    ?>
-                                    
-                                    <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
-                                        <ul style="margin:0; padding-left:20px; line-height: 1.6;">
-                                            <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
-                                        </ul>
-                                        <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
-                                    </div>
                                     
                                     <?php 
-                                    $is_juice_plan = (stripos($c['allowed_categories'], 'Juices') !== false || stripos($c['plan'], 'juice') !== false || stripos($c['plan'], 'cleanse') !== false);
-                                    preg_match('/(\d+)\s*Meal/i', $c['plan'], $m);
-                                    $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
+                                    // --- MENU BOUNDARY UI LOCK ---
+                                    $is_future_quarter = (!empty($menu_boundary) && $c['target_date'] > $menu_boundary);
                                     
-                                    if (!$is_juice_plan) {
-                                        $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
-                                        $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
-                                    } else {
-                                        $allowed_cats = ['Juices'];
-                                        $snack_count = 0;
-                                    }
-                                    $raw = $c['raw_log'];
-                                    ?>
+                                    if ($is_future_quarter && !$c['is_assigned']): ?>
+                                        <div style="color:#64748b; font-weight:bold; font-size:0.9em; background:#f1f5f9; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">
+                                            [Next Quarter Menu Pending Release]
+                                        </div>
+                                    <?php else: ?>
                                     
-                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
-                                        <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
+                                        <?php 
+                                        $display_style = $c['is_assigned'] ? 'block' : 'none'; 
+                                        $form_style = $c['is_assigned'] ? 'none' : 'block'; 
+                                        ?>
                                         
-                                        <?php if(!$is_juice_plan): ?>
-                                            <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
-                                                <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                    <option value="">- <?php echo $cat; ?> -</option>
-                                                    <?php foreach($foods as $f) if($f->category_name == $cat) {
-                                                        $sel = ($raw->{strtolower($cat).'_id'} == $f->id) ? 'selected' : '';
-                                                        echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                    } ?>
-                                                </select>
-                                            <?php endif; endforeach; ?>
+                                        <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
+                                            <ul style="margin:0; padding-left:20px; line-height: 1.6;">
+                                                <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
+                                            </ul>
+                                            <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
+                                        </div>
+                                        
+                                        <?php 
+                                        $is_juice_plan = (stripos($c['allowed_categories'], 'Juices') !== false || stripos($c['plan'], 'juice') !== false || stripos($c['plan'], 'cleanse') !== false);
+                                        preg_match('/(\d+)\s*Meal/i', $c['plan'], $m);
+                                        $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
+                                        
+                                        if (!$is_juice_plan) {
+                                            $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
+                                            $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
+                                        } else {
+                                            $allowed_cats = ['Juices'];
+                                            $snack_count = 0;
+                                        }
+                                        $raw = $c['raw_log'];
+                                        ?>
+                                        
+                                        <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
+                                            <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
                                             
-                                            <?php if($snack_count > 0): ?>
-                                                <select class="chef-meal-select" data-cat="snack_1" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                    <option value="">- Snack 1 -</option>
-                                                    <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
-                                                        $sel = ($raw->snack_1_id == $f->id) ? 'selected' : '';
-                                                        echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                    } ?>
-                                                </select>
-                                                <?php if($snack_count == 2): ?>
-                                                    <select class="chef-meal-select" data-cat="snack_2" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                        <option value="">- Snack 2 -</option>
-                                                        <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
-                                                            $sel = ($raw->snack_2_id == $f->id) ? 'selected' : '';
+                                            <?php if(!$is_juice_plan): ?>
+                                                <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
+                                                    <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                        <option value="">- <?php echo $cat; ?> -</option>
+                                                        <?php foreach($foods as $f) if($f->category_name == $cat) {
+                                                            $sel = ($raw->{strtolower($cat).'_id'} == $f->id) ? 'selected' : '';
                                                             echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
                                                         } ?>
                                                     </select>
+                                                <?php endif; endforeach; ?>
+                                                
+                                                <?php if($snack_count > 0): ?>
+                                                    <select class="chef-meal-select" data-cat="snack_1" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                        <option value="">- Snack 1 -</option>
+                                                        <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
+                                                            $sel = ($raw->snack_1_id == $f->id) ? 'selected' : '';
+                                                            echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                        } ?>
+                                                    </select>
+                                                    <?php if($snack_count == 2): ?>
+                                                        <select class="chef-meal-select" data-cat="snack_2" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                            <option value="">- Snack 2 -</option>
+                                                            <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
+                                                                $sel = ($raw->snack_2_id == $f->id) ? 'selected' : '';
+                                                                echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                            } ?>
+                                                        </select>
+                                                    <?php endif; ?>
                                                 <?php endif; ?>
-                                            <?php endif; ?>
 
-                                        <?php else: ?>
-                                            <?php for($j=1; $j<=3; $j++): ?>
-                                                <select class="chef-meal-select" data-cat="juice_<?php echo $j; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                    <option value="">- Juice <?php echo $j; ?> -</option>
-                                                    <?php foreach($foods as $f) if($f->category_name == 'Juices') {
-                                                        $sel = ($raw->{'juice_'.$j.'_id'} == $f->id) ? 'selected' : '';
-                                                        echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                    } ?>
-                                                </select>
-                                            <?php endfor; ?>
-                                        <?php endif; ?>
-                                        
-                                        <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:5px; transition: 0.2s;">Save Meals</button>
-                                    </div>
-                                    
-                                <?php else: ?>
+                                            <?php else: ?>
+                                                <?php for($j=1; $j<=3; $j++): ?>
+                                                    <select class="chef-meal-select" data-cat="juice_<?php echo $j; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                        <option value="">- Juice <?php echo $j; ?> -</option>
+                                                        <?php foreach($foods as $f) if($f->category_name == 'Juices') {
+                                                            $sel = ($raw->{'juice_'.$j.'_id'} == $f->id) ? 'selected' : '';
+                                                            echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
+                                                        } ?>
+                                                    </select>
+                                                <?php endfor; ?>
+                                            <?php endif; ?>
+                                            
+                                            <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:5px; transition: 0.2s;">Save Meals</button>
+                                        </div>
+                                    <?php endif; ?> <?php else: ?>
                                     <ul style="margin:0; padding-left:20px; line-height: 1.6;">
                                         <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
                                     </ul>
