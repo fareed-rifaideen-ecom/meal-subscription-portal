@@ -42,10 +42,15 @@ function cmp_ajax_save_daily_log() {
         }
     }
 
-    // STRICT GLOBAL MENU BOUNDARY CHECK
+    // --- STRICT GLOBAL MENU BOUNDARY CHECK ---
     $menu_boundary = get_option('cmp_menu_boundary', '');
-    if (!empty($menu_boundary) && $target_date > $menu_boundary && !$is_privileged) {
-        wp_send_json_error('The menu for this date is pending release and cannot be edited yet.');
+    if (!empty($menu_boundary) && $target_date > $menu_boundary) {
+        // If ANY specific meal is attempting to be saved past the boundary, reject it.
+        $has_meals = !empty($_POST['breakfast']) || !empty($_POST['lunch']) || !empty($_POST['dinner']) || !empty($_POST['snack_1']) || !empty($_POST['snack_2']) || !empty($_POST['juice_1']) || !empty($_POST['juice_2']) || !empty($_POST['juice_3']);
+        
+        if ($has_meals) {
+            wp_send_json_error('The menu for this quarter is pending release. Specific meals cannot be selected yet.');
+        }
     }
     
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
@@ -120,7 +125,7 @@ function cmp_render_customer_portal() {
     $blackout_dates_array = !empty($blackout_string) ? explode(',', str_replace(' ', '', $blackout_string)) : array();
     $raw_wa               = get_option('cmp_whatsapp_number', '');
     $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
-    $menu_boundary        = get_option('cmp_menu_boundary', ''); // Fetched globally now
+    $menu_boundary        = get_option('cmp_menu_boundary', ''); 
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager'));
@@ -603,7 +608,10 @@ function cmp_render_customer_portal() {
                                 <td style="text-align:center;">
                                     <?php 
                                     if ($is_chef_override) {
-                                        if ($saved_chefs_choice) {
+                                        // NEW: Check if this row is past the menu boundary and lock the Chef out of assigning meals
+                                        if ($log && !empty($menu_boundary) && $log->target_date > $menu_boundary) {
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" disabled style="background:#94a3b8; color:#fff; border:none; font-weight:bold; cursor:not-allowed; width:100%;">Menu Pending</button>';
+                                        } elseif ($saved_chefs_choice) {
                                             $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
                                             $chef_btn_color = ($is_chef_assigned) ? '#46b450' : '#0073aa';
                                             echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">'.$chef_btn_text.'</button>';
@@ -690,7 +698,7 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // --- STRICT GLOBAL BOUNDARY LOCK ---
+        // --- NEW: STRICT GLOBAL MENU BOUNDARY CHECKER ---
         function checkMenuBoundary(rowElement) {
             if (!menuBoundary) return false;
             var dateVal = rowElement.find('.cmp-date-picker').val();
@@ -700,30 +708,24 @@ function cmp_render_customer_portal() {
             var selectContainer = rowElement.find('td').filter(function() {
                 return $(this).find('.cmp-meal-select, select[class^="cmp-juice-"]').length > 0;
             });
-            var chefChoiceCell = rowElement.find('td:nth-child(3)');
-            var macroCell = rowElement.find('.cmp-macro-display').closest('td');
             var btn = rowElement.find('.cmp-save-row');
             
             rowElement.find('.boundary-overlay').remove();
 
-            if (isFutureQuarter && !isAdminOverride && !isChefOverride) {
+            if (isFutureQuarter) {
+                // Hide dropdowns for everyone (Customer, Admin, Chef)
                 selectContainer.find('select').hide();
-                chefChoiceCell.find('input, .cmp-mobile-label').hide();
-                macroCell.hide();
-                
                 selectContainer.append('<div class="boundary-overlay" style="color:#64748b; font-weight:bold; font-size:0.9em; background:#f1f5f9; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">Next Quarter Menu Pending Release</div>');
                 
-                btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
+                if (isChefOverride) {
+                    btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
+                }
+                // We leave the button active for Customer/Admin so they can lock in Chef's Choice!
                 
                 return true;
             } else {
+                // Restore standard visibility
                 selectContainer.find('select').show();
-                chefChoiceCell.find('input, .cmp-mobile-label').show();
-                macroCell.show();
-                
-                if (btn.text() === 'Menu Pending') {
-                    btn.text('Save').css({'background':'#0073aa', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
-                }
                 return false;
             }
         }
@@ -872,9 +874,11 @@ function cmp_render_customer_portal() {
             var dateVal = rowElement.find('.cmp-date-picker').val();
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked') ? 1 : 0;
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
+            var isFutureQuarter = (menuBoundary && dateVal > menuBoundary);
             
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
 
+            // Quota checking logic ensures they select Chef's choice if meals are hidden!
             var requireQuotaCheck = false;
             if (allowedMeals > 0 && !isAdminOverride) { 
                 if (isChefOverride) {
@@ -891,7 +895,11 @@ function cmp_render_customer_portal() {
                 });
                 
                 if (selectedMainCount !== allowedMeals) {
-                    alert('Please select exactly ' + allowedMeals + ' main meal(s) before saving.');
+                    if (isFutureQuarter) {
+                        alert('The specific menu is not available yet. Please select "Chef\'s Choice" to secure this date.');
+                    } else {
+                        alert('Please select exactly ' + allowedMeals + ' main meal(s) before saving.');
+                    }
                     return;
                 }
             }
@@ -905,14 +913,15 @@ function cmp_render_customer_portal() {
                 sub_id: btn.data('sub-id'),
                 date: dateVal,
                 chefs_choice: isChefsChoice,
-                breakfast: rowElement.find('.cmp-meal-select[data-cat="Breakfast"]').val() || null,
-                lunch: rowElement.find('.cmp-meal-select[data-cat="Lunch"]').val() || null,
-                dinner: rowElement.find('.cmp-meal-select[data-cat="Dinner"]').val() || null,
-                snack_1: rowElement.find('.cmp-snack-1').val() || null,
-                snack_2: rowElement.find('.cmp-snack-2').val() || null,
-                juice_1: rowElement.find('.cmp-juice-1').val() || null, 
-                juice_2: rowElement.find('.cmp-juice-2').val() || null,
-                juice_3: rowElement.find('.cmp-juice-3').val() || null
+                // If it's a future quarter, force ALL meals to null so nothing slips past the UI into the DB
+                breakfast: isFutureQuarter ? null : (rowElement.find('.cmp-meal-select[data-cat="Breakfast"]').val() || null),
+                lunch:     isFutureQuarter ? null : (rowElement.find('.cmp-meal-select[data-cat="Lunch"]').val() || null),
+                dinner:    isFutureQuarter ? null : (rowElement.find('.cmp-meal-select[data-cat="Dinner"]').val() || null),
+                snack_1:   isFutureQuarter ? null : (rowElement.find('.cmp-snack-1').val() || null),
+                snack_2:   isFutureQuarter ? null : (rowElement.find('.cmp-snack-2').val() || null),
+                juice_1:   isFutureQuarter ? null : (rowElement.find('.cmp-juice-1').val() || null), 
+                juice_2:   isFutureQuarter ? null : (rowElement.find('.cmp-juice-2').val() || null),
+                juice_3:   isFutureQuarter ? null : (rowElement.find('.cmp-juice-3').val() || null)
             };
 
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
