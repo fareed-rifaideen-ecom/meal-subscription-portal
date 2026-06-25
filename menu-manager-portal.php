@@ -94,7 +94,17 @@ function cmp_render_menu_manager() {
         $notification = '<div style="background:#f8d7da; color:#721c24; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Deleted:</strong> Food item removed permanently.</div>';
     }
 
+    // ACTION 4: Update Menu Boundary
+    if ( isset($_POST['update_boundary_frontend']) ) {
+        $new_boundary = sanitize_text_field($_POST['boundary_date']);
+        update_option('cmp_menu_boundary', $new_boundary);
+        
+        $msg_text = empty($new_boundary) ? 'Menu Boundary Cleared. All dates unlocked.' : 'Menu Boundary Date updated to ' . date('d M Y', strtotime($new_boundary)) . '.';
+        $notification = '<div style="background:#d4edda; color:#155724; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Success:</strong> ' . $msg_text . '</div>';
+    }
+
     $all_foods = $wpdb->get_results("SELECT * FROM $table_foods ORDER BY category_name ASC, food_name ASC");
+    $current_boundary = get_option('cmp_menu_boundary', '');
 
     ob_start();
     ?>
@@ -113,6 +123,17 @@ function cmp_render_menu_manager() {
                     </label>
                     <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB AFTER SUBMIT -->
                     <button type="submit" name="upload_csv_frontend" style="background: #38bdf8; color: #0f172a; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">Upload & Sync Menu</button>
+                </form>
+
+                <!-- NEW: MENU BOUNDARY SETTINGS -->
+                <hr style="border: 0; border-top: 1px dashed #cbd5e1; margin: 25px 0 20px 0;">
+                <h3 style="margin-top: 0; color: #b45309;">Quarterly Menu Boundary</h3>
+                <p style="font-size: 0.9em; color: #856404; line-height: 1.4;">Prevent customers from picking meals in the next quarter until you've uploaded the new menu.</p>
+                <form method="POST" style="margin: 0;">
+                    <input type="date" name="boundary_date" value="<?php echo esc_attr($current_boundary); ?>" style="width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #d97706; border-radius: 4px; font-weight: bold; color: #b45309; background: #fffbdd; box-sizing: border-box;">
+                    <input type="hidden" name="sa_tab" value="sa-menu">
+                    <button type="submit" name="update_boundary_frontend" style="background: #b45309; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; width: 100%;">Set Boundary Date</button>
+                    <div style="font-size: 0.8em; color: #666; margin-top: 8px; text-align: center;">Clear the date and save to unlock all days.</div>
                 </form>
             </div>
 
