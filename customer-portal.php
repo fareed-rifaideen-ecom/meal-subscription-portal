@@ -12,10 +12,9 @@ function cmp_ajax_save_daily_log() {
 
     if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
-    $log_id          = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
-    $sub_id          = intval($_POST['sub_id']);
-    $target_date     = sanitize_text_field($_POST['date']);
-    $is_reserve_slot = isset($_POST['reserve_slot']) ? intval($_POST['reserve_slot']) : 0;
+    $log_id       = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
+    $sub_id       = intval($_POST['sub_id']);
+    $target_date  = sanitize_text_field($_POST['date']);
     
     // Check privileges
     $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
@@ -42,6 +41,12 @@ function cmp_ajax_save_daily_log() {
             );
         }
     }
+
+    // STRICT GLOBAL MENU BOUNDARY CHECK
+    $menu_boundary = get_option('cmp_menu_boundary', '');
+    if (!empty($menu_boundary) && $target_date > $menu_boundary && !$is_privileged) {
+        wp_send_json_error('The menu for this date is pending release and cannot be edited yet.');
+    }
     
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -49,59 +54,44 @@ function cmp_ajax_save_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    $menu_boundary = get_option('cmp_menu_boundary', '');
     $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
     preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
     $allowed_quota = isset($m[1]) ? intval($m[1]) : 0;
 
-    // --- MENU BOUNDARY LOGIC (RESERVE SLOT) ---
-    if ($is_reserve_slot === 1 && !empty($menu_boundary) && $target_date > $menu_boundary) {
-        $data = array(
-            'user_id'         => $sub->user_id,
-            'subscription_id' => $sub_id,
-            'target_date'     => $target_date,
-            'is_chefs_choice' => 0,
-            'breakfast_id'    => null, 'lunch_id'   => null, 'dinner_id'  => null,
-            'snack_1_id'      => null, 'snack_2_id' => null,
-            'juice_1_id'      => null, 'juice_2_id' => null, 'juice_3_id' => null,
-            'is_locked'       => 0 // 0 means it remains editable for when the menu drops!
-        );
-    } else {
-        // --- STANDARD QUOTA ENFORCEMENT ---
-        if (!$is_juice && $allowed_quota > 0 && !$is_admin) {
-            $submitted_count = 0;
-            if (!empty($_POST['breakfast'])) $submitted_count++;
-            if (!empty($_POST['lunch'])) $submitted_count++;
-            if (!empty($_POST['dinner'])) $submitted_count++;
+    // Quota Enforcement
+    if (!$is_juice && $allowed_quota > 0 && !$is_admin) {
+        $submitted_count = 0;
+        if (!empty($_POST['breakfast'])) $submitted_count++;
+        if (!empty($_POST['lunch'])) $submitted_count++;
+        if (!empty($_POST['dinner'])) $submitted_count++;
 
-            if ($submitted_count > $allowed_quota) {
-                wp_send_json_error("Quota Exceeded! This plan only allows {$allowed_quota} main meal(s) per day.");
-            }
+        if ($submitted_count > $allowed_quota) {
+            wp_send_json_error("Quota Exceeded! This plan only allows {$allowed_quota} main meal(s) per day.");
         }
-
-        $data = array(
-            'user_id'         => $sub->user_id,
-            'subscription_id' => $sub_id,
-            'target_date'     => $target_date,
-            'is_chefs_choice' => isset($_POST['chefs_choice']) ? intval($_POST['chefs_choice']) : 0,
-            'breakfast_id'    => !empty($_POST['breakfast']) ? intval($_POST['breakfast']) : null,
-            'lunch_id'        => !empty($_POST['lunch']) ? intval($_POST['lunch']) : null,
-            'dinner_id'       => !empty($_POST['dinner']) ? intval($_POST['dinner']) : null,
-            'snack_1_id'      => !empty($_POST['snack_1']) ? intval($_POST['snack_1']) : null,
-            'snack_2_id'      => !empty($_POST['snack_2']) ? intval($_POST['snack_2']) : null,
-            'juice_1_id'      => !empty($_POST['juice_1']) ? intval($_POST['juice_1']) : null,
-            'juice_2_id'      => !empty($_POST['juice_2']) ? intval($_POST['juice_2']) : null,
-            'juice_3_id'      => !empty($_POST['juice_3']) ? intval($_POST['juice_3']) : null,
-            'is_locked'       => 1 // Standard row locks permanently on save
-        );
     }
+
+    $data = array(
+        'user_id'         => $sub->user_id,
+        'subscription_id' => $sub_id,
+        'target_date'     => $target_date,
+        'is_chefs_choice' => isset($_POST['chefs_choice']) ? intval($_POST['chefs_choice']) : 0,
+        'breakfast_id'    => !empty($_POST['breakfast']) ? intval($_POST['breakfast']) : null,
+        'lunch_id'        => !empty($_POST['lunch']) ? intval($_POST['lunch']) : null,
+        'dinner_id'       => !empty($_POST['dinner']) ? intval($_POST['dinner']) : null,
+        'snack_1_id'      => !empty($_POST['snack_1']) ? intval($_POST['snack_1']) : null,
+        'snack_2_id'      => !empty($_POST['snack_2']) ? intval($_POST['snack_2']) : null,
+        'juice_1_id'      => !empty($_POST['juice_1']) ? intval($_POST['juice_1']) : null,
+        'juice_2_id'      => !empty($_POST['juice_2']) ? intval($_POST['juice_2']) : null,
+        'juice_3_id'      => !empty($_POST['juice_3']) ? intval($_POST['juice_3']) : null,
+        'is_locked'       => 1 
+    );
 
     if ($log_id > 0) {
         $wpdb->update($table_logs, $data, array('id' => $log_id));
-        wp_send_json_success(array('msg' => 'Updated', 'is_reserved' => ($data['is_locked'] === 0)));
+        wp_send_json_success(array('msg' => 'Updated'));
     } else {
         $wpdb->insert($table_logs, $data);
-        wp_send_json_success(array('new_log_id' => $wpdb->insert_id, 'is_reserved' => ($data['is_locked'] === 0)));
+        wp_send_json_success(array('new_log_id' => $wpdb->insert_id));
     }
 }
 
@@ -124,22 +114,17 @@ function cmp_render_customer_portal() {
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
     
-    $dynamic_cutoff_hour = intval( get_option('cmp_cutoff_time', '11') );
-    $label_chefs_choice = get_option('cmp_label_chefs_choice', "Chef's Choice");
-    $blackout_string = get_option('cmp_blackout_dates', '');
+    $dynamic_cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
+    $label_chefs_choice   = get_option('cmp_label_chefs_choice', "Chef's Choice");
+    $blackout_string      = get_option('cmp_blackout_dates', '');
     $blackout_dates_array = !empty($blackout_string) ? explode(',', str_replace(' ', '', $blackout_string)) : array();
-    $raw_wa = get_option('cmp_whatsapp_number', '');
-    $clean_wa = preg_replace('/[^0-9]/', '', $raw_wa);
+    $raw_wa               = get_option('cmp_whatsapp_number', '');
+    $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
+    $menu_boundary        = get_option('cmp_menu_boundary', ''); // Fetched globally now
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager'));
     $is_chef_override  = isset($_GET['chef_override_sub']) && (current_user_can('manage_options') || current_user_can('kitchen_staff') || current_user_can('menu_manager') || current_user_can('foh_manager'));
-    
-    // --- NEW: INLINE FOH ADMIN SETTINGS MANAGER ---
-    if ( isset($_POST['cmp_update_boundary']) && ($is_admin_override || current_user_can('manage_options')) ) {
-        update_option('cmp_menu_boundary', sanitize_text_field($_POST['boundary_date']));
-    }
-    $menu_boundary = get_option('cmp_menu_boundary', '');
 
     if ($is_admin_override) {
         $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval($_GET['admin_edit_sub'])) );
@@ -304,20 +289,6 @@ function cmp_render_customer_portal() {
     </style>
 
     <div class="cmp-dashboard-wrap">
-        
-        <?php if ($is_admin_override || current_user_can('manage_options')): ?>
-        <!-- FOH INLINE SETTINGS -->
-        <div style="background:#fffbdd; color:#856404; padding:15px 25px; border-radius:8px; margin-bottom:20px; border:1px solid #ffeeba; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-            <form method="POST" style="margin:0; display:flex; align-items:center; gap:15px; flex-wrap:wrap;">
-                <strong style="font-size:1.1em; color:#b45309;">⚙️ Admin Menu Control:</strong>
-                <label style="font-weight:bold;">Current Menu Valid Until:</label>
-                <input type="date" name="boundary_date" value="<?php echo esc_attr($menu_boundary); ?>" style="padding:6px 10px; border:1px solid #d97706; border-radius:4px; font-weight:bold; color:#b45309;">
-                <button type="submit" name="cmp_update_boundary" style="background:#b45309; color:#fff; border:none; padding:8px 20px; border-radius:4px; font-weight:bold; cursor:pointer;">Set Boundary</button>
-                <span style="font-size:0.9em; opacity:0.9;">Dates chosen past this boundary will hide the food dropdowns and allow customers to "Reserve Slots" instead. Update this when you upload the new quarter's menu.</span>
-            </form>
-        </div>
-        <?php endif; ?>
-
         <div style="background: <?php echo $is_chef_override ? '#222222' : '#222'; ?>; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
                 <h1 style="margin:0; color:#fff;">Dashboard</h1>
@@ -480,7 +451,7 @@ function cmp_render_customer_portal() {
                             $log = isset($saved_logs[$i-1]) ? $saved_logs[$i-1] : null;
                             $log_id = $log ? $log->id : 0;
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
-                            $is_locked = ($log && $log->is_locked); // 0 means it's an unlocked reservation
+                            $is_locked = ($log && $log->is_locked);
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
@@ -520,9 +491,6 @@ function cmp_render_customer_portal() {
                                     $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                                 } elseif ($log->dispatch_status == 1) {
                                     $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Out for Delivery</span>';
-                                } elseif ($log_id > 0 && $is_locked == 0) {
-                                    // NEW BADGE: Slot reserved waiting for menu
-                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Slot Reserved</span>';
                                 } elseif ($log_id > 0) {
                                     $status_badge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                                 }
@@ -643,13 +611,12 @@ function cmp_render_customer_portal() {
                                             echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
                                         }
                                     } else {
-                                        // Standard Logic + Reservation Update bypass
                                         if(!$is_locked && !$is_void) {
-                                            echo '<button class="cmp-save-row" data-reserve-only="0" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Save</button>';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Save</button>';
                                         } else {
                                             $btn_attr = (!$is_admin_override) ? 'disabled' : '';
                                             $btn_txt = ($is_admin_override) ? 'Update' : 'Saved';
-                                            echo '<button class="cmp-save-row" data-reserve-only="0" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;" '.$btn_attr.'>'.$btn_txt.'</button>';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;" '.$btn_attr.'>'.$btn_txt.'</button>';
                                         }
                                     }
                                     ?>
@@ -723,7 +690,7 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // --- NEW: MENU BOUNDARY CHECKER ---
+        // --- STRICT GLOBAL BOUNDARY LOCK ---
         function checkMenuBoundary(rowElement) {
             if (!menuBoundary) return false;
             var dateVal = rowElement.find('.cmp-date-picker').val();
@@ -744,19 +711,18 @@ function cmp_render_customer_portal() {
                 chefChoiceCell.find('input, .cmp-mobile-label').hide();
                 macroCell.hide();
                 
-                selectContainer.append('<div class="boundary-overlay" style="color:#b45309; font-weight:bold; font-size:0.9em; background:#fef3c7; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">New Menu Pending Release.<br>Reserve your slot now!</div>');
+                selectContainer.append('<div class="boundary-overlay" style="color:#64748b; font-weight:bold; font-size:0.9em; background:#f1f5f9; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">Next Quarter Menu Pending Release</div>');
                 
-                if (btn.text() === 'Save') {
-                    btn.text('Reserve Slot').css({'background':'#eab308', 'color':'#222'}).data('reserve-only', 1);
-                }
+                btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
+                
                 return true;
             } else {
                 selectContainer.find('select').show();
                 chefChoiceCell.find('input, .cmp-mobile-label').show();
                 macroCell.show();
                 
-                if (btn.text() === 'Reserve Slot') {
-                    btn.text('Save').css({'background':'#0073aa', 'color':'#fff'}).data('reserve-only', 0);
+                if (btn.text() === 'Menu Pending') {
+                    btn.text('Save').css({'background':'#0073aa', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
                 }
                 return false;
             }
@@ -909,29 +875,24 @@ function cmp_render_customer_portal() {
             
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
 
-            // --- CHECK FOR BOUNDARY BYPASS ---
-            var isReserveOnly = (btn.data('reserve-only') == 1 || btn.data('reserve-only') === "1");
-
-            if (!isReserveOnly) {
-                var requireQuotaCheck = false;
-                if (allowedMeals > 0 && !isAdminOverride) { 
-                    if (isChefOverride) {
-                        requireQuotaCheck = true; 
-                    } else if (!isChefsChoice) {
-                        requireQuotaCheck = true; 
-                    }
+            var requireQuotaCheck = false;
+            if (allowedMeals > 0 && !isAdminOverride) { 
+                if (isChefOverride) {
+                    requireQuotaCheck = true; 
+                } else if (!isChefsChoice) {
+                    requireQuotaCheck = true; 
                 }
+            }
 
-                if (requireQuotaCheck) {
-                    var selectedMainCount = 0;
-                    rowElement.find('.cmp-main-meal').each(function() {
-                        if ($(this).val() !== "") selectedMainCount++;
-                    });
-                    
-                    if (selectedMainCount !== allowedMeals) {
-                        alert('Please select exactly ' + allowedMeals + ' main meal(s) before saving.');
-                        return;
-                    }
+            if (requireQuotaCheck) {
+                var selectedMainCount = 0;
+                rowElement.find('.cmp-main-meal').each(function() {
+                    if ($(this).val() !== "") selectedMainCount++;
+                });
+                
+                if (selectedMainCount !== allowedMeals) {
+                    alert('Please select exactly ' + allowedMeals + ' main meal(s) before saving.');
+                    return;
                 }
             }
 
@@ -944,7 +905,6 @@ function cmp_render_customer_portal() {
                 sub_id: btn.data('sub-id'),
                 date: dateVal,
                 chefs_choice: isChefsChoice,
-                reserve_slot: isReserveOnly ? 1 : 0,
                 breakfast: rowElement.find('.cmp-meal-select[data-cat="Breakfast"]').val() || null,
                 lunch: rowElement.find('.cmp-meal-select[data-cat="Lunch"]').val() || null,
                 dinner: rowElement.find('.cmp-meal-select[data-cat="Dinner"]').val() || null,
@@ -960,35 +920,26 @@ function cmp_render_customer_portal() {
                     if(response.data && response.data.new_log_id) { btn.data('log-id', response.data.new_log_id); }
                     rowElement.removeClass('status-pending').addClass('status-saved');
 
-                    if (response.data.is_reserved || isReserveOnly) {
-                        btn.text('Slot Reserved').css({'background':'#eab308', 'color':'#222'});
-                        var newBadge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Slot Reserved</span>';
+                    var newBtnText = (isAdminOverride || isChefOverride) ? 'Update' : 'Saved';
+                    btn.text(newBtnText).css({'background':'#46b450', 'box-shadow':'none'});
+
+                    if (!isAdminOverride && !isChefOverride) {
+                        rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
+                        btn.prop('disabled', true);
+
+                        var newBadge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                         rowElement.find('td:nth-last-child(2)').html(newBadge);
-                        
-                        btn.prop('disabled', false); // Remain editable for when the boundary moves!
 
-                    } else {
-                        var newBtnText = (isAdminOverride || isChefOverride) ? 'Update' : 'Saved';
-                        btn.text(newBtnText).css({'background':'#46b450', 'box-shadow':'none'});
-
-                        if (!isAdminOverride && !isChefOverride) {
-                            rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
-                            btn.prop('disabled', true);
-
-                            var newBadge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
-                            rowElement.find('td:nth-last-child(2)').html(newBadge);
-
-                            if ($(window).width() <= 768) {
-                                rowElement.removeClass('is-open'); 
-                                var $nextRow = rowElement.next('tr.status-pending'); 
-                                if ($nextRow.length) {
-                                    $nextRow.addClass('is-open'); 
-                                    $('html, body').animate({ scrollTop: $nextRow.offset().top - 80 }, 600); 
-                                }
+                        if ($(window).width() <= 768) {
+                            rowElement.removeClass('is-open'); 
+                            var $nextRow = rowElement.next('tr.status-pending'); 
+                            if ($nextRow.length) {
+                                $nextRow.addClass('is-open'); 
+                                $('html, body').animate({ scrollTop: $nextRow.offset().top - 80 }, 600); 
                             }
-                        } else {
-                            btn.prop('disabled', false); 
                         }
+                    } else {
+                        btn.prop('disabled', false); 
                     }
                     
                     rowElement.find('.cmp-date-picker').trigger('change');
@@ -1084,7 +1035,6 @@ function cmp_export_customer_csv() {
         if ($log->pos_updated == 1 && $log->delivery_result === 'Successful') { $status = 'Delivered'; }
         elseif ($log->pos_updated == 1 && in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
         elseif ($log->dispatch_status == 1) { $status = 'Out for Delivery'; }
-        elseif ($log->id > 0 && $log->is_locked == 0) { $status = 'Slot Reserved (Awaiting Menu)'; }
         elseif ($log->id > 0) { $status = 'Confirmed'; }
 
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
