@@ -215,7 +215,7 @@ function cmp_render_customer_portal() {
         
         .cmp-mobile-label { display: none; }
         .macro-mobile { display: none; }
-        .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; }
+        .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; transition: opacity 0.2s; }
 
         .cmp-wa-float {
             position: fixed; bottom: 30px; right: 30px; background-color: #25d366; color: white; border-radius: 50px;
@@ -287,8 +287,7 @@ function cmp_render_customer_portal() {
 
             .cmp-chefs-choice { transform: scale(1.8) !important; margin: 5px 15px 5px 5px !important; }
             
-            .macro-desktop { display: none !important; }
-            .macro-mobile { display: block !important; width: 100%; }
+            .macro-mobile { display: block !important; width: 100%; transition: opacity 0.2s; }
             .cmp-macro-display { display: block !important; margin-top: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px dashed #cbd5e1; font-size: 1.1em !important; }
             .mob-grid { display: flex; flex-wrap: wrap; justify-content: space-between; }
             .mob-grid div { width: 48%; margin-bottom: 5px; }
@@ -664,28 +663,43 @@ function cmp_render_customer_portal() {
             var btn = rowElement.find('.cmp-save-row');
             
             rowElement.find('.boundary-overlay').remove();
+            rowElement.find('.date-prompt-overlay').remove();
+
+            var selectContainer = rowElement.find('td').filter(function() {
+                return $(this).find('select').length > 0;
+            });
 
             if (!dateVal) {
-                selects.hide(); return;
+                // LOCKOUT: No Date Selected
+                selects.hide();
+                chefChoiceCell.find('input, .cmp-mobile-label').hide();
+                macroCell.css('opacity', '0'); // Keeps column structure but hides contents
+                
+                selectContainer.append('<div class="date-prompt-overlay" style="color:#94a3b8; font-size:0.85em; font-style:italic; text-align:center; padding:10px 0;">&larr; Pick a date first</div>');
+                return false;
             }
+
+            macroCell.css('opacity', '1');
 
             var availableFoods = cmpGlobalFoodData.filter(function(food) {
                 return (dateVal >= food.valid_from && dateVal <= food.valid_until);
             });
 
             if (availableFoods.length === 0) {
-                // LOCKOUT: No food exists for this date!
+                // LOCKOUT: No food exists for this date, but SHOW Chef's Choice so they can reserve!
                 selects.hide();
-                chefChoiceCell.find('input, .cmp-mobile-label').hide();
-                macroCell.hide();
+                chefChoiceCell.find('input, .cmp-mobile-label').show(); 
                 
-                var container = rowElement.find('td').filter(function() {
-                    return $(this).find('select').length > 0;
-                });
-                container.append('<div class="boundary-overlay" style="color:#64748b; font-weight:bold; font-size:0.9em; background:#f1f5f9; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">Menu Pending Release</div>');
+                selectContainer.append('<div class="boundary-overlay" style="color:#b45309; font-weight:bold; font-size:0.9em; background:#fef3c7; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">Menu Pending Release</div>');
                 
                 if (isChefOverride) {
                     btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
+                } else {
+                    // Ensure the button stays active for the customer to save Chef's Choice
+                    if (btn.text() === 'Menu Pending') {
+                        var btnTxt = isAdminOverride ? 'Update' : 'Save';
+                        btn.text(btnTxt).css({'background':'#0073aa', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
+                    }
                 }
                 return false;
             }
@@ -693,10 +707,10 @@ function cmp_render_customer_portal() {
             // POPULATE: Food exists, build the dropdowns!
             selects.show();
             chefChoiceCell.find('input, .cmp-mobile-label').show();
-            macroCell.show();
 
             if (btn.text() === 'Menu Pending') {
-                btn.text('Save').css({'background':'#0073aa', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
+                var btnTxt = isAdminOverride ? 'Update' : 'Save';
+                btn.text(btnTxt).css({'background':'#0073aa', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
             }
 
             selects.each(function() {
@@ -820,11 +834,9 @@ function cmp_render_customer_portal() {
 
         // --- INIT ALL ROWS ---
         $('.cmp-day-row').each(function() {
-            var hasFood = populateDynamicDropdowns($(this));
-            if (hasFood) {
-                calculateMacros($(this));
-                enforceMealQuota($(this));
-            }
+            populateDynamicDropdowns($(this));
+            calculateMacros($(this));
+            enforceMealQuota($(this));
         });
 
         // Use event delegation for dynamically built dropdowns
@@ -879,11 +891,9 @@ function cmp_render_customer_portal() {
             }
             
             var rowElement = $(this).closest('tr');
-            var hasFood = populateDynamicDropdowns(rowElement);
-            if (hasFood) {
-                calculateMacros(rowElement); 
-                enforceMealQuota(rowElement);
-            }
+            populateDynamicDropdowns(rowElement);
+            calculateMacros(rowElement); 
+            enforceMealQuota(rowElement);
         });
 
         $('.cmp-save-row').on('click', function(e) {
