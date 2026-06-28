@@ -44,15 +44,20 @@ function cmp_ajax_assign_chef_meals() {
     }
     
     $log_id = intval($_POST['log_id']);
+    $table_foods = $wpdb->prefix . 'cmp_foods';
 
     $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id, target_date FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
     
     if ($log_row) {
         
-        // --- NEW: STRICT MENU BOUNDARY BACKEND CHECK ---
-        $menu_boundary = get_option('cmp_menu_boundary', '');
-        if (!empty($menu_boundary) && $log_row->target_date > $menu_boundary) {
-            wp_send_json_error('The menu for this date is pending release. Meals cannot be assigned yet.');
+        // --- STRICT MENU AVAILABILITY CHECK ---
+        $has_meals = !empty($_POST['breakfast']) || !empty($_POST['lunch']) || !empty($_POST['dinner']) || !empty($_POST['snack_1']) || !empty($_POST['snack_2']) || !empty($_POST['juice_1']) || !empty($_POST['juice_2']) || !empty($_POST['juice_3']);
+        
+        if ($has_meals) {
+            $food_exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_foods WHERE is_active = 1 AND valid_from <= %s AND valid_until >= %s", $log_row->target_date, $log_row->target_date));
+            if (intval($food_exists) === 0) {
+                wp_send_json_error('The menu for this date is pending release. Meals cannot be assigned yet.');
+            }
         }
 
         $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name, allowed_categories FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id));
@@ -248,7 +253,6 @@ function cmp_render_kitchen_portal() {
     global $wpdb;
     $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
     $end_date = date('Y-m-d', strtotime($selected_date . ' + 2 days'));
-    $menu_boundary = get_option('cmp_menu_boundary', ''); // Fetch boundary for UI rendering
 
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
@@ -260,7 +264,8 @@ function cmp_render_kitchen_portal() {
         $selected_date, $end_date
     ) );
 
-    $foods = $wpdb->get_results("SELECT id, food_name, category_name FROM {$wpdb->prefix}cmp_foods WHERE is_active = 1 ORDER BY category_name, food_name");
+    // --- FETCH ALL FOODS FOR JS INJECTION ---
+    $foods = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}cmp_foods WHERE is_active = 1 ORDER BY category_name, food_name");
     $food_map = array(); foreach ($foods as $f) { $food_map[$f->id] = $f->food_name; }
 
     $customers = array();
@@ -379,6 +384,10 @@ function cmp_render_kitchen_portal() {
 
     ob_start();
     ?>
+    <script>
+        var cmpGlobalFoodData = <?php echo json_encode($foods); ?>;
+    </script>
+
     <style>
         .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.9em; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .k-table th { background: #222; color: #fff; padding: 12px; text-align: left; }
@@ -502,90 +511,65 @@ function cmp_render_kitchen_portal() {
                                 <?php if ($c['is_chefs_choice']): ?>
                                     
                                     <?php 
-                                    // --- MENU BOUNDARY UI LOCK ---
-                                    $is_future_quarter = (!empty($menu_boundary) && $c['target_date'] > $menu_boundary);
+                                    $display_style = $c['is_assigned'] ? 'block' : 'none'; 
+                                    $form_style = $c['is_assigned'] ? 'none' : 'block'; 
+                                    ?>
                                     
-                                    if ($is_future_quarter && !$c['is_assigned']): ?>
-                                        <div style="color:#64748b; font-weight:bold; font-size:0.9em; background:#f1f5f9; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">
-                                            [Next Quarter Menu Pending Release]
-                                        </div>
-                                    <?php else: ?>
+                                    <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
+                                        <ul style="margin:0; padding-left:20px; line-height: 1.6;">
+                                            <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
+                                        </ul>
+                                        <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
+                                    </div>
                                     
-                                        <?php 
-                                        $display_style = $c['is_assigned'] ? 'block' : 'none'; 
-                                        $form_style = $c['is_assigned'] ? 'none' : 'block'; 
-                                        ?>
+                                    <?php 
+                                    $is_juice_plan = (stripos($c['allowed_categories'], 'Juices') !== false || stripos($c['plan'], 'juice') !== false || stripos($c['plan'], 'cleanse') !== false);
+                                    preg_match('/(\d+)\s*Meal/i', $c['plan'], $m);
+                                    $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
+                                    
+                                    if (!$is_juice_plan) {
+                                        $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
+                                        $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
+                                    } else {
+                                        $allowed_cats = ['Juices'];
+                                        $snack_count = 0;
+                                    }
+                                    $raw = $c['raw_log'];
+                                    ?>
+                                    
+                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-target-date="<?php echo esc_attr($c['target_date']); ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
+                                        <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
                                         
-                                        <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
-                                            <ul style="margin:0; padding-left:20px; line-height: 1.6;">
-                                                <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
-                                            </ul>
-                                            <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
-                                        </div>
-                                        
-                                        <?php 
-                                        $is_juice_plan = (stripos($c['allowed_categories'], 'Juices') !== false || stripos($c['plan'], 'juice') !== false || stripos($c['plan'], 'cleanse') !== false);
-                                        preg_match('/(\d+)\s*Meal/i', $c['plan'], $m);
-                                        $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
-                                        
-                                        if (!$is_juice_plan) {
-                                            $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
-                                            $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
-                                        } else {
-                                            $allowed_cats = ['Juices'];
-                                            $snack_count = 0;
-                                        }
-                                        $raw = $c['raw_log'];
-                                        ?>
-                                        
-                                        <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
-                                            <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
+                                        <?php if(!$is_juice_plan): ?>
+                                            <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
+                                                <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" data-saved-val="<?php echo $raw->{strtolower($cat).'_id'}; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <option value="">- <?php echo $cat; ?> -</option>
+                                                </select>
+                                            <?php endif; endforeach; ?>
                                             
-                                            <?php if(!$is_juice_plan): ?>
-                                                <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
-                                                    <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                        <option value="">- <?php echo $cat; ?> -</option>
-                                                        <?php foreach($foods as $f) if($f->category_name == $cat) {
-                                                            $sel = ($raw->{strtolower($cat).'_id'} == $f->id) ? 'selected' : '';
-                                                            echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                        } ?>
+                                            <?php if($snack_count > 0): ?>
+                                                <select class="chef-meal-select" data-cat="Snacks" data-saved-val="<?php echo $raw->snack_1_id; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <option value="">- Snack 1 -</option>
+                                                </select>
+                                                <?php if($snack_count == 2): ?>
+                                                    <select class="chef-meal-select" data-cat="Snacks" data-saved-val="<?php echo $raw->snack_2_id; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                        <option value="">- Snack 2 -</option>
                                                     </select>
-                                                <?php endif; endforeach; ?>
-                                                
-                                                <?php if($snack_count > 0): ?>
-                                                    <select class="chef-meal-select" data-cat="snack_1" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                        <option value="">- Snack 1 -</option>
-                                                        <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
-                                                            $sel = ($raw->snack_1_id == $f->id) ? 'selected' : '';
-                                                            echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                        } ?>
-                                                    </select>
-                                                    <?php if($snack_count == 2): ?>
-                                                        <select class="chef-meal-select" data-cat="snack_2" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                            <option value="">- Snack 2 -</option>
-                                                            <?php foreach($foods as $f) if($f->category_name == 'Snacks') {
-                                                                $sel = ($raw->snack_2_id == $f->id) ? 'selected' : '';
-                                                                echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                            } ?>
-                                                        </select>
-                                                    <?php endif; ?>
                                                 <?php endif; ?>
-
-                                            <?php else: ?>
-                                                <?php for($j=1; $j<=3; $j++): ?>
-                                                    <select class="chef-meal-select" data-cat="juice_<?php echo $j; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
-                                                        <option value="">- Juice <?php echo $j; ?> -</option>
-                                                        <?php foreach($foods as $f) if($f->category_name == 'Juices') {
-                                                            $sel = ($raw->{'juice_'.$j.'_id'} == $f->id) ? 'selected' : '';
-                                                            echo '<option value="'.esc_attr($f->id).'" '.$sel.'>'.esc_html($f->food_name).'</option>';
-                                                        } ?>
-                                                    </select>
-                                                <?php endfor; ?>
                                             <?php endif; ?>
-                                            
-                                            <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:5px; transition: 0.2s;">Save Meals</button>
-                                        </div>
-                                    <?php endif; ?> <?php else: ?>
+
+                                        <?php else: ?>
+                                            <?php for($j=1; $j<=3; $j++): ?>
+                                                <select class="chef-meal-select" data-cat="Juices" data-saved-val="<?php echo $raw->{'juice_'.$j.'_id'}; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <option value="">- Juice <?php echo $j; ?> -</option>
+                                                </select>
+                                            <?php endfor; ?>
+                                        <?php endif; ?>
+                                        
+                                        <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:5px; transition: 0.2s;">Save Meals</button>
+                                    </div>
+                                    
+                                <?php else: ?>
                                     <ul style="margin:0; padding-left:20px; line-height: 1.6;">
                                         <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
                                     </ul>
@@ -621,7 +605,60 @@ function cmp_render_kitchen_portal() {
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
 
-        // --- NEW: Tab Memory & Search Logic ---
+        // --- NEW: SMART DYNAMIC DROPDOWNS ---
+        function populateDynamicDropdowns(container) {
+            var dateVal = container.data('target-date');
+            var selects = container.find('select');
+            var btn = container.find('.save-chef-assign');
+            
+            container.find('.boundary-overlay').remove();
+
+            if (!dateVal) {
+                selects.hide(); return;
+            }
+
+            var availableFoods = cmpGlobalFoodData.filter(function(food) {
+                return (dateVal >= food.valid_from && dateVal <= food.valid_until);
+            });
+
+            if (availableFoods.length === 0) {
+                // LOCKOUT: No food exists for this date!
+                selects.hide();
+                container.prepend('<div class="boundary-overlay" style="color:#b45309; font-weight:bold; font-size:0.9em; background:#fef3c7; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">Menu Pending Release</div>');
+                btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
+                return;
+            }
+
+            // POPULATE: Food exists, build the dropdowns!
+            selects.show();
+            if (btn.text() === 'Menu Pending') {
+                btn.text('Save Meals').css({'background':'#dba617', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
+            }
+
+            selects.each(function() {
+                var select = $(this);
+                var category = select.data('cat');
+                var savedVal = select.data('saved-val');
+                var placeholder = select.find('option').first().text();
+                
+                select.empty().append('<option value="">' + placeholder + '</option>');
+                
+                availableFoods.forEach(function(food) {
+                    if (food.category_name === category) {
+                        var isSelected = (savedVal == food.id) ? 'selected' : '';
+                        select.append('<option value="'+food.id+'" '+isSelected+'>'+food.food_name+'</option>');
+                    }
+                });
+            });
+        }
+
+        // Init all chef assignment forms dynamically
+        $('.chef-assign-form').each(function() {
+            populateDynamicDropdowns($(this));
+        });
+        // --------------------------------------
+
+        // --- Tab Memory & Search Logic ---
         var urlParams = new URLSearchParams(window.location.search);
         var initialTab = urlParams.get('k_tab') || 'all';
         
@@ -728,6 +765,13 @@ function cmp_render_kitchen_portal() {
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
             var isJuice = container.data('is-juice') == '1';
             
+            // Check if dropdowns are hidden due to no menu
+            var isMenuPending = container.find('.boundary-overlay').length > 0;
+            if (isMenuPending) {
+                alert('The specific menu is not available yet.');
+                return;
+            }
+
             if (!isJuice && allowedMeals > 0) {
                 var selectedMainCount = 0;
                 container.find('.chef-main-meal').each(function() {
@@ -755,14 +799,14 @@ function cmp_render_kitchen_portal() {
                 action: 'cmp_assign_chef_meals',
                 nonce: '<?php echo wp_create_nonce("cmp_kitchen_nonce"); ?>',
                 log_id: logId,
-                breakfast: container.find('select[data-cat="Breakfast"]').val() || null,
-                lunch: container.find('select[data-cat="Lunch"]').val() || null,
-                dinner: container.find('select[data-cat="Dinner"]').val() || null,
-                snack_1: container.find('select[data-cat="snack_1"]').val() || null,
-                snack_2: container.find('select[data-cat="snack_2"]').val() || null,
-                juice_1: container.find('select[data-cat="juice_1"]').val() || null,
-                juice_2: container.find('select[data-cat="juice_2"]').val() || null,
-                juice_3: container.find('select[data-cat="juice_3"]').val() || null
+                breakfast: container.find('select').eq(0).data('cat') === 'Breakfast' ? container.find('select').eq(0).val() : null,
+                lunch:     container.find('select').eq(1).data('cat') === 'Lunch' ? container.find('select').eq(1).val() : null,
+                dinner:    container.find('select').eq(2).data('cat') === 'Dinner' ? container.find('select').eq(2).val() : null,
+                snack_1:   container.find('select[data-cat="Snacks"]').eq(0).length ? container.find('select[data-cat="Snacks"]').eq(0).val() : null,
+                snack_2:   container.find('select[data-cat="Snacks"]').eq(1).length ? container.find('select[data-cat="Snacks"]').eq(1).val() : null,
+                juice_1:   container.find('select[data-cat="Juices"]').eq(0).length ? container.find('select[data-cat="Juices"]').eq(0).val() : null,
+                juice_2:   container.find('select[data-cat="Juices"]').eq(1).length ? container.find('select[data-cat="Juices"]').eq(1).val() : null,
+                juice_3:   container.find('select[data-cat="Juices"]').eq(2).length ? container.find('select[data-cat="Juices"]').eq(2).val() : null
             };
             
             $.post("<?php echo admin_url('admin-ajax.php'); ?>", data, function(res) {
