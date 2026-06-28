@@ -25,28 +25,29 @@ function cmp_render_chef_assignment_desk() {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_foods = $wpdb->prefix . 'cmp_foods';
 
     $today_time = date('Y-m-d H:i:s');
     $today_date = date('Y-m-d');
 
-    // 3. Fetch Subs (using same robust join as FOH Portal)
+    // 3. Fetch Subs 
     $raw_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status = 'active' ORDER BY s.id DESC");
+
+    // NEW: Fetch all active food date ranges to prevent showing "Pending" for future locked quarters
+    $active_food_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1");
 
     $pending_customers = array();
     $all_customers = array();
 
     foreach ($raw_subs as $sub) {
         
-        // --- FIX 1: FILTER OUT OLD/WIPED OUT DATA ---
-        // Ensure the plan isn't expired and hasn't consumed all its days
         $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
         if ($usage_days >= $sub->total_days || $sub->expiry_date < $today_time) {
-            continue; // Skip this customer, they are done.
+            continue; 
         }
 
         $order = wc_get_order($sub->wc_order_id);
         
-        // Bulletproof Customer Name Fetching
         $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
         $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
         $fallback_name = trim($fname . ' ' . $lname);
@@ -97,15 +98,25 @@ function cmp_render_chef_assignment_desk() {
 
         $all_customers[] = $customer_data;
 
-        // --- FIX 2: PENDING LOGIC (FUTURE DATES ONLY) ---
-        // Only look at TODAY and FUTURE dates. Ignore past empty days.
         $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1 AND target_date >= %s", $sub->id, $today_date));
         $is_pending = false;
         
         foreach($chef_logs as $log) {
             if (!$log->breakfast_id && !$log->lunch_id && !$log->dinner_id && !$log->juice_1_id) {
-                $is_pending = true;
-                break;
+                
+                // NEW: Only mark as pending if there is actually a menu available for this date
+                $menu_exists = false;
+                foreach($active_food_ranges as $range) {
+                    if ($log->target_date >= $range->valid_from && $log->target_date <= $range->valid_until) {
+                        $menu_exists = true;
+                        break;
+                    }
+                }
+                
+                if ($menu_exists) {
+                    $is_pending = true;
+                    break;
+                }
             }
         }
 
