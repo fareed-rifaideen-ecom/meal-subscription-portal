@@ -9,8 +9,6 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 // 1. Add the Menu Item to WordPress Backend (NESTED AS SUBMENU)
 add_action( 'admin_menu', 'cmp_add_settings_submenu', 99 ); 
 function cmp_add_settings_submenu() {
-    // UPDATED: Use a capability that both Admin and Menu Manager share, or explicitly allow both.
-    // The easiest way is to use 'read' and then do a strict check in the renderer.
     add_submenu_page( 
         'cmp-menu-manager', // The exact parent slug
         'Meal Subscription Portal: Global Settings', 
@@ -33,29 +31,18 @@ function cmp_register_settings() {
         register_setting( 'cmp_settings_group', 'cmp_grace_period' );
         register_setting( 'cmp_settings_group', 'cmp_label_chefs_choice' );
         register_setting( 'cmp_settings_group', 'cmp_whatsapp_number' ); 
-        
-        // NEW: Menu Boundary Date for Quarterly Transitions
-        register_setting( 'cmp_settings_group', 'cmp_menu_boundary' );
     }
 }
 
 // 3. Build the Backend User Interface
 function cmp_render_settings_page() {
-    // UPDATED: Strict check to allow BOTH Admin and Menu Manager
+    // Strict check to allow BOTH Admin and Menu Manager
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { 
         wp_die('Access Denied. You do not have permission to view this page.'); 
     }
     ?>
     <div class="wrap" style="max-width: 800px;">
         <h1 style="margin-bottom: 20px;">Meal Subscription Portal: Global Settings</h1>
-        
-        <?php $current_boundary = get_option('cmp_menu_boundary', ''); ?>
-        <?php if (!empty($current_boundary)): ?>
-            <div style="background: #fffbdd; border-left: 4px solid #d97706; padding: 15px 20px; margin-bottom: 20px; border-radius: 0 4px 4px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-                <strong style="color: #b45309; font-size: 1.1em;">⚠️ Menu Boundary is Active</strong>
-                <p style="color: #856404; margin: 5px 0 0 0;">Customer portals are currently locked for all dates after <strong><?php echo date('F j, Y', strtotime($current_boundary)); ?></strong>. Clear the boundary date below when the new menu is ready.</p>
-            </div>
-        <?php endif; ?>
 
         <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
             <form method="post" action="options.php">
@@ -63,15 +50,6 @@ function cmp_render_settings_page() {
                 <?php do_settings_sections( 'cmp_settings_group' ); ?>
                 
                 <table class="form-table">
-                    
-                    <tr valign="top" style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
-                        <th scope="row" style="padding-left: 15px;">Menu Boundary Date</th>
-                        <td style="padding-right: 15px;">
-                            <input type="date" name="cmp_menu_boundary" value="<?php echo esc_attr( $current_boundary ); ?>" style="padding: 6px; border: 1px solid #94a3b8; border-radius: 4px;" />
-                            <p class="description">Dates beyond this boundary will be completely locked in the Customer Portal until you release the new menu. Clear this field to unlock all dates.</p>
-                        </td>
-                    </tr>
-
                     <tr valign="top">
                         <th scope="row">Daily Cutoff Time (24h format)</th>
                         <td>
