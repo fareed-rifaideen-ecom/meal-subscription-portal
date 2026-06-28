@@ -37,31 +37,47 @@ function cmp_render_menu_manager() {
     $table_foods = $wpdb->prefix . 'cmp_foods';
     $notification = '';
 
-    // ACTION 1: CSV Upload & Wipe
+    // --- PHASE 1: DATABASE UPGRADE (Safe & Non-Destructive) ---
+    // Check if the date columns exist. If not, add them and migrate current data to Q2 2026.
+    $columns_check = $wpdb->get_results( "SHOW COLUMNS FROM $table_foods LIKE 'valid_from'" );
+    if (empty($columns_check)) {
+        $wpdb->query("ALTER TABLE $table_foods ADD valid_from DATE NULL AFTER protein, ADD valid_until DATE NULL AFTER valid_from");
+        $wpdb->query("UPDATE $table_foods SET valid_from = '2026-04-01', valid_until = '2026-06-30' WHERE is_active = 1");
+    }
+
+    // ACTION 1: Smart CSV Upload with Dates
     if ( isset($_POST['upload_csv_frontend']) && isset($_FILES['csv_file']) ) {
         if ($_FILES['csv_file']['error'] == 0) {
-            if (isset($_POST['wipe_menu']) && $_POST['wipe_menu'] == 'yes') {
-                $wpdb->query("TRUNCATE TABLE $table_foods");
-                $notification = '<div style="background:#fff3cd; color:#856404; padding:12px; border-radius:4px; margin-bottom:20px;">Old menu wiped clean!</div>';
+            $valid_from  = sanitize_text_field($_POST['valid_from']);
+            $valid_until = sanitize_text_field($_POST['valid_until']);
+            
+            if (empty($valid_from) || empty($valid_until)) {
+                $notification = '<div style="background:#f8d7da; color:#721c24; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Error:</strong> You must select a Start and End date for the new menu.</div>';
             } else {
-                $wpdb->query("UPDATE $table_foods SET is_active = 0"); 
-            }
-
-            $file = fopen($_FILES['csv_file']['tmp_name'], "r");
-            fgetcsv($file); 
-            $count = 0;
-            while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
-                if(empty($data[0]) || empty($data[1])) continue;
-                $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table_foods WHERE food_name = %s", sanitize_text_field($data[1])));
-                if ($existing && !isset($_POST['wipe_menu'])) {
-                    $wpdb->update($table_foods, array('category_name'=>sanitize_text_field($data[0]), 'description'=>sanitize_text_field($data[2]), 'calories'=>intval($data[3]), 'total_fat'=>floatval($data[4]), 'carbohydrates'=>floatval($data[5]), 'protein'=>floatval($data[6]), 'is_active'=>1), array('id'=>$existing));
-                } else {
-                    $wpdb->insert($table_foods, array('category_name'=>sanitize_text_field($data[0]), 'food_name'=>sanitize_text_field($data[1]), 'description'=>sanitize_text_field($data[2]), 'calories'=>intval($data[3]), 'total_fat'=>floatval($data[4]), 'carbohydrates'=>floatval($data[5]), 'protein'=>floatval($data[6]), 'is_active'=>1));
+                $file = fopen($_FILES['csv_file']['tmp_name'], "r");
+                fgetcsv($file); 
+                $count = 0;
+                while (($data = fgetcsv($file, 1000, ",")) !== FALSE) {
+                    if(empty($data[0]) || empty($data[1])) continue;
+                    
+                    // Insert new items with the specific date range
+                    $wpdb->insert($table_foods, array(
+                        'category_name' => sanitize_text_field($data[0]), 
+                        'food_name'     => sanitize_text_field($data[1]), 
+                        'description'   => sanitize_text_field($data[2]), 
+                        'calories'      => intval($data[3]), 
+                        'total_fat'     => floatval($data[4]), 
+                        'carbohydrates' => floatval($data[5]), 
+                        'protein'       => floatval($data[6]), 
+                        'valid_from'    => $valid_from,
+                        'valid_until'   => $valid_until,
+                        'is_active'     => 1
+                    ));
+                    $count++;
                 }
-                $count++;
+                fclose($file);
+                $notification = '<div style="background:#d4edda; color:#155724; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Success:</strong> ' . $count . ' new items uploaded for the period of ' . date('d M Y', strtotime($valid_from)) . ' to ' . date('d M Y', strtotime($valid_until)) . '.</div>';
             }
-            fclose($file);
-            $notification .= '<div style="background:#d4edda; color:#155724; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Success:</strong> ' . $count . ' items activated.</div>';
         }
     }
 
@@ -76,6 +92,8 @@ function cmp_render_menu_manager() {
             'total_fat'     => floatval($_POST['fat']),
             'carbohydrates' => floatval($_POST['carbs']),
             'protein'       => floatval($_POST['pro']),
+            'valid_from'    => sanitize_text_field($_POST['valid_from']),
+            'valid_until'   => sanitize_text_field($_POST['valid_until']),
             'is_active'     => isset($_POST['is_active']) ? 1 : 0
         );
 
@@ -88,23 +106,26 @@ function cmp_render_menu_manager() {
         }
     }
 
-    // ACTION 3: Delete Food
+    // ACTION 3: Delete Single Food
     if ( isset($_POST['delete_food']) && isset($_POST['food_id']) ) {
         $wpdb->delete($table_foods, array('id' => intval($_POST['food_id'])));
         $notification = '<div style="background:#f8d7da; color:#721c24; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Deleted:</strong> Food item removed permanently.</div>';
     }
 
-    // ACTION 4: Update Menu Boundary
-    if ( isset($_POST['update_boundary_frontend']) ) {
-        $new_boundary = sanitize_text_field($_POST['boundary_date']);
-        update_option('cmp_menu_boundary', $new_boundary);
-        
-        $msg_text = empty($new_boundary) ? 'Menu Boundary Cleared. All dates unlocked.' : 'Menu Boundary Date updated to ' . date('d M Y', strtotime($new_boundary)) . '.';
-        $notification = '<div style="background:#d4edda; color:#155724; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Success:</strong> ' . $msg_text . '</div>';
+    // ACTION 4: Bulk Delete Menu by Date
+    if ( isset($_POST['delete_menu_range']) ) {
+        $del_from  = sanitize_text_field($_POST['del_from']);
+        $del_until = sanitize_text_field($_POST['del_until']);
+        if (!empty($del_from) && !empty($del_until)) {
+            $deleted = $wpdb->query($wpdb->prepare("DELETE FROM $table_foods WHERE valid_from = %s AND valid_until = %s", $del_from, $del_until));
+            $notification = '<div style="background:#f8d7da; color:#721c24; padding:12px; border-radius:4px; margin-bottom:20px;"><strong>Success:</strong> Completely deleted ' . intval($deleted) . ' items from the specific date range.</div>';
+        }
     }
 
-    $all_foods = $wpdb->get_results("SELECT * FROM $table_foods ORDER BY category_name ASC, food_name ASC");
-    $current_boundary = get_option('cmp_menu_boundary', '');
+    $all_foods = $wpdb->get_results("SELECT * FROM $table_foods ORDER BY valid_from DESC, category_name ASC, food_name ASC");
+    
+    // Get unique date ranges for the delete/filter dropdowns
+    $menu_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE valid_from IS NOT NULL ORDER BY valid_from DESC");
 
     ob_start();
     ?>
@@ -113,34 +134,58 @@ function cmp_render_menu_manager() {
         <?php echo $notification; ?>
 
         <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px;">
-            <div style="flex: 1; min-width: 300px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                <h3 style="margin-top: 0; color: #0f172a;">Upload Quarterly CSV</h3>
-                <p style="font-size: 0.9em; color: #64748b;">Upload your new menu here. Items not in the CSV will be automatically deactivated.</p>
-                <form method="POST" enctype="multipart/form-data">
-                    <input type="file" name="csv_file" accept=".csv" required style="margin-bottom: 10px; width: 100%; padding: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px;">
-                    <label style="display: block; margin-bottom: 15px; font-weight: bold; color: #dc2626; font-size: 0.9em;">
-                        <input type="checkbox" name="wipe_menu" value="yes"> WIPE CURRENT MENU (Deletes old database)
-                    </label>
-                    <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB AFTER SUBMIT -->
-                    <button type="submit" name="upload_csv_frontend" style="background: #38bdf8; color: #0f172a; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;">Upload & Sync Menu</button>
-                </form>
+            <div style="flex: 1; min-width: 300px; display: flex; flex-direction: column; gap: 20px;">
+                
+                <div style="background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                    <h3 style="margin-top: 0; color: #0f172a;">Upload New Menu CSV</h3>
+                    <p style="font-size: 0.9em; color: #64748b;">Upload a new menu without breaking the current one. Simply assign the dates this new menu will be active.</p>
+                    <form method="POST" enctype="multipart/form-data">
+                        <input type="file" name="csv_file" accept=".csv" required style="margin-bottom: 15px; width: 100%; padding: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        
+                        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                            <div style="flex:1;">
+                                <label style="display:block; font-size:0.85em; font-weight:bold; margin-bottom:5px;">Valid From *</label>
+                                <input type="date" name="valid_from" required style="width:100%; padding:8px; border: 1px solid #cbd5e1; border-radius:4px;">
+                            </div>
+                            <div style="flex:1;">
+                                <label style="display:block; font-size:0.85em; font-weight:bold; margin-bottom:5px;">Valid Until *</label>
+                                <input type="date" name="valid_until" required style="width:100%; padding:8px; border: 1px solid #cbd5e1; border-radius:4px;">
+                            </div>
+                        </div>
 
-                <!-- NEW: MENU BOUNDARY SETTINGS -->
-                <hr style="border: 0; border-top: 1px dashed #cbd5e1; margin: 25px 0 20px 0;">
-                <h3 style="margin-top: 0; color: #b45309;">Quarterly Menu Boundary</h3>
-                <p style="font-size: 0.9em; color: #856404; line-height: 1.4;">Prevent customers from picking meals in the next quarter until you've uploaded the new menu.</p>
-                <form method="POST" style="margin: 0;">
-                    <input type="date" name="boundary_date" value="<?php echo esc_attr($current_boundary); ?>" style="width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #d97706; border-radius: 4px; font-weight: bold; color: #b45309; background: #fffbdd; box-sizing: border-box;">
-                    <input type="hidden" name="sa_tab" value="sa-menu">
-                    <button type="submit" name="update_boundary_frontend" style="background: #b45309; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; width: 100%;">Set Boundary Date</button>
-                    <div style="font-size: 0.8em; color: #666; margin-top: 8px; text-align: center;">Clear the date and save to unlock all days.</div>
-                </form>
+                        <input type="hidden" name="sa_tab" value="sa-menu">
+                        <button type="submit" name="upload_csv_frontend" style="background: #38bdf8; color: #0f172a; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; width:100%;">Upload & Add Menu</button>
+                    </form>
+                </div>
+
+                <div style="background: #fffbdd; padding: 20px; border-radius: 8px; border: 1px solid #d97706; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                    <h3 style="margin-top: 0; color: #b45309;">Delete Old Menus</h3>
+                    <p style="font-size: 0.9em; color: #856404; line-height: 1.4;">Completely wipe an old quarter's menu from the database to keep the system clean.</p>
+                    <form method="POST" style="margin: 0;" onsubmit="return confirm('Are you sure? This will delete ALL food items assigned to this specific date range forever.');">
+                        <select name="del_range" style="width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #d97706; border-radius: 4px; background: #fff;" onchange="
+                            var spl = this.value.split('|'); 
+                            document.getElementById('del_from').value = spl[0];
+                            document.getElementById('del_until').value = spl[1];
+                        " required>
+                            <option value="">- Select Menu Period to Delete -</option>
+                            <?php foreach($menu_ranges as $r): ?>
+                                <option value="<?php echo esc_attr($r->valid_from.'|'.$r->valid_until); ?>">
+                                    <?php echo date('d M Y', strtotime($r->valid_from)) . ' to ' . date('d M Y', strtotime($r->valid_until)); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <input type="hidden" name="del_from" id="del_from" value="">
+                        <input type="hidden" name="del_until" id="del_until" value="">
+                        <input type="hidden" name="sa_tab" value="sa-menu">
+                        <button type="submit" name="delete_menu_range" style="background: #dc2626; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; width: 100%;">Permanently Delete Menu</button>
+                    </form>
+                </div>
             </div>
 
             <div style="flex: 2; min-width: 400px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #38bdf8; box-shadow: 0 4px 6px rgba(56,189,248,0.1);">
-                <h3 id="form_title" style="margin-top: 0; color: #0f172a;">Add New Food Item</h3>
+                <h3 id="form_title" style="margin-top: 0; color: #0f172a;">Add/Edit Single Food Item</h3>
                 <form method="POST" id="crud-form">
-                    <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB AFTER SUBMIT -->
+                    <input type="hidden" name="sa_tab" value="sa-menu">
                     <input type="hidden" name="food_id" id="edit_id" value="0">
                     <div style="display: flex; gap: 15px; margin-bottom: 15px;">
                         <div style="flex: 1;">
@@ -158,6 +203,18 @@ function cmp_render_menu_manager() {
                             <input type="text" name="food_name" id="edit_name" required style="width:100%; padding:8px; border-radius:4px; border:1px solid #cbd5e1; background: #f8fafc;">
                         </div>
                     </div>
+
+                    <div style="display: flex; gap: 15px; margin-bottom: 15px; background: #f1f5f9; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                        <div style="flex:1;">
+                            <label style="display:block; font-weight:bold; font-size:0.9em; color:#0f172a;">Valid From</label>
+                            <input type="date" name="valid_from" id="edit_from" required style="width:100%; padding:6px; border:1px solid #cbd5e1; border-radius:4px;">
+                        </div>
+                        <div style="flex:1;">
+                            <label style="display:block; font-weight:bold; font-size:0.9em; color:#0f172a;">Valid Until</label>
+                            <input type="date" name="valid_until" id="edit_until" required style="width:100%; padding:6px; border:1px solid #cbd5e1; border-radius:4px;">
+                        </div>
+                    </div>
+
                     <div style="margin-bottom: 15px;">
                         <label style="display:block; font-weight:bold; margin-bottom:5px; color: #334155;">Description</label>
                         <textarea name="desc" id="edit_desc" rows="2" style="width:100%; padding:8px; border-radius:4px; border:1px solid #cbd5e1; background: #f8fafc;"></textarea>
@@ -193,6 +250,16 @@ function cmp_render_menu_manager() {
                     <option value="Juices">Juices</option>
                 </select>
             </div>
+            <div style="flex: 1; min-width: 200px;">
+                <select id="menuFilter" style="width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 1em; background: #f8fafc;">
+                    <option value="">All Menus</option>
+                    <?php foreach($menu_ranges as $r): ?>
+                        <option value="<?php echo esc_attr($r->valid_from.'|'.$r->valid_until); ?>">
+                            Menu: <?php echo date('M Y', strtotime($r->valid_from)) . ' - ' . date('M Y', strtotime($r->valid_until)); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
         </div>
 
         <div style="overflow-x: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
@@ -201,7 +268,7 @@ function cmp_render_menu_manager() {
                     <tr style="background: #0f172a; color: #fff;">
                         <th style="padding: 15px; text-align: left;">Category</th>
                         <th style="padding: 15px; text-align: left;">Food Details</th>
-                        <th style="padding: 15px; text-align: center;">Macros</th>
+                        <th style="padding: 15px; text-align: center;">Validity Range</th>
                         <th style="padding: 15px; text-align: center;">Status</th>
                         <th style="padding: 15px; text-align: center;">Actions</th>
                     </tr>
@@ -212,15 +279,17 @@ function cmp_render_menu_manager() {
                         $js_desc = htmlspecialchars($f->description, ENT_QUOTES);
                         $search_text = strtolower(esc_attr($f->food_name . ' ' . $f->description));
                         $cat_text = esc_attr($f->category_name);
+                        $range_text = esc_attr($f->valid_from.'|'.$f->valid_until);
                     ?>
-                    <tr class="food-row" data-search="<?php echo $search_text; ?>" data-cat="<?php echo $cat_text; ?>" style="border-bottom: 1px solid #f1f5f9; <?php if(!$f->is_active) echo 'background: #f8fafc; opacity: 0.6;'; ?>">
+                    <tr class="food-row" data-search="<?php echo $search_text; ?>" data-cat="<?php echo $cat_text; ?>" data-range="<?php echo $range_text; ?>" style="border-bottom: 1px solid #f1f5f9; <?php if(!$f->is_active) echo 'background: #f8fafc; opacity: 0.6;'; ?>">
                         <td style="padding: 15px; color: #334155;"><strong><?php echo esc_html($f->category_name); ?></strong></td>
                         <td style="padding: 15px;">
                             <strong style="font-size: 1.1em; color: #0284c7;"><?php echo esc_html($f->food_name); ?></strong><br>
                             <span style="color: #64748b; font-size: 0.9em;"><?php echo esc_html($f->description); ?></span>
+                            <div style="color: #94a3b8; font-size: 0.85em; margin-top: 4px;">Cal: <?php echo $f->calories; ?> | F: <?php echo $f->total_fat; ?>g | C: <?php echo $f->carbohydrates; ?>g | P: <?php echo $f->protein; ?>g</div>
                         </td>
-                        <td style="padding: 15px; text-align: center; color: #475569; font-size: 0.9em;">
-                            Cal: <?php echo $f->calories; ?> | F: <?php echo $f->total_fat; ?> | C: <?php echo $f->carbohydrates; ?> | P: <?php echo $f->protein; ?>
+                        <td style="padding: 15px; text-align: center; color: #0f766e; font-weight: bold; font-size: 0.9em; background: #f0fdf4;">
+                            <?php echo date('d M', strtotime($f->valid_from)) . ' - ' . date('d M', strtotime($f->valid_until)); ?>
                         </td>
                         <td style="padding: 15px; text-align: center;">
                             <?php if($f->is_active): ?>
@@ -231,10 +300,10 @@ function cmp_render_menu_manager() {
                         </td>
                         <td style="padding: 15px; text-align: center;">
                             <div style="display: flex; gap: 8px; justify-content: center;">
-                                <button onclick="editFood(<?php echo $f->id; ?>, '<?php echo esc_js($f->category_name); ?>', '<?php echo $js_name; ?>', '<?php echo $js_desc; ?>', <?php echo $f->calories; ?>, <?php echo $f->total_fat; ?>, <?php echo $f->carbohydrates; ?>, <?php echo $f->protein; ?>, <?php echo $f->is_active; ?>)" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">Edit</button>
+                                <button onclick="editFood(<?php echo $f->id; ?>, '<?php echo esc_js($f->category_name); ?>', '<?php echo $js_name; ?>', '<?php echo $js_desc; ?>', <?php echo $f->calories; ?>, <?php echo $f->total_fat; ?>, <?php echo $f->carbohydrates; ?>, <?php echo $f->protein; ?>, <?php echo $f->is_active; ?>, '<?php echo $f->valid_from; ?>', '<?php echo $f->valid_until; ?>')" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">Edit</button>
                                 
                                 <form method="POST" onsubmit="return confirm('Are you sure you want to delete this food item forever?');" style="margin:0;">
-                                    <input type="hidden" name="sa_tab" value="sa-menu"> <!-- ENSURES WE STAY ON THIS TAB -->
+                                    <input type="hidden" name="sa_tab" value="sa-menu">
                                     <input type="hidden" name="food_id" value="<?php echo $f->id; ?>">
                                     <button type="submit" name="delete_food" style="background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">Delete</button>
                                 </form>
@@ -252,7 +321,7 @@ function cmp_render_menu_manager() {
 
     <script>
     // FORM LOGIC
-    function editFood(id, cat, name, desc, cal, fat, carbs, pro, active) {
+    function editFood(id, cat, name, desc, cal, fat, carbs, pro, active, valid_from, valid_until) {
         document.getElementById('edit_id').value = id;
         document.getElementById('edit_cat').value = cat;
         document.getElementById('edit_name').value = name;
@@ -262,6 +331,8 @@ function cmp_render_menu_manager() {
         document.getElementById('edit_carbs').value = carbs;
         document.getElementById('edit_pro').value = pro;
         document.getElementById('edit_active').checked = (active == 1);
+        document.getElementById('edit_from').value = valid_from;
+        document.getElementById('edit_until').value = valid_until;
         
         document.getElementById('form_title').innerText = "Update Food Item";
         document.getElementById('btn_save').innerText = "Update Food Item";
@@ -290,26 +361,24 @@ function cmp_render_menu_manager() {
         filterAndPaginateFoods();
     });
 
-    document.getElementById('foodSearch').addEventListener('keyup', function() {
-        currentPage = 1;
-        filterAndPaginateFoods();
-    });
-
-    document.getElementById('catFilter').addEventListener('change', function() {
-        currentPage = 1;
-        filterAndPaginateFoods();
-    });
+    document.getElementById('foodSearch').addEventListener('keyup', function() { currentPage = 1; filterAndPaginateFoods(); });
+    document.getElementById('catFilter').addEventListener('change', function() { currentPage = 1; filterAndPaginateFoods(); });
+    document.getElementById('menuFilter').addEventListener('change', function() { currentPage = 1; filterAndPaginateFoods(); });
 
     function filterAndPaginateFoods() {
         const query = document.getElementById('foodSearch').value.toLowerCase();
         const cat = document.getElementById('catFilter').value;
+        const range = document.getElementById('menuFilter').value;
 
         filteredFoods = allFoodRows.filter(row => {
             const searchData = row.getAttribute('data-search');
             const catData = row.getAttribute('data-cat');
+            const rangeData = row.getAttribute('data-range');
+            
             const matchesSearch = query === '' || searchData.includes(query);
             const matchesCat = cat === '' || catData === cat;
-            return matchesSearch && matchesCat;
+            const matchesRange = range === '' || rangeData === range;
+            return matchesSearch && matchesCat && matchesRange;
         });
 
         allFoodRows.forEach(row => row.style.display = 'none');
@@ -340,9 +409,6 @@ function cmp_render_menu_manager() {
             btn.style.borderRadius = "6px";
             btn.style.fontWeight = "bold";
             btn.style.transition = "all 0.2s";
-            
-            btn.onmouseover = function() { if(i !== currentPage) this.style.background = "#cbd5e1"; };
-            btn.onmouseout = function() { if(i !== currentPage) this.style.background = "#e2e8f0"; };
             
             btn.onclick = function(e) {
                 e.preventDefault();
