@@ -9,17 +9,33 @@ function cmp_render_public_menu() {
     global $wpdb;
     $table_foods = $wpdb->prefix . 'cmp_foods';
 
-    // Fetch active foods
-    $foods = $wpdb->get_results( "SELECT * FROM $table_foods WHERE is_active = 1" );
+    // Fetch active foods (Requires valid_from / valid_until columns from our Phase 1 upgrade)
+    $foods = $wpdb->get_results( "SELECT * FROM $table_foods WHERE is_active = 1 ORDER BY valid_from DESC" );
 
     if ( empty( $foods ) ) {
         return '<p style="text-align:center; padding: 20px;">Our new quarterly menu is currently being prepared. Check back soon!</p>';
     }
 
-    // Group foods by category
+    // Identify unique date ranges (Quarters)
+    $date_ranges = array();
+    foreach ($foods as $food) {
+        if (!empty($food->valid_from) && !empty($food->valid_until)) {
+            $range_key = $food->valid_from . '|' . $food->valid_until;
+            if (!isset($date_ranges[$range_key])) {
+                $date_ranges[$range_key] = array(
+                    'start' => $food->valid_from,
+                    'end'   => $food->valid_until,
+                    'label' => date('M Y', strtotime($food->valid_from)) . ' - ' . date('M Y', strtotime($food->valid_until))
+                );
+            }
+        }
+    }
+
+    // Group foods by Range AND Category
     $grouped_foods = array();
     foreach ( $foods as $food ) {
-        $grouped_foods[$food->category_name][] = $food;
+        $range_key = (!empty($food->valid_from) && !empty($food->valid_until)) ? ($food->valid_from . '|' . $food->valid_until) : 'default';
+        $grouped_foods[$range_key][$food->category_name][] = $food;
     }
 
     // Explicitly Sort Categories based on user preference
@@ -30,6 +46,33 @@ function cmp_render_public_menu() {
     <style>
         .cmp-menu-wrapper { max-width: 1200px; margin: 0 auto; font-family: inherit; position: relative; }
         
+        /* NEW: MASTER RANGE TABS */
+        .cmp-range-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+        .cmp-range-btn {
+            background: #fff;
+            border: 2px solid #0073aa;
+            color: #0073aa;
+            padding: 12px 25px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .cmp-range-btn:hover { background: #f0f8ff; }
+        .cmp-range-btn.active {
+            background: #0073aa;
+            color: #fff;
+            box-shadow: 0 4px 8px rgba(0, 115, 170, 0.3);
+        }
+
         /* STICKY NAVIGATION BAR */
         .cmp-sticky-nav {
             position: sticky;
@@ -78,6 +121,10 @@ function cmp_render_public_menu() {
         }
 
         /* CONTENT SECTIONS */
+        .cmp-range-container { display: none; }
+        .cmp-range-container.active { display: block; animation: fadeIn 0.4s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
         .cmp-menu-section {
             scroll-margin-top: 120px; /* Prevents sticky nav from covering the title when scrolling to it */
             margin-bottom: 60px;
@@ -114,12 +161,31 @@ function cmp_render_public_menu() {
 
     <div class="cmp-menu-wrapper">
         
+        <?php if (count($date_ranges) > 1): ?>
+        <div class="cmp-range-tabs">
+            <?php 
+            $first_range = true;
+            foreach ($date_ranges as $key => $range) {
+                $active_class = $first_range ? 'active' : '';
+                echo '<button class="cmp-range-btn ' . $active_class . '" data-range="' . esc_attr($key) . '">Menu: ' . esc_html($range['label']) . '</button>';
+                $first_range = false;
+            }
+            ?>
+        </div>
+        <?php endif; ?>
+
         <div class="cmp-sticky-nav">
             <div class="cmp-menu-tabs">
                 <?php
+                // Generate pill navigation for categories (Breakfast, Lunch, etc.)
+                // We use the active foods to determine which pills to show.
                 $first_tab = true;
                 foreach ( $category_order as $cat ) {
-                    if ( !empty( $grouped_foods[$cat] ) ) {
+                    $has_cat = false;
+                    foreach ($grouped_foods as $range_data) {
+                        if (!empty($range_data[$cat])) { $has_cat = true; break; }
+                    }
+                    if ( $has_cat ) {
                         $active_class = $first_tab ? 'active' : '';
                         $safe_id = 'cmp-section-' . strtolower(str_replace(' ', '-', $cat));
                         echo '<button class="cmp-menu-tab-btn ' . $active_class . '" data-target="' . esc_attr($safe_id) . '">' . esc_html( $cat ) . '</button>';
@@ -132,33 +198,42 @@ function cmp_render_public_menu() {
 
         <div class="cmp-menu-content-area">
             <?php
-            foreach ( $category_order as $cat ) {
-                if ( !empty( $grouped_foods[$cat] ) ) {
-                    $safe_id = 'cmp-section-' . strtolower(str_replace(' ', '-', $cat));
-                    
-                    echo '<div id="' . esc_attr($safe_id) . '" class="cmp-menu-section">';
-                    echo '<h2 class="cmp-section-title">' . esc_html( $cat ) . '</h2>';
-                    echo '<div class="cmp-menu-grid">';
-                    
-                    foreach ( $grouped_foods[$cat] as $food ) {
-                        ?>
-                        <div class="cmp-food-card">
-                            <div>
-                                <h4><?php echo esc_html( $food->food_name ); ?></h4>
-                                <p><?php echo esc_html( $food->description ); ?></p>
+            $first_range = true;
+            foreach ($grouped_foods as $range_key => $range_data) {
+                $active_class = $first_range ? 'active' : '';
+                $safe_range_id = 'cmp-range-' . sanitize_title($range_key);
+                echo '<div id="' . esc_attr($safe_range_id) . '" class="cmp-range-container ' . $active_class . '" data-range="' . esc_attr($range_key) . '">';
+
+                foreach ( $category_order as $cat ) {
+                    if ( !empty( $range_data[$cat] ) ) {
+                        $safe_id = 'cmp-section-' . strtolower(str_replace(' ', '-', $cat));
+                        
+                        echo '<div id="' . esc_attr($safe_id) . '" class="cmp-menu-section">';
+                        echo '<h2 class="cmp-section-title">' . esc_html( $cat ) . '</h2>';
+                        echo '<div class="cmp-menu-grid">';
+                        
+                        foreach ( $range_data[$cat] as $food ) {
+                            ?>
+                            <div class="cmp-food-card">
+                                <div>
+                                    <h4><?php echo esc_html( $food->food_name ); ?></h4>
+                                    <p><?php echo esc_html( $food->description ); ?></p>
+                                </div>
+                                <div class="cmp-macros">
+                                    <div><strong>Cal</strong><span><?php echo intval( $food->calories ); ?></span></div>
+                                    <div><strong>Fat</strong><span><?php echo floatval( $food->total_fat ); ?>g</span></div>
+                                    <div><strong>Carbs</strong><span><?php echo floatval( $food->carbohydrates ); ?>g</span></div>
+                                    <div><strong>Pro</strong><span><?php echo floatval( $food->protein ); ?>g</span></div>
+                                </div>
                             </div>
-                            <div class="cmp-macros">
-                                <div><strong>Cal</strong><span><?php echo intval( $food->calories ); ?></span></div>
-                                <div><strong>Fat</strong><span><?php echo floatval( $food->total_fat ); ?>g</span></div>
-                                <div><strong>Carbs</strong><span><?php echo floatval( $food->carbohydrates ); ?>g</span></div>
-                                <div><strong>Pro</strong><span><?php echo floatval( $food->protein ); ?>g</span></div>
-                            </div>
-                        </div>
-                        <?php
+                            <?php
+                        }
+                        
+                        echo '</div></div>';
                     }
-                    
-                    echo '</div></div>';
                 }
+                echo '</div>'; // End Range Container
+                $first_range = false;
             }
             ?>
         </div>
@@ -166,11 +241,40 @@ function cmp_render_public_menu() {
 
     <script>
     document.addEventListener("DOMContentLoaded", function() {
+        const rangeBtns = document.querySelectorAll('.cmp-range-btn');
+        const rangeContainers = document.querySelectorAll('.cmp-range-container');
+        
         const navBtns = document.querySelectorAll('.cmp-menu-tab-btn');
         const sections = document.querySelectorAll('.cmp-menu-section');
         let isClickScrolling = false;
 
-        // 1. Smooth scroll to section on pill click
+        // 1. Master Range Tab Logic (Switch between Quarters)
+        if (rangeBtns.length > 0) {
+            rangeBtns.forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    
+                    rangeBtns.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+
+                    const targetRange = this.getAttribute('data-range');
+                    rangeContainers.forEach(container => {
+                        if (container.getAttribute('data-range') === targetRange) {
+                            container.classList.add('active');
+                        } else {
+                            container.classList.remove('active');
+                        }
+                    });
+
+                    // Reset sub-navigation to first pill
+                    if (navBtns.length > 0) {
+                        navBtns[0].click();
+                    }
+                });
+            });
+        }
+
+        // 2. Smooth scroll to section on pill click
         navBtns.forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -180,21 +284,22 @@ function cmp_render_public_menu() {
                 navBtns.forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
 
-                // Scroll to target
+                // Scroll to target (must find the active container's section to avoid scrolling to hidden elements)
                 const targetId = this.getAttribute('data-target');
-                const targetSection = document.getElementById(targetId);
-                
-                if (targetSection) {
-                    targetSection.scrollIntoView({ behavior: 'smooth' });
-                    
-                    // Re-enable the observer after scroll animation finishes
-                    setTimeout(() => { isClickScrolling = false; }, 800);
+                const activeContainer = document.querySelector('.cmp-range-container.active');
+                if (activeContainer) {
+                    const targetSection = activeContainer.querySelector('#' + targetId);
+                    if (targetSection) {
+                        targetSection.scrollIntoView({ behavior: 'smooth' });
+                        
+                        // Re-enable the observer after scroll animation finishes
+                        setTimeout(() => { isClickScrolling = false; }, 800);
+                    }
                 }
             });
         });
 
-        // 2. Intersection Observer (Scroll-Spy) to highlight pills on scroll
-        // Configured to trigger when a section hits the top 20% of the viewport
+        // 3. Intersection Observer (Scroll-Spy) to highlight pills on scroll
         const observerOptions = {
             root: null,
             rootMargin: '-15% 0px -85% 0px', 
@@ -205,7 +310,8 @@ function cmp_render_public_menu() {
             if (isClickScrolling) return; // Don't run this while a click-scroll is happening
 
             entries.forEach(entry => {
-                if (entry.isIntersecting) {
+                // Ensure we are only observing sections inside the ACTIVE range container
+                if (entry.isIntersecting && entry.target.closest('.cmp-range-container.active')) {
                     const activeId = entry.target.id;
                     
                     navBtns.forEach(btn => {
