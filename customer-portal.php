@@ -202,8 +202,8 @@ function cmp_render_customer_portal() {
 
     <style>
         .cmp-dashboard-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; overflow-x: hidden; box-sizing: border-box; position: relative; }
-        .cmp-tab-nav { display: flex; background: #fff; border-bottom: 2px solid #ddd; padding: 0 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-        .cmp-tab-btn { padding: 15px 25px; border: none; background: none; font-weight: bold; cursor: pointer; border-bottom: 3px solid transparent; color: #666; white-space: nowrap; }
+        .cmp-tab-nav { display: flex; background: #fff; border-bottom: 2px solid #ddd; padding: 0 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; align-items: flex-end; }
+        .cmp-tab-btn { padding: 12px 25px; border: none; background: none; font-weight: bold; cursor: pointer; border-bottom: 3px solid transparent; color: #666; white-space: nowrap; line-height: 1.4; text-align: center; }
         .cmp-tab-btn.active { color: #0073aa; border-bottom-color: #0073aa; }
         .cmp-tab-content { display: none; padding: 25px 0; }
         .cmp-tab-content.active { display: block; }
@@ -317,7 +317,12 @@ function cmp_render_customer_portal() {
             $first_tab = true;
             foreach ($subs as $sub) { 
                 $active_class = $first_tab ? 'active' : '';
-                echo '<button class="cmp-tab-btn ' . $active_class . '" onclick="switchTab(event, \'plan-tab-' . esc_attr($sub->id) . '\')">' . esc_html($sub->plan_name) . '</button>';
+                $start_date_formatted = !empty($sub->start_date) ? date('M d, Y', strtotime($sub->start_date)) : 'N/A';
+                
+                echo '<button class="cmp-tab-btn ' . $active_class . '" onclick="switchTab(event, \'plan-tab-' . esc_attr($sub->id) . '\')">';
+                echo esc_html($sub->plan_name) . '<br><span style="font-size: 0.85em; font-weight: normal; opacity: 0.8;">Subscribed: ' . esc_html($start_date_formatted) . '</span>';
+                echo '</button>';
+                
                 $first_tab = false;
             }
             ?>
