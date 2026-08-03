@@ -320,7 +320,7 @@ function cmp_render_customer_portal() {
                 $start_date_formatted = !empty($sub->start_date) ? date('M d, Y', strtotime($sub->start_date)) : 'N/A';
                 
                 echo '<button class="cmp-tab-btn ' . $active_class . '" onclick="switchTab(event, \'plan-tab-' . esc_attr($sub->id) . '\')">';
-                echo esc_html($sub->plan_name) . '<br><span style="font-size: 0.85em; font-weight: normal; opacity: 0.8;">Subscribed: ' . esc_html($start_date_formatted) . '</span>';
+                echo esc_html($sub->plan_name) . '<br><span style="font-size: 0.85em; font-weight: normal; opacity: 0.8;">' . esc_html($start_date_formatted) . '</span>';
                 echo '</button>';
                 
                 $first_tab = false;
