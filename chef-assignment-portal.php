@@ -107,6 +107,9 @@ function cmp_render_chef_assignment_desk() {
                 // NEW: Only mark as pending if there is actually a menu available for this date
                 $menu_exists = false;
                 foreach($active_food_ranges as $range) {
+                    if (empty($range->valid_from) || empty($range->valid_until)) {
+                        $menu_exists = true; break; // Fallback if dates aren't set
+                    }
                     if ($log->target_date >= $range->valid_from && $log->target_date <= $range->valid_until) {
                         $menu_exists = true;
                         break;
@@ -164,6 +167,7 @@ function cmp_render_chef_assignment_desk() {
             <button class="chef-tab-btn" onclick="switchChefTab(event, 'tab-all')">All Active Customers</button>
         </div>
 
+        <!-- TAB 1: PENDING -->
         <div id="tab-pending" class="chef-tab-content active">
             <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by name, email, or phone...">
             <div style="overflow-x: auto;">
@@ -211,6 +215,7 @@ function cmp_render_chef_assignment_desk() {
             </div>
         </div>
 
+        <!-- TAB 2: ALL CUSTOMERS -->
         <div id="tab-all" class="chef-tab-content">
             <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers...">
             <div style="overflow-x: auto;">
