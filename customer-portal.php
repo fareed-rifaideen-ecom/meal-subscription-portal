@@ -59,11 +59,36 @@ function cmp_ajax_save_daily_log() {
         wp_send_json_error('The menu for this date is pending release. Specific meals cannot be selected yet.');
     }
     
+    // --- ROBUST QUOTA CALCULATION ENGINE ---
     $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
-    preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
-    $allowed_quota = isset($m[1]) ? intval($m[1]) : 0;
-    $snack_quota = ($allowed_quota >= 2) ? 2 : 1;
-    if ($is_juice) $snack_quota = 0;
+    
+    $allowed_quota = 0;
+    $snack_quota = 0;
+
+    if (!$is_juice) {
+        // 1. Try regex for standard "2 Meal" naming
+        preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
+        if (isset($m[1])) {
+            $allowed_quota = intval($m[1]);
+        } else {
+            // 2. Try text numbers
+            if (preg_match('/\b(one|1)\b/i', $sub->plan_name)) $allowed_quota = 1;
+            elseif (preg_match('/\b(two|2)\b/i', $sub->plan_name)) $allowed_quota = 2;
+            elseif (preg_match('/\b(three|3)\b/i', $sub->plan_name)) $allowed_quota = 3;
+            else {
+                // 3. Fallback based on categories
+                $cats = explode(',', $sub->allowed_categories);
+                foreach($cats as $c) {
+                    if (in_array(trim($c), ['Breakfast', 'Lunch', 'Dinner'])) $allowed_quota++;
+                }
+            }
+        }
+        // Absolute fallback to prevent bypassing 0 === 0 validation error
+        if ($allowed_quota <= 0) $allowed_quota = 1;
+
+        // Strict Snack Logic based on requirement: 1 Meal = 1 Snack, 2+ Meals = 2 Snacks
+        $snack_quota = ($allowed_quota >= 2) ? 2 : 1;
+    }
 
     $is_chefs_choice = isset($_POST['chefs_choice']) ? intval($_POST['chefs_choice']) : 0;
 
@@ -71,7 +96,7 @@ function cmp_ajax_save_daily_log() {
     if (!$is_admin && !$is_chefs_choice && !$is_menu_pending) {
         if ($is_juice) {
             if (empty($_POST['juice_1']) || empty($_POST['juice_2']) || empty($_POST['juice_3'])) {
-                wp_send_json_error("Please select all 3 juices to complete this day.");
+                wp_send_json_error("Please select exactly 3 juices to complete this day.");
             }
         } else {
             // Main meals
@@ -89,7 +114,7 @@ function cmp_ajax_save_daily_log() {
             if (!empty($_POST['snack_1'])) $submitted_snacks++;
             if (!empty($_POST['snack_2'])) $submitted_snacks++;
 
-            if ($snack_quota > 0 && $submitted_snacks !== $snack_quota) {
+            if ($submitted_snacks !== $snack_quota) {
                 wp_send_json_error("Please select exactly {$snack_quota} snack(s).");
             }
         }
@@ -119,7 +144,7 @@ function cmp_ajax_save_daily_log() {
         $response_data = array('new_log_id' => $wpdb->insert_id);
     }
 
-    // --- NEW: ADD CUSTOMER TO THE DAILY DIGEST QUEUE ---
+    // --- ADD CUSTOMER TO THE DAILY DIGEST QUEUE ---
     $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
     if (!is_array($updated_subs_queue)) { $updated_subs_queue = array(); }
     
@@ -159,7 +184,7 @@ function cmp_render_customer_portal() {
     $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
 
     // OVERRIDE DETECTION
-    $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager'));
+    $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
     $is_chef_override  = isset($_GET['chef_override_sub']) && (current_user_can('manage_options') || current_user_can('kitchen_staff') || current_user_can('menu_manager') || current_user_can('foh_manager'));
 
     if ($is_admin_override) {
@@ -427,19 +452,35 @@ function cmp_render_customer_portal() {
             $time_slot_display = $time_slot ?: 'N/A';
             $is_paused = ($sub->status === 'paused');
 
+            // --- ROBUST QUOTA ENGINE ---
             $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
-            preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
-            $allowed_meals = isset($m[1]) ? intval($m[1]) : 0;
             
+            $allowed_quota = 0;
+            $snack_quota = 0;
+
             if (!$is_juice) {
-                $allowed_cats = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
-                $snack_count = ($allowed_meals >= 2) ? 2 : 1; 
-            } else {
-                $allowed_cats = ['Juices'];
-                $snack_count = 0;
+                // 1. Try regex
+                preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
+                if (isset($m[1])) {
+                    $allowed_quota = intval($m[1]);
+                } else {
+                    // 2. Try text
+                    if (preg_match('/\b(one|1)\b/i', $sub->plan_name)) $allowed_quota = 1;
+                    elseif (preg_match('/\b(two|2)\b/i', $sub->plan_name)) $allowed_quota = 2;
+                    elseif (preg_match('/\b(three|3)\b/i', $sub->plan_name)) $allowed_quota = 3;
+                    else {
+                        // 3. Try Categories
+                        $cats = explode(',', $sub->allowed_categories);
+                        foreach($cats as $c) {
+                            if (in_array(trim($c), ['Breakfast', 'Lunch', 'Dinner'])) $allowed_quota++;
+                        }
+                    }
+                }
+                if ($allowed_quota <= 0) $allowed_quota = 1;
+                $snack_quota = ($allowed_quota >= 2) ? 2 : 1; 
             }
         ?>
-        <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
+        <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
             
             <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:25px; margin-bottom:20px; box-shadow:0 2px 4px rgba(0,0,0,0.02); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
                 <div style="flex:1; min-width:250px;">
@@ -478,7 +519,7 @@ function cmp_render_customer_portal() {
                                 <th>Breakfast</th>
                                 <th>Lunch</th>
                                 <th>Dinner</th>
-                                <?php if($snack_count > 0) echo '<th>Snacks</th>'; ?>
+                                <?php if($snack_quota > 0) echo '<th>Snacks</th>'; ?>
                                 <th>Macros (Daily)</th>
                             <?php else: ?>
                                 <th>Juice 1</th>
@@ -575,12 +616,12 @@ function cmp_render_customer_portal() {
                                         </td>
                                     <?php endforeach; ?>
                                     
-                                    <?php if($snack_count > 0): ?>
+                                    <?php if($snack_quota > 0): ?>
                                     <td>
-                                        <select class="cmp-meal-select cmp-snack-1 <?php echo ($snack_count == 2) ? 'cmp-stacked-snack' : ''; ?>" data-cat="Snacks" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->snack_1_id : ''; ?>" <?php echo $meal_select_disabled; ?>>
+                                        <select class="cmp-meal-select cmp-snack-1 <?php echo ($snack_quota == 2) ? 'cmp-stacked-snack' : ''; ?>" data-cat="Snacks" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->snack_1_id : ''; ?>" <?php echo $meal_select_disabled; ?>>
                                             <option value="">- Select Snack 1 -</option>
                                         </select>
-                                        <?php if($snack_count == 2): ?>
+                                        <?php if($snack_quota == 2): ?>
                                         <select class="cmp-meal-select cmp-snack-2" data-cat="Snacks" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->snack_2_id : ''; ?>" <?php echo $meal_select_disabled; ?>>
                                             <option value="">- Select Snack 2 -</option>
                                         </select>
@@ -613,7 +654,9 @@ function cmp_render_customer_portal() {
                                     <?php 
                                     if ($is_chef_override) {
                                         if ($saved_chefs_choice) {
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Update</button>';
+                                            $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
+                                            $chef_btn_color = ($is_chef_assigned) ? '#46b450' : '#0073aa';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">'.$chef_btn_text.'</button>';
                                         } else {
                                             echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
                                         }
@@ -921,6 +964,7 @@ function cmp_render_customer_portal() {
             var dateVal = rowElement.find('.cmp-date-picker').val();
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked') ? 1 : 0;
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
+            var snackQuota = parseInt(container.data('snack-quota')) || 0;
             var isJuice = container.data('is-juice') === 1;
             
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
@@ -947,7 +991,6 @@ function cmp_render_customer_portal() {
                         return;
                     }
 
-                    var snackQuota = (allowedMeals >= 2) ? 2 : 1;
                     var selectedSnackCount = 0;
                     rowElement.find('select[data-cat="Snacks"]').each(function() {
                         if ($(this).val() !== "") selectedSnackCount++;
@@ -1134,3 +1177,4 @@ function cmp_export_customer_csv() {
     }
     fclose($output); exit;
 }
+?>
