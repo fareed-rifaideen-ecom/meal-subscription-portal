@@ -28,6 +28,7 @@ function cmp_register_settings() {
         register_setting( 'cmp_settings_group', 'cmp_blackout_dates' );
         register_setting( 'cmp_settings_group', 'cmp_map_url' );
         register_setting( 'cmp_settings_group', 'cmp_kitchen_email' );
+        register_setting( 'cmp_settings_group', 'cmp_digest_emails' ); // NEW: Daily Digest Email Queue
         register_setting( 'cmp_settings_group', 'cmp_grace_period' );
         register_setting( 'cmp_settings_group', 'cmp_label_chefs_choice' );
         register_setting( 'cmp_settings_group', 'cmp_whatsapp_number' ); 
@@ -74,11 +75,20 @@ function cmp_render_settings_page() {
                         </td>
                     </tr>
 
+                    <!-- NEW: Daily Digest Email Setting -->
+                    <tr valign="top" style="background: #f0f8ff; border-left: 4px solid #0073aa;">
+                        <th scope="row" style="padding-left: 15px;">Daily Digest Alert Emails</th>
+                        <td>
+                            <input type="text" name="cmp_digest_emails" value="<?php echo esc_attr( get_option('cmp_digest_emails', get_option('admin_email')) ); ?>" style="width: 100%;" />
+                            <p class="description">Comma-separated list of emails that will receive the daily "Meals Updated" summary 30 mins after cutoff.</p>
+                        </td>
+                    </tr>
+
                     <tr valign="top">
                         <th scope="row">Kitchen Alert Email</th>
                         <td>
                             <input type="email" name="cmp_kitchen_email" value="<?php echo esc_attr( get_option('cmp_kitchen_email', 'kitchen@thecyclebistro.com') ); ?>" style="width: 100%;" />
-                            <p class="description">Where system alerts (like FOH overrides) should be sent.</p>
+                            <p class="description">Where standard system alerts should be sent.</p>
                         </td>
                     </tr>
 
