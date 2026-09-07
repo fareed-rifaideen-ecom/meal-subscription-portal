@@ -113,11 +113,23 @@ function cmp_ajax_save_daily_log() {
 
     if ($log_id > 0) {
         $wpdb->update($table_logs, $data, array('id' => $log_id));
-        wp_send_json_success(array('msg' => 'Updated'));
+        $response_data = array('msg' => 'Updated');
     } else {
         $wpdb->insert($table_logs, $data);
-        wp_send_json_success(array('new_log_id' => $wpdb->insert_id));
+        $response_data = array('new_log_id' => $wpdb->insert_id);
     }
+
+    // --- NEW: ADD CUSTOMER TO THE DAILY DIGEST QUEUE ---
+    $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
+    if (!is_array($updated_subs_queue)) { $updated_subs_queue = array(); }
+    
+    // If the customer isn't already in the queue today, add them
+    if (!in_array($sub_id, $updated_subs_queue)) {
+        $updated_subs_queue[] = $sub_id;
+        update_option('cmp_daily_updated_subs', $updated_subs_queue);
+    }
+
+    wp_send_json_success($response_data);
 }
 
 // ==========================================
@@ -494,6 +506,7 @@ function cmp_render_customer_portal() {
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
                             $is_locked = ($log && $log->is_locked);
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
+                            $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
                             $base_input_disabled = ($is_void || (!$is_admin_override && !$is_chef_override && ($is_locked || $is_paused))) ? 'disabled' : '';
                             
