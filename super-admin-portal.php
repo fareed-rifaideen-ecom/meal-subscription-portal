@@ -86,6 +86,9 @@ function cmp_render_super_admin_portal() {
                 <button class="sa-nav-btn" data-target="sa-kitchen">Kitchen Report</button>
                 
                 <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" style="background: #1d6f42; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; font-size: 0.9em; display: inline-flex; align-items: center;">Menu Manager</a>
+
+                <!-- NEW: Admin Tools Portal Button -->
+                <a href="<?php echo site_url('/admin-tools/'); ?>" target="_blank" style="background: #dba617; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; font-size: 0.9em; display: inline-flex; align-items: center;">Admin Tools</a>
                 
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; font-size: 0.9em; display: inline-flex; align-items: center;">Log Out</a>
             </div>
