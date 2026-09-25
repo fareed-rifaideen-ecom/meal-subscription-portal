@@ -25,8 +25,12 @@ function cmp_render_menu_manager() {
                 '</div>';
     }
 
-    // 2. STRICT ROLE CHECK: Admin OR Menu Manager ONLY
-    if ( !current_user_can('manage_options') && !current_user_can('menu_manager') ) {
+    // 2. STRICT ROLE CHECK: Admin OR Menu Manager ONLY (Bulletproof Role Inspection)
+    $user = wp_get_current_user();
+    $is_admin = in_array('administrator', (array) $user->roles) || current_user_can('manage_options');
+    $is_menu_mgr = in_array('menu_manager', (array) $user->roles) || current_user_can('menu_manager');
+
+    if ( !$is_admin && !$is_menu_mgr ) {
         return '<div style="max-width: 600px; margin: 50px auto; padding: 30px; background: #fff; border-left: 4px solid #dc3232; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                     <p style="font-size: 1.1em; color: #dc3232;"><strong>Access Denied:</strong> You do not have permission to view the Menu Manager. Dedicated Menu Manager account required.</p>
                     <a href="' . wp_logout_url( get_permalink() ) . '" style="display: inline-block; margin-top: 15px; background: #222; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px;">Log Out & Switch Accounts</a>
