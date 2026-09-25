@@ -169,7 +169,7 @@ function cmp_render_super_admin_portal() {
         <!-- Quick Launch Bar -->
         <h2 class="sa-section-title">Quick Launch Portals</h2>
         <div class="sa-quick-launch">
-            <a href="<?php echo site_url('/foh-portal/'); ?>" target="_blank" class="sa-launch-btn" style="background: #0ea5e9;">FOH Command Center ⇗</a>
+            <a href="<?php echo site_url('/foh-admin-portal/'); ?>" target="_blank" class="sa-launch-btn" style="background: #0ea5e9;">FOH Command Center ⇗</a>
             <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" class="sa-launch-btn" style="background: #dc2626;">Kitchen Report ⇗</a>
             <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-launch-btn" style="background: #10b981;">Menu Manager ⇗</a>
             <a href="<?php echo site_url('/admin-tools/'); ?>" target="_blank" class="sa-launch-btn" style="background: #f59e0b;">Admin Tools ⇗</a>
