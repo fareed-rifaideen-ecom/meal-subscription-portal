@@ -277,6 +277,7 @@ function cmp_render_customer_portal() {
         .cmp-table td { padding: 10px 5px; border-bottom: 1px solid #eee; vertical-align: middle; box-sizing: border-box; }
         
         .cmp-mobile-label { display: none; }
+        .cmp-mobile-status { display: none; }
         .macro-mobile { display: none; }
         .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; transition: opacity 0.2s; }
 
@@ -325,13 +326,13 @@ function cmp_render_customer_portal() {
             .cmp-table tr.is-open td:nth-child(1)::after { content: '\25B2'; }
             .cmp-table tr:not(.is-open) td:not(:first-child) { display: none !important; }
 
+            .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
+
             .status-pending { border: 2px solid #fde68a !important; }
             .status-pending td:nth-child(1) { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
-            .status-pending td:nth-child(1)::before { content: 'Pending • '; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px; display: block; opacity: 0.8;}
 
             .status-saved { border: 2px solid #bbf7d0 !important; }
             .status-saved td:nth-child(1) { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
-            .status-saved td:nth-child(1)::before { content: 'Saved ✓ • '; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px; display: block; opacity: 0.8;}
 
             .status-void { border: 2px solid #fecdd3 !important; opacity: 0.75; }
             .status-void td:nth-child(1) { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
@@ -608,6 +609,7 @@ function cmp_render_customer_portal() {
                             <tr class="cmp-day-row <?php echo $row_status_class; ?>">
                                 <td>
                                     <strong>Day <?php echo $i; ?></strong>
+                                    <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                 </td>
                                 <td>
                                     <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" <?php echo $min_attr; ?> value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $date_picker_disabled; ?>>
@@ -1057,6 +1059,7 @@ function cmp_render_customer_portal() {
 
                         var newBadge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                         rowElement.find('td:nth-last-child(2)').html(newBadge);
+                        rowElement.find('.cmp-mobile-status').html(newBadge);
 
                         if ($(window).width() <= 768) {
                             rowElement.removeClass('is-open'); 
