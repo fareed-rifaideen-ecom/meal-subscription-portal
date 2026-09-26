@@ -108,8 +108,12 @@ function cmp_render_super_admin_portal() {
 
     $dispatch_load = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND delivery_result NOT IN ('Cancelled', 'Returned') AND is_locked = 1", $start_date, $end_date));
     
-    // NEW: Pending POS Checks
-    $pending_pos_checks = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0", $start_date, $end_date));
+    // NEW: Actionable Pending POS Checks (GLOBAL SNAPSHOT: Past up until Tomorrow's deliveries)
+    $tomorrow_eating_date = date('Y-m-d', strtotime('+1 day'));
+    $pending_pos_checks = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(id) FROM $table_logs WHERE target_date <= %s AND is_locked = 1 AND pos_updated = 0", 
+        $tomorrow_eating_date
+    ));
 
     // Pending Chef's Assignments (Filtered)
     $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE is_chefs_choice = 1 AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
@@ -263,10 +267,10 @@ function cmp_render_super_admin_portal() {
                 <div class="sa-kpi-value"><?php echo number_format($pending_chef_count); ?></div>
                 <div class="sa-kpi-subtitle">Meals requiring manual Chef input</div>
             </div>
-            <div class="sa-kpi-card gold">
-                <div class="sa-kpi-title">Pending POS Checks</div>
+            <div class="sa-kpi-card <?php echo ($pending_pos_checks > 0) ? 'gold' : 'green'; ?>">
+                <div class="sa-kpi-title">Global Pending POS Checks</div>
                 <div class="sa-kpi-value"><?php echo number_format($pending_pos_checks); ?></div>
-                <div class="sa-kpi-subtitle">Orders requiring FOH reconciliation</div>
+                <div class="sa-kpi-subtitle">All past & active orders requiring FOH reconciliation</div>
             </div>
         </div>
 
