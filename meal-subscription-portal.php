@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.1
+ * Version: 2.2
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -97,6 +97,10 @@ function cmp_register_custom_roles() {
     if (!get_role('menu_manager')) {
         add_role('menu_manager', 'Menu Manager', array('read' => true));
     }
+    // NEW: Accounts Team Role
+    if (!get_role('accounts_team')) {
+        add_role('accounts_team', 'Accounts Team', array('read' => true));
+    }
 }
 
 // ==========================================
@@ -112,7 +116,8 @@ $files_to_include = array(
     'foh-portal.php',
     'menu-manager-portal.php',
     'super-admin-portal.php',
-    'chef-assignment-portal.php' 
+    'chef-assignment-portal.php',
+    'accounts-portal.php' // <-- ADDED ACCOUNTS PORTAL
 );
 
 foreach ( $files_to_include as $file ) {
