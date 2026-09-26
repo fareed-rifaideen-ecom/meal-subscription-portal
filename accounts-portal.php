@@ -238,7 +238,7 @@ function cmp_render_accounts_dashboard() {
         <div class="acc-header cmp-no-print">
             <div>
                 <h1 style="margin:0; color:#fff; font-size:2em;">Accounts Portal</h1>
-                <p style="margin:5px 0 0 0; color:#94a3b8;">Financial & Compliance Tracking</p>
+                <p style="margin:5px 0 0 0; color:#94a3b8;">Meal Plan Monitoring</p>
             </div>
             <div>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: rgba(255,255,255,0.1); color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; border: 1px solid rgba(255,255,255,0.2);">Log Out</a>
