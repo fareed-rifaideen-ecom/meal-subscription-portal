@@ -548,7 +548,7 @@ function cmp_render_customer_portal() {
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
-                            // --- NEW: ROLLING TIME LOCK LOGIC ---
+                            // --- ROLLING TIME LOCK LOGIC ---
                             $is_time_locked = false;
                             if ($log && !empty($log->target_date)) {
                                 if ($log->target_date < $global_min_date) {
@@ -584,10 +584,11 @@ function cmp_render_customer_portal() {
 
                             $status_badge = '<span style="color:#666; font-size:0.9em; background:#f1f5f9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Pending</span>';
                             
+                            // --- STATUS DECOUPLED FROM POS ---
                             if ($log && !$is_void) {
-                                if ($log->pos_updated == 1 && $log->delivery_result === 'Successful') {
-                                    $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Delivered ✓</span>';
-                                } elseif ($log->pos_updated == 1 && in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
+                                if ($log->delivery_result === 'Successful') {
+                                    $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
+                                } elseif (in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
                                     $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                                 } elseif ($log->dispatch_status == 1) {
                                     $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Out for Delivery</span>';
@@ -1159,8 +1160,8 @@ function cmp_export_customer_csv() {
         $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
         
         $status = 'Pending';
-        if ($log->pos_updated == 1 && $log->delivery_result === 'Successful') { $status = 'Delivered'; }
-        elseif ($log->pos_updated == 1 && in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
+        if ($log->delivery_result === 'Successful') { $status = 'Successful'; }
+        elseif (in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
         elseif ($log->dispatch_status == 1) { $status = 'Out for Delivery'; }
         elseif ($log->id > 0) { $status = 'Confirmed'; }
 
