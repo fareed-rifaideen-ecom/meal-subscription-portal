@@ -71,7 +71,6 @@ function cmp_render_super_admin_portal() {
     foreach ($all_subs as $sub) {
         $uid = $sub->user_id;
         
-        // Initialize user tracking
         if (!isset($user_status[$uid])) {
             $user_status[$uid] = array('has_active' => false, 'has_completed' => false);
         }
@@ -88,7 +87,6 @@ function cmp_render_super_admin_portal() {
             $user_status[$uid]['has_active'] = true;
             $active_count++;
             
-            // Calculate active financial turnover via WooCommerce
             if ($sub->wc_order_id > 0 && function_exists('wc_get_order')) {
                 $order = wc_get_order($sub->wc_order_id);
                 if ($order) {
@@ -98,7 +96,6 @@ function cmp_render_super_admin_portal() {
         }
     }
 
-    // Calculate True Churn: Users with completed plans but NO active plans
     $true_churn_count = 0;
     foreach ($user_status as $uid => $stats) {
         if ($stats['has_completed'] && !$stats['has_active']) {
@@ -112,7 +109,6 @@ function cmp_render_super_admin_portal() {
 
     $dispatch_load = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND delivery_result NOT IN ('Cancelled', 'Returned') AND is_locked = 1", $start_date, $end_date));
     
-    // Pending Chef's Assignments (Filtered)
     $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE is_chefs_choice = 1 AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
     $active_food_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1");
     $pending_chef_count = 0;
@@ -133,7 +129,8 @@ function cmp_render_super_admin_portal() {
     }
 
     // --- 3. DEDICATED POS RECONCILIATION (FILTERED BY POS DATE RANGE) ---
-    $pending_pos_checks = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0", $pos_start_date, $pos_end_date));
+    // FIXED LOGIC: Only count as pending if Kitchen has assigned a delivery result (Not 'Pending')
+    $pending_pos_checks = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'", $pos_start_date, $pos_end_date));
     $completed_pos_checks = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 1", $pos_start_date, $pos_end_date));
 
     // --- 4. DELIVERY ANALYTICS (FILTERED BY GLOBAL DATE RANGE) ---
@@ -229,52 +226,7 @@ function cmp_render_super_admin_portal() {
             <a href="<?php echo site_url('/admin-tools/'); ?>" target="_blank" class="sa-launch-btn" style="background: #f59e0b;">Admin Tools ⇗</a>
         </div>
 
-        <!-- Tier 1: Subscription Health -->
-        <h2 class="sa-section-title">Subscription Health & Finance <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Live Global Snapshot)</span></h2>
-        <div class="sa-kpi-grid">
-            <div class="sa-kpi-card green">
-                <div class="sa-kpi-title">Active Customers</div>
-                <div class="sa-kpi-value"><?php echo number_format($active_count); ?></div>
-                <div class="sa-kpi-subtitle">Currently assigned to an active plan</div>
-            </div>
-            <div class="sa-kpi-card orange">
-                <div class="sa-kpi-title">Paused Accounts</div>
-                <div class="sa-kpi-value"><?php echo number_format($paused_count); ?></div>
-                <div class="sa-kpi-subtitle">Plans placed on temporary hold</div>
-            </div>
-            <div class="sa-kpi-card red">
-                <div class="sa-kpi-title">Churned Customers</div>
-                <div class="sa-kpi-value"><?php echo number_format($true_churn_count); ?></div>
-                <div class="sa-kpi-subtitle">Subscribers with completed plans & no active renewals</div>
-            </div>
-            <div class="sa-kpi-card dark">
-                <div class="sa-kpi-title">Active Financial Turnover</div>
-                <div class="sa-kpi-value" style="font-size: 2.2em; color: #10b981; margin-top: 5px;"><?php echo $formatted_turnover; ?></div>
-                <div class="sa-kpi-subtitle">Total gross value of current non-manual subscriptions</div>
-            </div>
-        </div>
-
-        <!-- Tier 2: Operational Pulse -->
-        <h2 class="sa-section-title">Operational Pulse <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Period: <?php echo date('M j', strtotime($start_date)); ?> - <?php echo date('M j', strtotime($end_date)); ?>)</span></h2>
-        <div class="sa-kpi-grid">
-            <div class="sa-kpi-card teal">
-                <div class="sa-kpi-title">Meal Preparations</div>
-                <div class="sa-kpi-value"><?php echo number_format($done_preps); ?> / <?php echo number_format($total_preps); ?></div>
-                <div class="sa-kpi-subtitle">Meals prepped vs total needed for this period</div>
-            </div>
-            <div class="sa-kpi-card blue">
-                <div class="sa-kpi-title">Dispatch Load</div>
-                <div class="sa-kpi-value"><?php echo number_format($dispatch_load); ?></div>
-                <div class="sa-kpi-subtitle">Total active meals assigned for delivery</div>
-            </div>
-            <div class="sa-kpi-card <?php echo ($pending_chef_count > 0) ? 'red' : 'green'; ?>">
-                <div class="sa-kpi-title">Pending Chef's Assignments</div>
-                <div class="sa-kpi-value"><?php echo number_format($pending_chef_count); ?></div>
-                <div class="sa-kpi-subtitle">Meals requiring manual Chef input</div>
-            </div>
-        </div>
-
-        <!-- Tier 3: FOH Reconciliation -->
+        <!-- Tier 1: FOH Reconciliation (MOVED TO TOP) -->
         <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; flex-wrap: wrap; gap: 15px;">
             <h2 class="sa-section-title" style="border: none; margin: 0; padding: 0;">FOH Reconciliation</h2>
             <form method="GET" style="margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -299,6 +251,51 @@ function cmp_render_super_admin_portal() {
                 <div class="sa-kpi-title">Completed POS Checks</div>
                 <div class="sa-kpi-value"><?php echo number_format($completed_pos_checks); ?></div>
                 <div class="sa-kpi-subtitle">Successfully reconciled orders in this period</div>
+            </div>
+        </div>
+
+        <!-- Tier 2: Subscription Health -->
+        <h2 class="sa-section-title">Subscription Health & Finance <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Live Global Snapshot)</span></h2>
+        <div class="sa-kpi-grid">
+            <div class="sa-kpi-card green">
+                <div class="sa-kpi-title">Active Customers</div>
+                <div class="sa-kpi-value"><?php echo number_format($active_count); ?></div>
+                <div class="sa-kpi-subtitle">Currently assigned to an active plan</div>
+            </div>
+            <div class="sa-kpi-card orange">
+                <div class="sa-kpi-title">Paused Accounts</div>
+                <div class="sa-kpi-value"><?php echo number_format($paused_count); ?></div>
+                <div class="sa-kpi-subtitle">Plans placed on temporary hold</div>
+            </div>
+            <div class="sa-kpi-card red">
+                <div class="sa-kpi-title">Churned Customers</div>
+                <div class="sa-kpi-value"><?php echo number_format($true_churn_count); ?></div>
+                <div class="sa-kpi-subtitle">Subscribers with completed plans & no active renewals</div>
+            </div>
+            <div class="sa-kpi-card dark">
+                <div class="sa-kpi-title">Active Financial Turnover</div>
+                <div class="sa-kpi-value" style="font-size: 2.2em; color: #10b981; margin-top: 5px;"><?php echo $formatted_turnover; ?></div>
+                <div class="sa-kpi-subtitle">Total gross value of current non-manual subscriptions</div>
+            </div>
+        </div>
+
+        <!-- Tier 3: Operational Pulse -->
+        <h2 class="sa-section-title">Operational Pulse <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Period: <?php echo date('M j', strtotime($start_date)); ?> - <?php echo date('M j', strtotime($end_date)); ?>)</span></h2>
+        <div class="sa-kpi-grid">
+            <div class="sa-kpi-card teal">
+                <div class="sa-kpi-title">Meal Preparations</div>
+                <div class="sa-kpi-value"><?php echo number_format($done_preps); ?> / <?php echo number_format($total_preps); ?></div>
+                <div class="sa-kpi-subtitle">Meals prepped vs total needed for this period</div>
+            </div>
+            <div class="sa-kpi-card blue">
+                <div class="sa-kpi-title">Dispatch Load</div>
+                <div class="sa-kpi-value"><?php echo number_format($dispatch_load); ?></div>
+                <div class="sa-kpi-subtitle">Total active meals assigned for delivery</div>
+            </div>
+            <div class="sa-kpi-card <?php echo ($pending_chef_count > 0) ? 'red' : 'green'; ?>">
+                <div class="sa-kpi-title">Pending Chef's Assignments</div>
+                <div class="sa-kpi-value"><?php echo number_format($pending_chef_count); ?></div>
+                <div class="sa-kpi-subtitle">Meals requiring manual Chef input</div>
             </div>
         </div>
 
