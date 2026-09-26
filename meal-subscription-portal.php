@@ -213,8 +213,9 @@ function cmp_run_hourly_watchdog() {
         $target_date_obj->modify('+1 day');
         $target_date_str = $target_date_obj->format('Y-m-d');
         
+        // FIXED LOGIC: Only count if delivery result is NOT 'Pending'
         $missed_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(id) FROM $table_logs WHERE target_date = %s AND is_locked = 1 AND pos_updated = 0",
+            "SELECT COUNT(id) FROM $table_logs WHERE target_date = %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
             $target_date_str
         ));
 
@@ -231,8 +232,9 @@ function cmp_run_hourly_watchdog() {
         // Find Target Date = Today (Prepared Yesterday)
         $target_date_str = $current_date;
         
+        // FIXED LOGIC: Only count if delivery result is NOT 'Pending'
         $missed_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(id) FROM $table_logs WHERE target_date = %s AND is_locked = 1 AND pos_updated = 0",
+            "SELECT COUNT(id) FROM $table_logs WHERE target_date = %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
             $target_date_str
         ));
 
