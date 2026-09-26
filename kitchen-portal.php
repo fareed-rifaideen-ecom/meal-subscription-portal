@@ -493,7 +493,8 @@ function cmp_render_kitchen_portal() {
             </div>
         </div>
 
-        <div style="text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding-bottom: 10px;">
+        <!-- NEW: STICKY HEADER WRAPPER -->
+        <div style="position: sticky; top: 0; z-index: 99; background: #ffffff; text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding: 15px 0 10px 0;">
             <h1 style="margin: 0; font-size: 2em; color: #222;">Order Preparation Report</h1>
             <h3 style="margin: 5px 0 0 0; color: #0073aa;">Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
         </div>
@@ -658,7 +659,6 @@ function cmp_render_kitchen_portal() {
                                 <?php endif; ?>
                             </td>
                             
-                            <!-- NEW PREPARED COLUMN -->
                             <td style="text-align:center; background:#f0fdf4; border-left:1px solid #ddd;">
                                 <input type="checkbox" class="chk-large cmp-prepared-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['prepared'] ? 'checked' : ''; ?> <?php echo $prepared_disabled; ?>>
                                 <?php if($c['prepared']) echo '<span style="display:none; color:#166534; font-weight:bold;" class="print-only">Yes</span>'; ?>
