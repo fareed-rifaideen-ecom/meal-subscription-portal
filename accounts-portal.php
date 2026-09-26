@@ -294,14 +294,14 @@ function cmp_render_accounts_dashboard() {
             </form>
         </div>
         
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap:20px; margin-bottom:40px;">
+        <div style="margin-bottom:40px;">
             <!-- Pending POS Table -->
             <?php if(empty($pending_pos)): ?>
-                <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold;">
+                <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold; margin-bottom:20px;">
                     ✓ Perfect compliance. No pending POS checks found.
                 </div>
             <?php else: ?>
-                <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a;">
+                <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a; margin-bottom:20px;">
                     <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count($pending_pos); ?> Missing Reconciliations</h4>
                     <div style="max-height: 250px; overflow-y: auto;">
                         <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
