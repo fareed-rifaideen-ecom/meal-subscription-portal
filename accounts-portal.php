@@ -13,6 +13,7 @@ function cmp_export_accounts_main() {
     global $wpdb;
     $start = isset($_GET['start']) ? sanitize_text_field($_GET['start']) : date('Y-m-d', strtotime('-3 months'));
     $end = isset($_GET['end']) ? sanitize_text_field($_GET['end']) : date('Y-m-d');
+    $status_filter = isset($_GET['status_filter']) ? sanitize_text_field($_GET['status_filter']) : 'active';
     
     $subs = $wpdb->get_results($wpdb->prepare(
         "SELECT s.*, u.user_email, u.display_name FROM {$wpdb->prefix}cmp_subscriptions s 
@@ -21,8 +22,11 @@ function cmp_export_accounts_main() {
         $start, $end
     ));
 
+    $filename_status = ucfirst($status_filter);
+    if ($status_filter === 'completed') $filename_status = 'Completed';
+
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="Accounts_Subscriptions_' . $start . '_to_' . $end . '.csv"');
+    header('Content-Disposition: attachment; filename="Accounts_' . $filename_status . '_Plans_' . $start . '_to_' . $end . '.csv"');
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
     
@@ -37,7 +41,23 @@ function cmp_export_accounts_main() {
         $balance = $s->total_days - $used;
         
         $is_completed = ($used >= $s->total_days || $s->expiry_date < current_time('mysql'));
-        $derived_status = $is_completed ? 'Completed/Expired' : ucfirst($s->status);
+        
+        // Determine internal status for filtering
+        if ($is_completed) {
+            $internal_status = 'completed';
+            $derived_status = 'Completed/Expired';
+        } elseif ($s->status === 'paused') {
+            $internal_status = 'paused';
+            $derived_status = 'Paused';
+        } else {
+            $internal_status = 'active';
+            $derived_status = 'Active';
+        }
+
+        // Apply the Export Filter
+        if ($status_filter !== 'all' && $status_filter !== $internal_status) {
+            continue; 
+        }
 
         fputcsv($output, array(
             $s->wc_order_id > 0 ? '#'.$s->wc_order_id : 'Manual',
@@ -143,7 +163,7 @@ function cmp_render_accounts_dashboard() {
     $pos_start  = isset($_GET['pos_start']) ? sanitize_text_field($_GET['pos_start']) : date('Y-m-d', strtotime('-3 days'));
     $pos_end    = isset($_GET['pos_end']) ? sanitize_text_field($_GET['pos_end']) : date('Y-m-d');
 
-    // --- POS CHECKS DATA ---
+    // --- POS CHECKS DATA (PENDING & COMPLETED) ---
     $pending_pos = $wpdb->get_results($wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
          JOIN $table_subs s ON l.subscription_id = s.id 
@@ -152,19 +172,34 @@ function cmp_render_accounts_dashboard() {
         $pos_start, $pos_end
     ));
 
-    // Calculate Delivery Date for POS Checks
-    foreach($pending_pos as $p) {
-        $order = wc_get_order($p->wc_order_id);
-        $timing = '';
-        if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
-        if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
-        
-        $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
-        $is_day_before = (stripos($timing, 'Day Before') !== false);
-        
-        $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
-        $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
-    }
+    $completed_pos = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
+         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+         WHERE l.pos_updated = 1 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $pos_start, $pos_end
+    ));
+
+    // Helper to Calculate Delivery Dates & Tags
+    $process_pos_data = function($pos_array) {
+        foreach($pos_array as $p) {
+            $order = wc_get_order($p->wc_order_id);
+            $timing = '';
+            if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
+            if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
+            
+            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+            $is_day_before = (stripos($timing, 'Day Before') !== false);
+            
+            $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
+            $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
+            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
+        }
+        return $pos_array;
+    };
+
+    $pending_pos = $process_pos_data($pending_pos);
+    $completed_pos = $process_pos_data($completed_pos);
 
     // --- SUBSCRIPTION DATA & SORTING ---
     $all_subs_data = $wpdb->get_results($wpdb->prepare(
@@ -230,7 +265,8 @@ function cmp_render_accounts_dashboard() {
             body, html { background: #fff !important; }
             .acc-table { border: 1px solid #000; box-shadow: none; }
             .acc-table th, .acc-table td { border: 1px solid #000; }
-            .acc-tab-content { display: block !important; }
+            .acc-tab-content { display: none; }
+            .acc-tab-content.active { display: block !important; }
         }
     </style>
 
@@ -247,7 +283,7 @@ function cmp_render_accounts_dashboard() {
 
         <!-- POS NOTIFICATIONS -->
         <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
-            <span style="color:#b45309;">Compliance: Pending POS Checks</span>
+            <span style="color:#0f172a;">Compliance: POS Reconciliations</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
                 <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
@@ -258,39 +294,79 @@ function cmp_render_accounts_dashboard() {
             </form>
         </div>
         
-        <?php if(empty($pending_pos)): ?>
-            <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold; margin-bottom:40px;">
-                ✓ Perfect compliance. No pending POS checks found for this period.
-            </div>
-        <?php else: ?>
-            <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a; margin-bottom:40px;">
-                <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count($pending_pos); ?> Missing Reconciliations</h4>
-                <div style="max-height: 250px; overflow-y: auto;">
-                    <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
-                        <tr style="border-bottom:2px solid #fcd34d; color:#92400e;">
-                            <th style="padding:8px;">Target Date (Eating)</th>
-                            <th style="padding:8px; border-right:2px solid #fcd34d;">Delivery Date</th>
-                            <th style="padding:8px;">Order ID</th>
-                            <th style="padding:8px;">Customer</th>
-                            <th style="padding:8px;">Plan</th>
-                            <th style="padding:8px;">Delivery Logged As</th>
-                        </tr>
-                        <?php foreach($pending_pos as $p): ?>
-                        <tr style="border-bottom:1px solid #fde68a;">
-                            <td style="padding:8px;"><strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong></td>
-                            <td style="padding:8px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                            <td style="padding:8px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
-                            <td style="padding:8px;"><?php echo esc_html($p->display_name); ?></td>
-                            <td style="padding:8px;"><?php echo esc_html($p->plan_name); ?></td>
-                            <td style="padding:8px;">
-                                <span style="background:#fecdd3; color:#9f1239; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </table>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap:20px; margin-bottom:40px;">
+            <!-- Pending POS Table -->
+            <?php if(empty($pending_pos)): ?>
+                <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold;">
+                    ✓ Perfect compliance. No pending POS checks found.
                 </div>
-            </div>
-        <?php endif; ?>
+            <?php else: ?>
+                <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a;">
+                    <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count($pending_pos); ?> Missing Reconciliations</h4>
+                    <div style="max-height: 250px; overflow-y: auto;">
+                        <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
+                            <tr style="border-bottom:2px solid #fcd34d; color:#92400e;">
+                                <th style="padding:8px;">Meal Date (Eating)</th>
+                                <th style="padding:8px; border-right:2px solid #fcd34d;">Delivery Date</th>
+                                <th style="padding:8px;">Order ID</th>
+                                <th style="padding:8px;">Customer</th>
+                                <th style="padding:8px;">Plan</th>
+                                <th style="padding:8px;">Delivery Logged As</th>
+                            </tr>
+                            <?php foreach($pending_pos as $p): ?>
+                            <tr style="border-bottom:1px solid #fde68a;">
+                                <td style="padding:8px;">
+                                    <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
+                                    <span style="font-size:0.85em; color:#b45309;">(<?php echo $p->timing_label; ?>)</span>
+                                </td>
+                                <td style="padding:8px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
+                                <td style="padding:8px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
+                                <td style="padding:8px;"><?php echo esc_html($p->display_name); ?></td>
+                                <td style="padding:8px;"><?php echo esc_html($p->plan_name); ?></td>
+                                <td style="padding:8px;">
+                                    <span style="background:#fecdd3; color:#9f1239; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </table>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <!-- Completed POS Table -->
+            <?php if(!empty($completed_pos)): ?>
+                <div style="background:#f0fdf4; padding:20px; border-radius:8px; border:1px solid #bbf7d0;">
+                    <h4 style="margin:0 0 15px 0; color:#166534; font-size:1.1em;">✓ <?php echo count($completed_pos); ?> Completed Reconciliations</h4>
+                    <div style="max-height: 250px; overflow-y: auto;">
+                        <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
+                            <tr style="border-bottom:2px solid #86efac; color:#14532d;">
+                                <th style="padding:8px;">Meal Date (Eating)</th>
+                                <th style="padding:8px; border-right:2px solid #86efac;">Delivery Date</th>
+                                <th style="padding:8px;">Order ID</th>
+                                <th style="padding:8px;">Customer</th>
+                                <th style="padding:8px;">Plan</th>
+                                <th style="padding:8px;">Delivery Logged As</th>
+                            </tr>
+                            <?php foreach($completed_pos as $p): ?>
+                            <tr style="border-bottom:1px solid #bbf7d0;">
+                                <td style="padding:8px;">
+                                    <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
+                                    <span style="font-size:0.85em; color:#166534;">(<?php echo $p->timing_label; ?>)</span>
+                                </td>
+                                <td style="padding:8px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
+                                <td style="padding:8px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
+                                <td style="padding:8px;"><?php echo esc_html($p->display_name); ?></td>
+                                <td style="padding:8px;"><?php echo esc_html($p->plan_name); ?></td>
+                                <td style="padding:8px;">
+                                    <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </table>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
 
         <!-- KPI SECTION (TABS) -->
         <div class="acc-section-title cmp-no-print">
@@ -322,18 +398,22 @@ function cmp_render_accounts_dashboard() {
             </div>
         </div>
 
-        <div style="display:flex; justify-content:flex-end; margin-bottom:20px;">
-            <div class="cmp-no-print" style="display:flex; gap:10px;">
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_main&start='.$dash_start.'&end='.$dash_end)); ?>" style="background:#1d6f42; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;">Export All to CSV</a>
-                <button onclick="window.print()" style="background:#475569; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.9em;">Print PDF</button>
-            </div>
-        </div>
-
         <!-- HELPER FUNCTION FOR TABLES -->
         <?php 
-        function render_accounts_sub_table($subs_array, $table_id, $is_active = false) {
+        function render_accounts_sub_table($subs_array, $table_id, $status_filter, $dash_start, $dash_end, $is_active = false) {
             $display = $is_active ? 'active' : '';
-            echo "<div id='{$table_id}' class='acc-tab-content {$display}'><div style='overflow-x:auto;'><table class='acc-table'>
+            $title = ucfirst($status_filter) . ' Plans';
+            if($status_filter == 'completed') $title = 'Completed/Expired Plans';
+
+            echo "<div id='{$table_id}' class='acc-tab-content {$display}'>
+                    <div style='display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;'>
+                        <h3 style='margin:0; color:#0f172a;'>{$title}</h3>
+                        <div class='cmp-no-print' style='display:flex; gap:10px;'>
+                            <a href='" . esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_main&status_filter='.$status_filter.'&start='.$dash_start.'&end='.$dash_end)) . "' style='background:#1d6f42; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;'>Export {$title} to CSV</a>
+                            <button onclick='window.print()' style='background:#475569; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.9em;'>Print PDF</button>
+                        </div>
+                    </div>
+                    <div style='overflow-x:auto;'><table class='acc-table'>
                     <thead>
                         <tr>
                             <th style='width:10%;'>Order ID</th>
@@ -395,9 +475,9 @@ function cmp_render_accounts_dashboard() {
         ?>
 
         <!-- Render the 3 Tables -->
-        <?php render_accounts_sub_table($active_subs, 'acc-active', true); ?>
-        <?php render_accounts_sub_table($paused_subs, 'acc-paused', false); ?>
-        <?php render_accounts_sub_table($completed_subs, 'acc-completed', false); ?>
+        <?php render_accounts_sub_table($active_subs, 'acc-active', 'active', $dash_start, $dash_end, true); ?>
+        <?php render_accounts_sub_table($paused_subs, 'acc-paused', 'paused', $dash_start, $dash_end, false); ?>
+        <?php render_accounts_sub_table($completed_subs, 'acc-completed', 'completed', $dash_start, $dash_end, false); ?>
 
     </div>
 
