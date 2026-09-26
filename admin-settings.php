@@ -28,10 +28,15 @@ function cmp_register_settings() {
         register_setting( 'cmp_settings_group', 'cmp_blackout_dates' );
         register_setting( 'cmp_settings_group', 'cmp_map_url' );
         register_setting( 'cmp_settings_group', 'cmp_kitchen_email' );
-        register_setting( 'cmp_settings_group', 'cmp_digest_emails' ); // NEW: Daily Digest Email Queue
+        register_setting( 'cmp_settings_group', 'cmp_digest_emails' ); 
         register_setting( 'cmp_settings_group', 'cmp_grace_period' );
         register_setting( 'cmp_settings_group', 'cmp_label_chefs_choice' );
         register_setting( 'cmp_settings_group', 'cmp_whatsapp_number' ); 
+
+        // NEW: FOH POS Alert Settings
+        register_setting( 'cmp_settings_group', 'cmp_pos_alert_emails' );
+        register_setting( 'cmp_settings_group', 'cmp_pos_alert_time_1' );
+        register_setting( 'cmp_settings_group', 'cmp_pos_alert_time_2' );
     }
 }
 
@@ -75,12 +80,33 @@ function cmp_render_settings_page() {
                         </td>
                     </tr>
 
-                    <!-- NEW: Daily Digest Email Setting -->
                     <tr valign="top" style="background: #f0f8ff; border-left: 4px solid #0073aa;">
                         <th scope="row" style="padding-left: 15px;">Daily Digest Alert Emails</th>
                         <td>
                             <input type="text" name="cmp_digest_emails" value="<?php echo esc_attr( get_option('cmp_digest_emails', get_option('admin_email')) ); ?>" style="width: 100%;" />
                             <p class="description">Comma-separated list of emails that will receive the daily "Meals Updated" summary 30 mins after cutoff.</p>
+                        </td>
+                    </tr>
+
+                    <!-- NEW: FOH POS ALERT SETTINGS -->
+                    <tr valign="top" style="background: #fdf2f8; border-left: 4px solid #db2777;">
+                        <th scope="row" style="padding-left: 15px;">FOH POS Reminder Emails</th>
+                        <td>
+                            <input type="text" name="cmp_pos_alert_emails" value="<?php echo esc_attr( get_option('cmp_pos_alert_emails', '') ); ?>" style="width: 100%;" placeholder="e.g. foh@example.com" />
+                            <p class="description">Comma-separated list of emails to receive reminders if POS Checkboxes are left unticked.</p>
+                            
+                            <div style="display:flex; gap: 15px; margin-top: 10px;">
+                                <div>
+                                    <label style="font-weight:bold; display:block;">Same-Day Alert (24h)</label>
+                                    <input type="number" name="cmp_pos_alert_time_1" value="<?php echo esc_attr( get_option('cmp_pos_alert_time_1', '18') ); ?>" min="0" max="23" style="width: 80px;" />
+                                    <span style="font-size: 0.85em; color:#666;">(e.g., 18 for 6:00 PM)</span>
+                                </div>
+                                <div>
+                                    <label style="font-weight:bold; display:block;">Next-Day Alert (24h)</label>
+                                    <input type="number" name="cmp_pos_alert_time_2" value="<?php echo esc_attr( get_option('cmp_pos_alert_time_2', '10') ); ?>" min="0" max="23" style="width: 80px;" />
+                                    <span style="font-size: 0.85em; color:#666;">(e.g., 10 for 10:00 AM)</span>
+                                </div>
+                            </div>
                         </td>
                     </tr>
 
