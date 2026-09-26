@@ -47,9 +47,13 @@ function cmp_render_super_admin_portal() {
     
     $today_time = date('Y-m-d H:i:s');
 
-    // --- DATE FILTER LOGIC ---
+    // --- GLOBAL DATE FILTER LOGIC ---
     $start_date = isset($_GET['start_date']) ? sanitize_text_field($_GET['start_date']) : date('Y-m-d');
     $end_date   = isset($_GET['end_date']) ? sanitize_text_field($_GET['end_date']) : date('Y-m-d');
+
+    // --- DEDICATED POS DATE FILTER LOGIC ---
+    $pos_start_date = isset($_GET['pos_start_date']) ? sanitize_text_field($_GET['pos_start_date']) : date('Y-m-d');
+    $pos_end_date   = isset($_GET['pos_end_date']) ? sanitize_text_field($_GET['pos_end_date']) : date('Y-m-d');
 
     // Prep Dates target the *following* day's eating date
     $prep_target_start = date('Y-m-d', strtotime($start_date . ' +1 day'));
@@ -102,19 +106,12 @@ function cmp_render_super_admin_portal() {
         }
     }
 
-    // --- 2. OPERATIONAL PULSE (FILTERED BY DATE RANGE) ---
+    // --- 2. OPERATIONAL PULSE (FILTERED BY GLOBAL DATE RANGE) ---
     $total_preps = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1", $prep_target_start, $prep_target_end));
     $done_preps  = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND is_prepared = 1", $prep_target_start, $prep_target_end));
 
     $dispatch_load = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND delivery_result NOT IN ('Cancelled', 'Returned') AND is_locked = 1", $start_date, $end_date));
     
-    // NEW: Actionable Pending POS Checks (GLOBAL SNAPSHOT: Past up until Tomorrow's deliveries)
-    $tomorrow_eating_date = date('Y-m-d', strtotime('+1 day'));
-    $pending_pos_checks = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(id) FROM $table_logs WHERE target_date <= %s AND is_locked = 1 AND pos_updated = 0", 
-        $tomorrow_eating_date
-    ));
-
     // Pending Chef's Assignments (Filtered)
     $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE is_chefs_choice = 1 AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
     $active_food_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1");
@@ -135,7 +132,11 @@ function cmp_render_super_admin_portal() {
         }
     }
 
-    // --- 3. DELIVERY ANALYTICS (FILTERED BY DATE RANGE) ---
+    // --- 3. DEDICATED POS RECONCILIATION (FILTERED BY POS DATE RANGE) ---
+    $pending_pos_checks = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0", $pos_start_date, $pos_end_date));
+    $completed_pos_checks = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 1", $pos_start_date, $pos_end_date));
+
+    // --- 4. DELIVERY ANALYTICS (FILTERED BY GLOBAL DATE RANGE) ---
     $successful_deliveries = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE delivery_result = 'Successful' AND pos_updated = 1 AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
     $failed_deliveries = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE delivery_result IN ('Cancelled', 'Returned') AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
     
@@ -201,13 +202,17 @@ function cmp_render_super_admin_portal() {
             </div>
         </div>
 
-        <!-- Date Range Filter -->
+        <!-- Global Date Range Filter -->
         <div style="background: #fff; padding: 15px 25px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;">
             <div style="font-weight: 800; color: #0f172a; font-size: 1.1em;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 5px; color: #3b82f6;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                Reporting Period Filter
+                Global Reporting Period
             </div>
             <form method="GET" style="margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <!-- Preserve POS dates -->
+                <input type="hidden" name="pos_start_date" value="<?php echo esc_attr($pos_start_date); ?>">
+                <input type="hidden" name="pos_end_date" value="<?php echo esc_attr($pos_end_date); ?>">
+
                 <input type="date" name="start_date" value="<?php echo esc_attr($start_date); ?>" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155;">
                 <span style="color: #64748b; font-weight: 600;">to</span>
                 <input type="date" name="end_date" value="<?php echo esc_attr($end_date); ?>" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155;">
@@ -267,14 +272,37 @@ function cmp_render_super_admin_portal() {
                 <div class="sa-kpi-value"><?php echo number_format($pending_chef_count); ?></div>
                 <div class="sa-kpi-subtitle">Meals requiring manual Chef input</div>
             </div>
+        </div>
+
+        <!-- Tier 3: FOH Reconciliation -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; flex-wrap: wrap; gap: 15px;">
+            <h2 class="sa-section-title" style="border: none; margin: 0; padding: 0;">FOH Reconciliation</h2>
+            <form method="GET" style="margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <!-- Preserve Global dates -->
+                <input type="hidden" name="start_date" value="<?php echo esc_attr($start_date); ?>">
+                <input type="hidden" name="end_date" value="<?php echo esc_attr($end_date); ?>">
+
+                <span style="font-size: 0.85em; font-weight: 800; color: #64748b; text-transform: uppercase;">POS Filter:</span>
+                <input type="date" name="pos_start_date" value="<?php echo esc_attr($pos_start_date); ?>" style="padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; font-size: 0.9em;">
+                <span style="color: #64748b; font-weight: 600; font-size: 0.9em;">to</span>
+                <input type="date" name="pos_end_date" value="<?php echo esc_attr($pos_end_date); ?>" style="padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; font-size: 0.9em;">
+                <button type="submit" style="background: #f59e0b; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9em; transition: 0.2s;">Filter POS</button>
+            </form>
+        </div>
+        <div class="sa-kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
             <div class="sa-kpi-card <?php echo ($pending_pos_checks > 0) ? 'gold' : 'green'; ?>">
-                <div class="sa-kpi-title">Global Pending POS Checks</div>
+                <div class="sa-kpi-title">Pending POS Checks</div>
                 <div class="sa-kpi-value"><?php echo number_format($pending_pos_checks); ?></div>
-                <div class="sa-kpi-subtitle">All past & active orders requiring FOH reconciliation</div>
+                <div class="sa-kpi-subtitle">Un-reconciled orders for the selected POS period</div>
+            </div>
+            <div class="sa-kpi-card green">
+                <div class="sa-kpi-title">Completed POS Checks</div>
+                <div class="sa-kpi-value"><?php echo number_format($completed_pos_checks); ?></div>
+                <div class="sa-kpi-subtitle">Successfully reconciled orders in this period</div>
             </div>
         </div>
 
-        <!-- Tier 3: Delivery Analytics -->
+        <!-- Tier 4: Delivery Analytics -->
         <h2 class="sa-section-title">Logistics Analytics <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Period: <?php echo date('M j', strtotime($start_date)); ?> - <?php echo date('M j', strtotime($end_date)); ?>)</span></h2>
         <div class="sa-kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
             <div class="sa-kpi-card dark">
