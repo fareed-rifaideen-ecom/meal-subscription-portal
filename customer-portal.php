@@ -21,7 +21,7 @@ function cmp_ajax_save_daily_log() {
     $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
     $is_privileged = $is_admin || $is_chef;
 
-    // Cutoff Time Validation
+    // Cutoff Time Validation (Ironclad Server Rule)
     if ( ! $is_privileged ) {
         $tz           = new DateTimeZone('Asia/Dubai');
         $now          = new DateTime('now', $tz);
@@ -133,7 +133,7 @@ function cmp_ajax_save_daily_log() {
         'juice_1_id'      => !empty($_POST['juice_1']) ? intval($_POST['juice_1']) : null,
         'juice_2_id'      => !empty($_POST['juice_2']) ? intval($_POST['juice_2']) : null,
         'juice_3_id'      => !empty($_POST['juice_3']) ? intval($_POST['juice_3']) : null,
-        'is_locked'       => 1 
+        'is_locked'       => 1 // Kept for legacy compatibility, but time-locks override this now
     );
 
     if ($log_id > 0) {
@@ -277,6 +277,7 @@ function cmp_render_customer_portal() {
         .cmp-table td { padding: 10px 5px; border-bottom: 1px solid #eee; vertical-align: middle; box-sizing: border-box; }
         
         .cmp-mobile-label { display: none; }
+        .cmp-mobile-status { display: none; }
         .macro-mobile { display: none; }
         .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; transition: opacity 0.2s; }
 
@@ -325,13 +326,13 @@ function cmp_render_customer_portal() {
             .cmp-table tr.is-open td:nth-child(1)::after { content: '\25B2'; }
             .cmp-table tr:not(.is-open) td:not(:first-child) { display: none !important; }
 
+            .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
+
             .status-pending { border: 2px solid #fde68a !important; }
             .status-pending td:nth-child(1) { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
-            .status-pending td:nth-child(1)::before { content: 'Pending • '; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px; display: block; opacity: 0.8;}
 
             .status-saved { border: 2px solid #bbf7d0 !important; }
             .status-saved td:nth-child(1) { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
-            .status-saved td:nth-child(1)::before { content: 'Saved ✓ • '; font-size: 0.7em; text-transform: uppercase; letter-spacing: 1px; display: block; opacity: 0.8;}
 
             .status-void { border: 2px solid #fecdd3 !important; opacity: 0.75; }
             .status-void td:nth-child(1) { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
@@ -545,11 +546,18 @@ function cmp_render_customer_portal() {
                             $log = isset($saved_logs[$i-1]) ? $saved_logs[$i-1] : null;
                             $log_id = $log ? $log->id : 0;
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
-                            $is_locked = ($log && $log->is_locked);
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id));
                             
-                            $base_input_disabled = ($is_void || (!$is_admin_override && !$is_chef_override && ($is_locked || $is_paused))) ? 'disabled' : '';
+                            // --- ROLLING TIME LOCK LOGIC ---
+                            $is_time_locked = false;
+                            if ($log && !empty($log->target_date)) {
+                                if ($log->target_date < $global_min_date) {
+                                    $is_time_locked = true;
+                                }
+                            }
+
+                            $base_input_disabled = ($is_void || (!$is_admin_override && !$is_chef_override && ($is_time_locked || $is_paused))) ? 'disabled' : '';
                             
                             if ($is_chef_override) {
                                 $chefs_choice_checkbox_disabled = 'disabled';
@@ -577,10 +585,11 @@ function cmp_render_customer_portal() {
 
                             $status_badge = '<span style="color:#666; font-size:0.9em; background:#f1f5f9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Pending</span>';
                             
+                            // --- STATUS DECOUPLED FROM POS ---
                             if ($log && !$is_void) {
-                                if ($log->pos_updated == 1 && $log->delivery_result === 'Successful') {
-                                    $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Delivered ✓</span>';
-                                } elseif ($log->pos_updated == 1 && in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
+                                if ($log->delivery_result === 'Successful') {
+                                    $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
+                                } elseif (in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
                                     $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                                 } elseif ($log->dispatch_status == 1) {
                                     $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Out for Delivery</span>';
@@ -600,6 +609,7 @@ function cmp_render_customer_portal() {
                             <tr class="cmp-day-row <?php echo $row_status_class; ?>">
                                 <td>
                                     <strong>Day <?php echo $i; ?></strong>
+                                    <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                 </td>
                                 <td>
                                     <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" <?php echo $min_attr; ?> value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $date_picker_disabled; ?>>
@@ -661,12 +671,18 @@ function cmp_render_customer_portal() {
                                             echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
                                         }
                                     } else {
-                                        if(!$is_locked && !$is_void) {
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#0073aa; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Save</button>';
+                                        if (!$is_time_locked && !$is_void && !$is_paused) {
+                                            $btn_txt = ($log_id > 0) ? 'Update' : 'Save';
+                                            $btn_color = ($log_id > 0) ? '#46b450' : '#0073aa';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">'.$btn_txt.'</button>';
                                         } else {
-                                            $btn_attr = (!$is_admin_override) ? 'disabled' : '';
-                                            $btn_txt = ($is_admin_override) ? 'Update' : 'Saved';
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;" '.$btn_attr.'>'.$btn_txt.'</button>';
+                                            if ($is_admin_override) {
+                                                echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Update</button>';
+                                            } else {
+                                                $lock_reason = $is_paused ? 'Paused' : 'Cutoff Passed';
+                                                $lock_reason = $is_void ? 'Void' : $lock_reason;
+                                                echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>('.$lock_reason.')</span>';
+                                            }
                                         }
                                     }
                                     ?>
@@ -1030,15 +1046,20 @@ function cmp_render_customer_portal() {
                     if(response.data && response.data.new_log_id) { btn.data('log-id', response.data.new_log_id); }
                     rowElement.removeClass('status-pending').addClass('status-saved');
 
-                    var newBtnText = (isAdminOverride || isChefOverride) ? 'Update' : 'Saved';
-                    btn.text(newBtnText).css({'background':'#46b450', 'box-shadow':'none'});
-
                     if (!isAdminOverride && !isChefOverride) {
-                        rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
-                        btn.prop('disabled', true);
+                        var globalFloor = "<?php echo esc_js($global_min_date); ?>";
+                        var isTimeLocked = (dateVal < globalFloor);
+
+                        if (isTimeLocked) {
+                            rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select').prop('disabled', true).removeClass('quota-locked');
+                            btn.replaceWith('<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Cutoff Passed)</span>');
+                        } else {
+                            btn.text('Update').css({'background':'#46b450', 'box-shadow':'none'}).prop('disabled', false);
+                        }
 
                         var newBadge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                         rowElement.find('td:nth-last-child(2)').html(newBadge);
+                        rowElement.find('.cmp-mobile-status').html(newBadge);
 
                         if ($(window).width() <= 768) {
                             rowElement.removeClass('is-open'); 
@@ -1049,7 +1070,8 @@ function cmp_render_customer_portal() {
                             }
                         }
                     } else {
-                        btn.prop('disabled', false); 
+                        var newBtnText = (isAdminOverride || isChefOverride) ? 'Update' : 'Saved';
+                        btn.text(newBtnText).css({'background':'#46b450', 'box-shadow':'none'}).prop('disabled', false); 
                     }
                     
                 } else {
@@ -1141,8 +1163,8 @@ function cmp_export_customer_csv() {
         $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
         
         $status = 'Pending';
-        if ($log->pos_updated == 1 && $log->delivery_result === 'Successful') { $status = 'Delivered'; }
-        elseif ($log->pos_updated == 1 && in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
+        if ($log->delivery_result === 'Successful') { $status = 'Successful'; }
+        elseif (in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
         elseif ($log->dispatch_status == 1) { $status = 'Out for Delivery'; }
         elseif ($log->id > 0) { $status = 'Confirmed'; }
 

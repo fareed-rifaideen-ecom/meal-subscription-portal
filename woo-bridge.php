@@ -139,6 +139,19 @@ function cmp_add_checkout_fields( $checkout ) {
     ), $checkout->get_value( 'cmp_pickup_location' ) );
     echo '</div>';
 
+    // --- NEW: RECIPIENT NAME FIELD ---
+    echo '<div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed #ccc;">';
+    $tooltip = '<span title="If buying for a family member, enter their name here so they get their own dedicated calendar tab in the dashboard." style="cursor:help; font-size:0.85em; background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:50%; margin-left:5px; vertical-align:middle; display:inline-block;">?</span>';
+
+    woocommerce_form_field( 'cmp_recipient_name', array(
+        'type'        => 'text',
+        'class'       => array('form-row-wide'),
+        'label'       => 'Recipient Name (Optional)' . $tooltip,
+        'placeholder' => 'e.g., Sarah, John, etc.',
+        'required'    => false,
+    ), $checkout->get_value( 'cmp_recipient_name' ) );
+    echo '</div>';
+
     echo '</div>';
 
     ?>
@@ -211,7 +224,7 @@ function cmp_validate_checkout_fields() {
 }
 
 // ==========================================
-// 4. SAVE TO DATABASE
+// 4. SAVE TO DATABASE (APPENDS RECIPIENT NAME)
 // ==========================================
 add_action( 'woocommerce_checkout_update_order_meta', 'cmp_save_checkout_fields' );
 function cmp_save_checkout_fields( $order_id ) {
@@ -242,18 +255,25 @@ function cmp_save_checkout_fields( $order_id ) {
     }
 
     $product = wc_get_product($plan['product_id']);
-    $product_name = $product ? $product->get_name() : 'Subscription Plan';
+    $final_plan_name = $product ? $product->get_name() : 'Subscription Plan';
     
+    // Append the Recipient Name to the Plan Name if they typed one
+    $recipient_name = sanitize_text_field($_POST['cmp_recipient_name'] ?? '');
+    if (!empty($recipient_name)) {
+        $final_plan_name .= ' - ' . $recipient_name;
+    }
+
     $grace_period = intval( get_option('cmp_grace_period', '45') );
     $expiry = date('Y-m-d H:i:s', strtotime('+' . $grace_period . ' days'));
 
     $table_subscriptions = $wpdb->prefix . 'cmp_subscriptions';
+
     $wpdb->insert(
         $table_subscriptions,
         array(
             'user_id'            => $order->get_customer_id(),
             'wc_order_id'        => $order_id,
-            'plan_name'          => $product_name, 
+            'plan_name'          => $final_plan_name, 
             'total_days'         => $plan['days'], 
             'allowed_categories' => $categories_string,
             'expiry_date'        => $expiry,

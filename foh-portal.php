@@ -10,7 +10,7 @@ add_shortcode( 'meal_foh_portal', 'cmp_render_foh_portal' );
 // 1. AJAX HANDLER: Update Expiry Date
 add_action('wp_ajax_cmp_foh_update_expiry', 'cmp_ajax_foh_update_expiry');
 function cmp_ajax_foh_update_expiry() {
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) ) { wp_send_json_error('Access Denied'); }
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
     check_ajax_referer('cmp_foh_nonce', 'nonce');
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -21,7 +21,7 @@ function cmp_ajax_foh_update_expiry() {
 // 2. AJAX HANDLER: Toggle Pause/Resume Status
 add_action('wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status');
 function cmp_ajax_foh_toggle_status() {
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) ) { wp_send_json_error('Access Denied'); }
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
     check_ajax_referer('cmp_foh_nonce', 'nonce');
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -44,13 +44,13 @@ function cmp_render_foh_portal() {
         </style>';
         return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                     <h2 style="text-align: center; margin-top: 0; color: #222;">FOH Command Center</h2>
-                    <p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with your FOH Manager account.</p>' 
+                    <p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with an authorized staff account.</p>' 
                     . wp_login_form( $login_args ) . 
                 '</div>';
     }
 
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) ) {
-        return '<p style="padding: 20px; background: #fff; border-left: 4px solid #dc3232;">Access Denied. FOH Manager account required.</p>';
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
+        return '<p style="padding: 20px; background: #fff; border-left: 4px solid #dc3232;">Access Denied. Authorized staff account required.</p>';
     }
 
     global $wpdb;

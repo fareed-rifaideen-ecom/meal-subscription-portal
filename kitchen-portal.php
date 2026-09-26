@@ -28,6 +28,8 @@ function cmp_ajax_kitchen_action() {
         }
     } elseif ($field === 'pos_updated') {
         if (!$is_admin && !$is_foh) wp_send_json_error('Permission Denied');
+    } elseif ($field === 'is_prepared') {
+        if (!$is_admin && !$is_chef) wp_send_json_error('Permission Denied');
     }
 
     $wpdb->update($wpdb->prefix . 'cmp_daily_logs', array($field => $value), array('id' => $log_id));
@@ -101,18 +103,25 @@ function cmp_export_kitchen_csv() {
     }
 
     global $wpdb;
+    
+    // Auto-create is_prepared column if it doesn't exist
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_logs} LIKE 'is_prepared'");
+    if (empty($col_check)) { $wpdb->query("ALTER TABLE {$table_logs} ADD is_prepared TINYINT(1) DEFAULT 0 AFTER is_chefs_choice"); }
+
     $prep_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
     $export_type = isset($_GET['type']) ? sanitize_text_field($_GET['type']) : 'meals'; 
     
-    $end_date = date('Y-m-d', strtotime($prep_date . ' + 2 days'));
+    // SMART DATE MATH: Prep Date is ALWAYS Target Date - 1 day.
+    $target_date = date('Y-m-d', strtotime($prep_date . ' + 1 day'));
     
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1", 
-        $prep_date, $end_date
+         WHERE l.target_date = %s AND l.is_locked = 1", 
+        $target_date
     ) );
 
     $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
@@ -126,10 +135,12 @@ function cmp_export_kitchen_csv() {
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
     if ($export_type === 'juices') {
-        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Dispatched', 'Delivery Result', 'POS Check'));
+        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery', 'POS Check'));
     } else {
-        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Time Slot', 'Allergies', 'Plan', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Dispatched', 'Delivery Result', 'POS Check'));
+        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'Plan', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery', 'POS Check'));
     }
+
+    $export_rows = array();
 
     foreach ($logs as $log) {
         $is_juice_plan = (stripos($log->allowed_categories, 'Juices') !== false || stripos($log->plan_name, 'juice') !== false || stripos($log->plan_name, 'cleanse') !== false);
@@ -155,13 +166,11 @@ function cmp_export_kitchen_csv() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        $days_to_subtract = 1; 
-        if (stripos($timing, 'Day Before') !== false) {
-            $days_to_subtract = 2;
-        }
-        $calculated_prep_date = date('Y-m-d', strtotime($log->target_date . " -{$days_to_subtract} days"));
-        
-        if ($calculated_prep_date !== $prep_date) { continue; }
+        // --- NEW VISUAL CLEANUP ---
+        $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+
+        $is_day_before = (stripos($timing, 'Day Before') !== false);
+        $delivery_date = $is_day_before ? $prep_date : $log->target_date;
 
         $time_slot = '';
         if ($order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
@@ -196,9 +205,24 @@ function cmp_export_kitchen_csv() {
         $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
         $pending_tag = "[Pending Chef]";
 
+        $prepared = $log->is_prepared ? 'Yes' : 'No';
         $dispatched = $log->dispatch_status ? 'Yes' : 'No';
         $delivery = $log->delivery_result ?: 'Pending';
         $pos_check = $log->pos_updated ? 'Yes' : 'No';
+        
+        // Fulfillment Tracker
+        $day_number = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
+             WHERE subscription_id = %d AND target_date <= %s 
+             AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $log->subscription_id, $log->target_date
+        ));
+        
+        $plan_parts = explode(' - ', $log->plan_name);
+        $plan_string = $plan_parts[0] . " ({$day_number}/{$log->total_days})";
+        if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
+        
+        $row_data = array();
 
         if ($export_type === 'juices') {
             $j1 = '-'; $j2 = '-'; $j3 = '-';
@@ -209,7 +233,7 @@ function cmp_export_kitchen_csv() {
                 if ($log->juice_2_id) $j2 = ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
                 if ($log->juice_3_id) $j3 = ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
             }
-            fputcsv($output, array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies, $log->plan_name, $j1, $j2, $j3, $dispatched, $delivery, $pos_check));
+            $row_data = array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $plan_string, $j1, $j2, $j3, $prepared, $dispatched, $delivery, $pos_check);
         
         } else {
             $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
@@ -222,9 +246,24 @@ function cmp_export_kitchen_csv() {
                 if ($log->snack_1_id)   $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
                 if ($log->snack_2_id)   $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
             }
-            fputcsv($output, array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $time_slot, $allergies, $log->plan_name, $b, $l, $d, $s1, $s2, $dispatched, $delivery, $pos_check));
+            $row_data = array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $pos_check);
         }
+        
+        $export_rows[] = array(
+            'data' => $row_data,
+            'is_day_before' => $is_day_before ? 1 : 0
+        );
     }
+    
+    // Sort array: Day Before = 1 goes first
+    usort($export_rows, function($a, $b) {
+        return $b['is_day_before'] - $a['is_day_before'];
+    });
+
+    foreach($export_rows as $er) {
+        fputcsv($output, $er['data']);
+    }
+
     fclose($output);
     exit;
 }
@@ -251,17 +290,25 @@ function cmp_render_kitchen_portal() {
     }
 
     global $wpdb;
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    
+    // Auto-create is_prepared column if it doesn't exist
+    $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_logs} LIKE 'is_prepared'");
+    if (empty($col_check)) { $wpdb->query("ALTER TABLE {$table_logs} ADD is_prepared TINYINT(1) DEFAULT 0 AFTER is_chefs_choice"); }
+
     $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
-    $end_date = date('Y-m-d', strtotime($selected_date . ' + 2 days'));
+    
+    // SMART DATE MATH: Prep Date is ALWAYS Target Date - 1 day.
+    $target_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
 
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, u.display_name, u.user_email 
-         FROM {$wpdb->prefix}cmp_daily_logs l 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, u.display_name, u.user_email 
+         FROM {$table_logs} l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 
-         ORDER BY l.target_date ASC", 
-        $selected_date, $end_date
+         WHERE l.target_date = %s AND l.is_locked = 1 
+         ORDER BY l.id ASC", 
+        $target_date
     ) );
 
     // --- FETCH ALL FOODS FOR JS INJECTION ---
@@ -289,13 +336,11 @@ function cmp_render_kitchen_portal() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        $days_to_subtract = 1; 
-        if (stripos($timing, 'Day Before') !== false) {
-            $days_to_subtract = 2;
-        }
-        $calculated_prep_date = date('Y-m-d', strtotime($log->target_date . " -{$days_to_subtract} days"));
-        
-        if ($calculated_prep_date !== $selected_date) { continue; }
+        // --- NEW VISUAL CLEANUP ---
+        $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+
+        $is_day_before = (stripos($timing, 'Day Before') !== false);
+        $delivery_date = $is_day_before ? $selected_date : $log->target_date;
 
         $time_slot = '';
         if ($order) $time_slot = $order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot');
@@ -343,6 +388,14 @@ function cmp_render_kitchen_portal() {
             if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown');
         }
 
+        // Fetch Fulfillment Day Number
+        $day_number = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(id) FROM {$table_logs} 
+             WHERE subscription_id = %d AND target_date <= %s 
+             AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $log->subscription_id, $log->target_date
+        ));
+
         $customers[] = array(
             'log_id' => $log->id, 
             'name' => $full_name, 
@@ -351,9 +404,13 @@ function cmp_render_kitchen_portal() {
             'address' => $address,
             'method' => $method, 
             'timing' => $timing, 
+            'delivery_date' => $delivery_date, 
             'time_slot' => $time_slot, 
             'plan' => $log->plan_name,
+            'total_days' => $log->total_days,
+            'day_number' => $day_number,
             'allergies' => !empty($allergies) ? $allergies : 'No Allergies', 
+            'prepared' => $log->is_prepared,
             'dispatch' => $log->dispatch_status,
             'delivery' => $log->delivery_result, 
             'pos' => $log->pos_updated, 
@@ -362,9 +419,15 @@ function cmp_render_kitchen_portal() {
             'is_assigned' => $is_assigned,
             'allowed_categories' => $log->allowed_categories,
             'target_date' => $log->target_date, 
+            'is_day_before' => $is_day_before ? 1 : 0,
             'raw_log' => $log
         );
     }
+
+    // Sort array: Day Before = 1 goes first (To deliver today after 5PM)
+    usort($customers, function($a, $b) {
+        return $b['is_day_before'] - $a['is_day_before'];
+    });
 
     $chef_disabled = ($is_admin || $is_chef) ? '' : 'disabled';
     $foh_disabled = ($is_admin || $is_foh) ? '' : 'disabled';
@@ -389,11 +452,15 @@ function cmp_render_kitchen_portal() {
     </script>
 
     <style>
-        .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.9em; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .k-table th { background: #222; color: #fff; padding: 12px; text-align: left; }
-        .k-table td { padding: 12px; border-bottom: 1px solid #ddd; vertical-align: middle; }
+        .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85em; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .k-table th { background: #222; color: #fff; padding: 12px 8px; text-align: left; }
+        .k-table td { padding: 10px 8px; border-bottom: 1px solid #ddd; vertical-align: middle; }
         .chk-large { transform: scale(1.5); cursor: pointer; }
-        .logistics-box { margin-top: 15px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 0.9em; line-height: 1.5; }
+        
+        .k-customer-meta { margin: 2px 0; color: #555; display: flex; align-items: center; gap: 5px; }
+        .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; }
+        
+        .logistics-box { margin-top: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; line-height: 1.3; }
         
         .k-tab-btn { background: #f1f1f1; border: 1px solid #ccc; padding: 10px 20px; border-radius: 4px; font-weight: bold; color: #333; cursor: pointer; transition: 0.2s; }
         .k-tab-btn.active { background: #0073aa !important; color: #fff !important; border-color: #0073aa !important; }
@@ -402,7 +469,7 @@ function cmp_render_kitchen_portal() {
             .cmp-no-print { display: none !important; }
             body, html { background: #fff !important; margin: 0 !important; padding: 0 !important; }
             .k-table { box-shadow: none !important; border: 1px solid #000; }
-            .k-table th, .k-table td { border: 1px solid #000; padding: 8px; }
+            .k-table th, .k-table td { border: 1px solid #000; padding: 6px; }
             select { appearance: none; border: none; background: transparent; }
         }
     </style>
@@ -411,7 +478,7 @@ function cmp_render_kitchen_portal() {
         
         <div class="cmp-no-print" style="background: #f1f1f1; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #ddd; flex-wrap: wrap; gap: 15px;">
             <form method="GET" id="cmp-kitchen-date-form" style="margin: 0; display: flex; align-items: center; gap: 10px;">
-                <label style="font-weight: bold; font-size: 1.1em;">Food Processing for the Date:</label>
+                <label style="font-weight: bold; font-size: 1.1em;">Food Preparation Date:</label>
                 <input type="date" name="prep_date" value="<?php echo esc_attr($selected_date); ?>" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;" onchange="document.getElementById('cmp-kitchen-date-form').submit();">
             </form>
 
@@ -426,10 +493,10 @@ function cmp_render_kitchen_portal() {
             </div>
         </div>
 
-        <div style="text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding-bottom: 10px;">
+        <!-- NEW: STICKY HEADER WRAPPER -->
+        <div style="position: sticky; top: 0; z-index: 99; background: #ffffff; text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding: 15px 0 10px 0;">
             <h1 style="margin: 0; font-size: 2em; color: #222;">Order Preparation Report</h1>
-            <h3 style="margin: 5px 0 0 0; color: #0073aa;">Food Orders for the Date: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
-            <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">(Processing Date: <?php echo date('d/m/Y', strtotime($selected_date)); ?>)</p>
+            <h3 style="margin: 5px 0 0 0; color: #0073aa;">Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
         </div>
 
         <div class="cmp-no-print" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px; margin-bottom: 20px; background:#f8fafc; padding:15px; border:1px solid #e2e8f0; border-radius:6px;">
@@ -450,18 +517,20 @@ function cmp_render_kitchen_portal() {
                 <table class="k-table">
                     <thead>
                         <tr>
-                            <th style="width: 25%;">Customer Details</th>
-                            <th style="width: 15%;">Customer Plan</th>
-                            <th style="width: 25%;">The Food</th>
-                            <th style="width: 10%; text-align:center;">Dispatch</th>
-                            <th style="width: 15%;">Delivery Result</th>
-                            <th style="width: 10%; text-align:center;">POS Check</th>
+                            <th style="width: 20%;">Customer Details</th>
+                            <th style="width: 17%;">Logistics</th>
+                            <th style="width: 31%;">The Food</th>
+                            <th style="width: 8%; text-align:center;">Prepared</th>
+                            <th style="width: 8%; text-align:center;">Dispatch</th>
+                            <th style="width: 10%;">Delivery</th>
+                            <th style="width: 6%; text-align:center;">POS</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php foreach($customers as $c): 
-                            $allergy_style = ($c['allergies'] !== 'No Allergies') ? 'background:#fff3cd; color:#856404; font-weight:bold; padding:4px 8px; border-radius:3px; display:inline-block; margin-top:5px;' : 'color:#666; font-style:italic; display:inline-block; margin-top:5px;';
+                            $allergy_style = ($c['allergies'] !== 'No Allergies') ? 'background:#fff3cd; color:#856404; font-weight:bold; padding:2px 6px; border-radius:3px; display:inline-block; margin-top:3px;' : 'color:#666; font-style:italic; display:inline-block; margin-top:3px;';
                             
+                            $prepared_disabled = (!empty($chef_disabled) || $c['dispatch']) ? 'disabled' : '';
                             $dispatch_disabled = (!empty($chef_disabled) || $c['pos']) ? 'disabled' : '';
                             $delivery_disabled = (!$c['dispatch'] || !empty($chef_disabled) || $c['pos']) ? 'disabled' : '';
                             $pos_disabled = (!$c['dispatch'] || $c['delivery'] === 'Pending' || !empty($foh_disabled)) ? 'disabled' : '';
@@ -472,41 +541,55 @@ function cmp_render_kitchen_portal() {
                                 $row_filter_class = $c['is_assigned'] ? 'filter-assigned' : 'filter-pending';
                             }
                             $search_name = esc_attr(strtolower($c['name']));
+                            
+                            // Splitting Plan Name logically
+                            $plan_parts = explode(' - ', $c['plan']);
+                            $plan_duration = $plan_parts[0];
+                            $plan_meals = isset($plan_parts[1]) ? $plan_parts[1] : '';
                         ?>
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
                                 <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                 
-                                <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;">
-                                    Eating On: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
+                                <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; white-space:nowrap;">
+                                    Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
                                 </span>
                                 <br>
                                 
-                                <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" style="width: 14px !important; height: 14px !important; flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-                                    <?php echo esc_html($c['email']); ?>
-                                </span><br>
-                                
-                                <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 2px;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" style="width: 14px !important; height: 14px !important; flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-                                    <?php echo esc_html($c['phone']); ?>
-                                </span><br>
+                                <div style="margin-top:4px; font-size:0.95em; line-height:1.4;">
+                                    <span class="k-customer-meta">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                                        <?php echo esc_html($c['email']); ?>
+                                    </span>
+                                    
+                                    <span class="k-customer-meta">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                        <?php echo esc_html($c['phone']); ?>
+                                    </span>
 
-                                <span style="color: #555; display: inline-flex; align-items: flex-start; gap: 5px; margin-top: 2px;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" style="width: 14px !important; height: 14px !important; flex-shrink: 0; margin-top: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                                    <?php echo esc_html($c['address']); ?>
-                                </span><br>
+                                    <span class="k-customer-meta" style="align-items: flex-start;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" style="margin-top: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                                        <?php echo esc_html($c['address']); ?>
+                                    </span>
+                                </div>
 
-                                <span style="<?php echo $allergy_style; ?>"><?php echo esc_html($c['allergies']); ?></span>
+                                <div style="<?php echo $allergy_style; ?>"><?php echo esc_html($c['allergies']); ?></div>
 
-                                <div class="logistics-box">
-                                    <strong style="color: #1e293b;">Logistics Info:</strong><br>
-                                    <span style="color: #475569;"><strong>Method:</strong> <?php echo esc_html($c['method']); ?></span><br>
-                                    <span style="color: #475569;"><strong>Receive By:</strong> <?php echo esc_html($c['timing']); ?></span><br>
-                                    <span style="color: #475569;"><strong>Time Slot:</strong> <?php echo esc_html($c['time_slot']); ?></span>
+                                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
+                                    <strong><?php echo esc_html($plan_duration); ?> (<?php echo $c['day_number']; ?>/<?php echo $c['total_days']; ?>)</strong><br>
+                                    <span style="color:#64748b; font-size:0.9em;"><?php echo esc_html($plan_meals); ?></span>
                                 </div>
                             </td>
-                            <td><strong><?php echo esc_html($c['plan']); ?></strong></td>
+                            
+                            <td>
+                                <div class="logistics-box" style="margin-top:0;">
+                                    <span style="color: #475569;"><strong>Method:</strong> <?php echo esc_html($c['method']); ?></span><br>
+                                    <span style="color: #475569;"><strong>Receive By:</strong> <?php echo esc_html($c['timing']); ?></span><br>
+                                    <span style="color: #0f766e; font-weight:bold;"><strong>Delivery:</strong> <?php echo date('D, M j', strtotime($c['delivery_date'])); ?></span><br>
+                                    <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html($c['time_slot']); ?></span>
+                                </div>
+                            </td>
+
                             <td>
                                 <?php if ($c['is_chefs_choice']): ?>
                                     
@@ -516,7 +599,7 @@ function cmp_render_kitchen_portal() {
                                     ?>
                                     
                                     <div class="chef-assigned-view" style="display: <?php echo $display_style; ?>;">
-                                        <ul style="margin:0; padding-left:20px; line-height: 1.6;">
+                                        <ul style="margin:0; padding-left:15px; line-height: 1.4;">
                                             <?php foreach($c['meals'] as $meal) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
                                         </ul>
                                         <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
@@ -537,22 +620,22 @@ function cmp_render_kitchen_portal() {
                                     $raw = $c['raw_log'];
                                     ?>
                                     
-                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-target-date="<?php echo esc_attr($c['target_date']); ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:12px; border:1px dashed #eab308; border-radius:5px;">
-                                        <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:10px;">Assign Chef's Choice:</div>
+                                    <div class="chef-assign-form cmp-no-print" data-log-id="<?php echo $c['log_id']; ?>" data-target-date="<?php echo esc_attr($c['target_date']); ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:10px; border:1px dashed #eab308; border-radius:5px;">
+                                        <div style="font-size:0.9em; font-weight:bold; color:#b45309; margin-bottom:8px;">Assign Chef's Choice:</div>
                                         
                                         <?php if(!$is_juice_plan): ?>
                                             <?php foreach(['Breakfast','Lunch','Dinner'] as $cat): if(in_array($cat, $allowed_cats)): ?>
-                                                <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" data-saved-val="<?php echo $raw->{strtolower($cat).'_id'}; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                <select class="chef-meal-select chef-main-meal" data-cat="<?php echo $cat; ?>" data-saved-val="<?php echo $raw->{strtolower($cat).'_id'}; ?>" style="width:100%; margin-bottom:4px; padding:4px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
                                                     <option value="">- <?php echo $cat; ?> -</option>
                                                 </select>
                                             <?php endif; endforeach; ?>
                                             
                                             <?php if($snack_count > 0): ?>
-                                                <select class="chef-meal-select" data-cat="Snacks" data-saved-val="<?php echo $raw->snack_1_id; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                <select class="chef-meal-select" data-cat="Snacks" data-saved-val="<?php echo $raw->snack_1_id; ?>" style="width:100%; margin-bottom:4px; padding:4px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
                                                     <option value="">- Snack 1 -</option>
                                                 </select>
                                                 <?php if($snack_count == 2): ?>
-                                                    <select class="chef-meal-select" data-cat="Snacks" data-saved-val="<?php echo $raw->snack_2_id; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                    <select class="chef-meal-select" data-cat="Snacks" data-saved-val="<?php echo $raw->snack_2_id; ?>" style="width:100%; margin-bottom:4px; padding:4px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
                                                         <option value="">- Snack 2 -</option>
                                                     </select>
                                                 <?php endif; ?>
@@ -560,27 +643,33 @@ function cmp_render_kitchen_portal() {
 
                                         <?php else: ?>
                                             <?php for($j=1; $j<=3; $j++): ?>
-                                                <select class="chef-meal-select" data-cat="Juices" data-saved-val="<?php echo $raw->{'juice_'.$j.'_id'}; ?>" style="width:100%; margin-bottom:6px; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
+                                                <select class="chef-meal-select" data-cat="Juices" data-saved-val="<?php echo $raw->{'juice_'.$j.'_id'}; ?>" style="width:100%; margin-bottom:4px; padding:4px; font-size:0.9em; border:1px solid #ccc; border-radius:3px;">
                                                     <option value="">- Juice <?php echo $j; ?> -</option>
                                                 </select>
                                             <?php endfor; ?>
                                         <?php endif; ?>
                                         
-                                        <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:8px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:5px; transition: 0.2s;">Save Meals</button>
+                                        <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:6px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:4px; transition: 0.2s;">Save</button>
                                     </div>
                                     
                                 <?php else: ?>
-                                    <ul style="margin:0; padding-left:20px; line-height: 1.6;">
+                                    <ul style="margin:0; padding-left:15px; line-height: 1.4;">
                                         <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
                                     </ul>
                                 <?php endif; ?>
                             </td>
+                            
+                            <td style="text-align:center; background:#f0fdf4; border-left:1px solid #ddd;">
+                                <input type="checkbox" class="chk-large cmp-prepared-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['prepared'] ? 'checked' : ''; ?> <?php echo $prepared_disabled; ?>>
+                                <?php if($c['prepared']) echo '<span style="display:none; color:#166534; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                            </td>
+
                             <td style="text-align:center; background:#fcfcfc;">
                                 <input type="checkbox" class="chk-large cmp-dispatch-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['dispatch'] ? 'checked' : ''; ?> <?php echo $dispatch_disabled; ?>>
                                 <?php if($c['dispatch']) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
                             </td>
                             <td style="background:#fcfcfc;">
-                                <select class="cmp-delivery-box" data-id="<?php echo $c['log_id']; ?>" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;" <?php echo $delivery_disabled; ?>>
+                                <select class="cmp-delivery-box" data-id="<?php echo $c['log_id']; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;" <?php echo $delivery_disabled; ?>>
                                     <option value="Pending" <?php selected($c['delivery'], 'Pending'); ?>>Pending</option>
                                     <option value="Successful" <?php selected($c['delivery'], 'Successful'); ?>>Successful</option>
                                     <option value="Cancelled" <?php selected($c['delivery'], 'Cancelled'); ?>>Cancelled</option>
@@ -605,7 +694,7 @@ function cmp_render_kitchen_portal() {
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
 
-        // --- NEW: SMART DYNAMIC DROPDOWNS ---
+        // --- SMART DYNAMIC DROPDOWNS ---
         function populateDynamicDropdowns(container) {
             var dateVal = container.data('target-date');
             var selects = container.find('select');
@@ -632,7 +721,7 @@ function cmp_render_kitchen_portal() {
             // POPULATE: Food exists, build the dropdowns!
             selects.show();
             if (btn.text() === 'Menu Pending') {
-                btn.text('Save Meals').css({'background':'#dba617', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
+                btn.text('Save').css({'background':'#dba617', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
             }
 
             selects.each(function() {
@@ -689,7 +778,7 @@ function cmp_render_kitchen_portal() {
 
             if ($('.k-table tbody tr.k-row:visible').length === 0) {
                 if ($('#k-empty-msg').length === 0) {
-                    $('.k-table tbody').append('<tr id="k-empty-msg"><td colspan="6" style="text-align:center; padding:30px; color:#666; font-size:1.1em;">No customers match your criteria.</td></tr>');
+                    $('.k-table tbody').append('<tr id="k-empty-msg"><td colspan="7" style="text-align:center; padding:30px; color:#666; font-size:1.1em;">No customers match your criteria.</td></tr>');
                 } else {
                     $('#k-empty-msg').show();
                 }
@@ -814,7 +903,7 @@ function cmp_render_kitchen_portal() {
                     location.reload(); 
                 } else {
                     alert(res.data || 'Error saving assignment.');
-                    btn.text('Save Meals').prop('disabled', false).css('opacity', '1');
+                    btn.text('Save').prop('disabled', false).css('opacity', '1');
                 }
             });
         });
@@ -835,28 +924,46 @@ function cmp_render_kitchen_portal() {
         }
 
         function updateRowLogic(logId) {
+            var preparedBox = $('.cmp-prepared-box[data-id="' + logId + '"]');
             var dispatchBox = $('.cmp-dispatch-box[data-id="' + logId + '"]');
             var deliveryBox = $('.cmp-delivery-box[data-id="' + logId + '"]');
             var posBox = $('.cmp-pos-box[data-id="' + logId + '"]');
             
+            var isPrepared = preparedBox.is(':checked');
             var isDispatched = dispatchBox.is(':checked');
             var deliveryResult = deliveryBox.val();
             var isPosChecked = posBox.is(':checked');
             
             if (isPosChecked) {
+                preparedBox.prop('disabled', true);
                 dispatchBox.prop('disabled', true);
                 deliveryBox.prop('disabled', true);
             } else {
                 if (canEditDelivery) {
-                    dispatchBox.prop('disabled', false);
+                    
                     if (isDispatched) {
+                        preparedBox.prop('disabled', true);
                         deliveryBox.prop('disabled', false);
                     } else {
+                        preparedBox.prop('disabled', false);
                         deliveryBox.prop('disabled', true);
                         if (deliveryResult !== 'Pending') {
                             deliveryBox.val('Pending');
                             saveAction(logId, 'delivery_result', 'Pending');
                             deliveryResult = 'Pending';
+                        }
+                    }
+                    
+                    // Dispatch requires Prepared
+                    if (isPrepared) {
+                        dispatchBox.prop('disabled', false);
+                    } else {
+                        dispatchBox.prop('disabled', true);
+                        if (isDispatched) {
+                            dispatchBox.prop('checked', false);
+                            saveAction(logId, 'dispatch_status', 0);
+                            isDispatched = false;
+                            deliveryBox.prop('disabled', true);
                         }
                     }
                 }
@@ -874,6 +981,12 @@ function cmp_render_kitchen_portal() {
                 }
             }
         }
+
+        $('.cmp-prepared-box').on('change', function() {
+            var logId = $(this).data('id');
+            saveAction(logId, 'is_prepared', $(this).is(':checked') ? 1 : 0);
+            updateRowLogic(logId);
+        });
 
         $('.cmp-dispatch-box').on('change', function() {
             var logId = $(this).data('id');
