@@ -135,9 +135,9 @@ function cmp_export_kitchen_csv() {
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
     if ($export_type === 'juices') {
-        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery', 'POS Check'));
+        fputcsv($output, array('Order ID', 'Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery', 'POS Check'));
     } else {
-        fputcsv($output, array('Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'Plan', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery', 'POS Check'));
+        fputcsv($output, array('Order ID', 'Customer Name', 'Email', 'Phone', 'Eating Date (Target)', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'Plan', 'Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery', 'POS Check'));
     }
 
     $export_rows = array();
@@ -222,6 +222,8 @@ function cmp_export_kitchen_csv() {
         $plan_string = $plan_parts[0] . " ({$day_number}/{$log->total_days})";
         if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
         
+        $order_id_display = $log->wc_order_id > 0 ? '#' . $log->wc_order_id : 'Manual';
+
         $row_data = array();
 
         if ($export_type === 'juices') {
@@ -233,7 +235,7 @@ function cmp_export_kitchen_csv() {
                 if ($log->juice_2_id) $j2 = ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag;
                 if ($log->juice_3_id) $j3 = ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag;
             }
-            $row_data = array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $plan_string, $j1, $j2, $j3, $prepared, $dispatched, $delivery, $pos_check);
+            $row_data = array($order_id_display, $full_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $plan_string, $j1, $j2, $j3, $prepared, $dispatched, $delivery, $pos_check);
         
         } else {
             $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
@@ -246,7 +248,7 @@ function cmp_export_kitchen_csv() {
                 if ($log->snack_1_id)   $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
                 if ($log->snack_2_id)   $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
             }
-            $row_data = array($full_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $pos_check);
+            $row_data = array($order_id_display, $full_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $pos_check);
         }
         
         $export_rows[] = array(
@@ -398,6 +400,7 @@ function cmp_render_kitchen_portal() {
 
         $customers[] = array(
             'log_id' => $log->id, 
+            'order_id' => $log->wc_order_id,
             'name' => $full_name, 
             'phone' => $phone, 
             'email' => $email, 
@@ -493,7 +496,7 @@ function cmp_render_kitchen_portal() {
             </div>
         </div>
 
-        <!-- NEW: STICKY HEADER WRAPPER -->
+        <!-- STICKY HEADER WRAPPER -->
         <div style="position: sticky; top: 0; z-index: 99; background: #ffffff; text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding: 15px 0 10px 0;">
             <h1 style="margin: 0; font-size: 2em; color: #222;">Order Preparation Report</h1>
             <h3 style="margin: 5px 0 0 0; color: #0073aa;">Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
@@ -557,6 +560,10 @@ function cmp_render_kitchen_portal() {
                                 <br>
                                 
                                 <div style="margin-top:4px; font-size:0.95em; line-height:1.4;">
+                                    <span class="k-customer-meta" style="color: #334155; font-weight: bold;">
+                                        Order: <?php echo $c['order_id'] > 0 ? '#' . esc_html($c['order_id']) : '<span style="color:#d63638; font-weight:normal;">Manual</span>'; ?>
+                                    </span>
+                                    
                                     <span class="k-customer-meta">
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
                                         <?php echo esc_html($c['email']); ?>
