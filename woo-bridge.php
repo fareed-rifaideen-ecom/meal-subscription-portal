@@ -61,8 +61,7 @@ function cmp_get_cart_plan_details() {
                 'days' => intval($days), 
                 'allowed' => intval(get_post_meta( $product_id, '_cmp_allowed_meals', true )),
                 'special_cat' => get_post_meta( $product_id, '_cmp_allowed_categories', true ),
-                'product_id' => $product_id,
-                'qty' => intval($cart_item['quantity']) // Capture cart quantity
+                'product_id' => $product_id 
             );
         }
     }
@@ -80,7 +79,6 @@ function cmp_add_checkout_fields( $checkout ) {
     $allowed_meals = $plan['allowed'];
     $is_juice = ($plan['special_cat'] === 'Juices');
     $map_url = get_option('cmp_map_url', 'http://mealplan.thecyclebistro.com/wp-content/uploads/2026/04/Coverage-Map.jpg');
-    $qty = $plan['qty'];
 
     echo '<div id="cmp_custom_checkout_fields" style="background: #f9f9f9; padding: 20px; border: 1px solid #ddd; margin-top: 30px; border-radius: 5px;" data-allowed="' . $allowed_meals . '">';
     echo '<h3 style="border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-top: 0;">Subscription Logistics</h3>';
@@ -141,24 +139,17 @@ function cmp_add_checkout_fields( $checkout ) {
     ), $checkout->get_value( 'cmp_pickup_location' ) );
     echo '</div>';
 
-    // --- NEW: RECIPIENT NAME FIELDS ---
+    // --- NEW: RECIPIENT NAME FIELD ---
     echo '<div style="margin-top: 20px; padding-top: 15px; border-top: 1px dashed #ccc;">';
-    if ($qty > 1) {
-        echo '<h4 style="margin-bottom: 15px; color: #0073aa;">You are purchasing ' . $qty . ' plans. Who are they for?</h4>';
-    }
-    
-    $tooltip = '<span title="If buying for family members, enter their name here so they get their own dedicated calendar tab in the dashboard." style="cursor:help; font-size:0.85em; background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:50%; margin-left:5px; vertical-align:middle; display:inline-block;">?</span>';
+    $tooltip = '<span title="If buying for a family member, enter their name here so they get their own dedicated calendar tab in the dashboard." style="cursor:help; font-size:0.85em; background:#e2e8f0; color:#475569; padding:2px 6px; border-radius:50%; margin-left:5px; vertical-align:middle; display:inline-block;">?</span>';
 
-    for ($i = 1; $i <= $qty; $i++) {
-        $field_label = ($qty > 1) ? 'Recipient Name for Plan ' . $i . ' (Optional)' : 'Recipient Name (Optional)';
-        woocommerce_form_field( 'cmp_recipient_name_' . $i, array(
-            'type'        => 'text',
-            'class'       => array('form-row-wide'),
-            'label'       => $field_label . $tooltip,
-            'placeholder' => 'e.g., John, Sarah, etc.',
-            'required'    => false,
-        ), $checkout->get_value( 'cmp_recipient_name_' . $i ) );
-    }
+    woocommerce_form_field( 'cmp_recipient_name', array(
+        'type'        => 'text',
+        'class'       => array('form-row-wide'),
+        'label'       => 'Recipient Name (Optional)' . $tooltip,
+        'placeholder' => 'e.g., Sarah, John, etc.',
+        'required'    => false,
+    ), $checkout->get_value( 'cmp_recipient_name' ) );
     echo '</div>';
 
     echo '</div>';
@@ -233,7 +224,7 @@ function cmp_validate_checkout_fields() {
 }
 
 // ==========================================
-// 4. SAVE TO DATABASE (NOW SUPPORTS MULTIPLE QUANTITIES)
+// 4. SAVE TO DATABASE (APPENDS RECIPIENT NAME)
 // ==========================================
 add_action( 'woocommerce_checkout_update_order_meta', 'cmp_save_checkout_fields' );
 function cmp_save_checkout_fields( $order_id ) {
@@ -243,7 +234,6 @@ function cmp_save_checkout_fields( $order_id ) {
 
     $plan = cmp_get_cart_plan_details();
     if ( !$plan ) return;
-    $qty = $plan['qty'];
 
     if ( ! empty( $_POST['cmp_delivery_timing'] ) ) update_post_meta( $order_id, '_cmp_delivery_timing', sanitize_text_field( $_POST['cmp_delivery_timing'] ) );
     if ( ! empty( $_POST['cmp_logistics_method'] ) ) {
@@ -265,38 +255,31 @@ function cmp_save_checkout_fields( $order_id ) {
     }
 
     $product = wc_get_product($plan['product_id']);
-    $base_product_name = $product ? $product->get_name() : 'Subscription Plan';
+    $final_plan_name = $product ? $product->get_name() : 'Subscription Plan';
     
+    // Append the Recipient Name to the Plan Name if they typed one
+    $recipient_name = sanitize_text_field($_POST['cmp_recipient_name'] ?? '');
+    if (!empty($recipient_name)) {
+        $final_plan_name .= ' - ' . $recipient_name;
+    }
+
     $grace_period = intval( get_option('cmp_grace_period', '45') );
     $expiry = date('Y-m-d H:i:s', strtotime('+' . $grace_period . ' days'));
 
     $table_subscriptions = $wpdb->prefix . 'cmp_subscriptions';
 
-    // Loop through the cart quantity and create a dedicated database row for EACH plan
-    for ($i = 1; $i <= $qty; $i++) {
-        
-        $recipient_name = sanitize_text_field($_POST['cmp_recipient_name_' . $i] ?? '');
-        $final_plan_name = $base_product_name;
-
-        if (!empty($recipient_name)) {
-            $final_plan_name .= ' - ' . $recipient_name;
-        } elseif ($qty > 1) {
-            $final_plan_name .= ' (Plan ' . $i . ')';
-        }
-
-        $wpdb->insert(
-            $table_subscriptions,
-            array(
-                'user_id'            => $order->get_customer_id(),
-                'wc_order_id'        => $order_id,
-                'plan_name'          => $final_plan_name, 
-                'total_days'         => $plan['days'], 
-                'allowed_categories' => $categories_string,
-                'expiry_date'        => $expiry,
-                'status'             => 'active'
-            )
-        );
-    }
+    $wpdb->insert(
+        $table_subscriptions,
+        array(
+            'user_id'            => $order->get_customer_id(),
+            'wc_order_id'        => $order_id,
+            'plan_name'          => $final_plan_name, 
+            'total_days'         => $plan['days'], 
+            'allowed_categories' => $categories_string,
+            'expiry_date'        => $expiry,
+            'status'             => 'active'
+        )
+    );
 }
 
 // ==========================================
