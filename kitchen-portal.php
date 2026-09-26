@@ -166,6 +166,9 @@ function cmp_export_kitchen_csv() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
+        // --- NEW VISUAL CLEANUP ---
+        $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+
         $is_day_before = (stripos($timing, 'Day Before') !== false);
         $delivery_date = $is_day_before ? $prep_date : $log->target_date;
 
@@ -209,7 +212,7 @@ function cmp_export_kitchen_csv() {
         
         // Fulfillment Tracker
         $day_number = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(id) FROM {$table_logs} 
+            "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
              WHERE subscription_id = %d AND target_date <= %s 
              AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
             $log->subscription_id, $log->target_date
@@ -332,6 +335,9 @@ function cmp_render_kitchen_portal() {
         $timing = '';
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
+
+        // --- NEW VISUAL CLEANUP ---
+        $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
 
         $is_day_before = (stripos($timing, 'Day Before') !== false);
         $delivery_date = $is_day_before ? $selected_date : $log->target_date;
