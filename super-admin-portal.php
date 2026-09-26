@@ -45,25 +45,43 @@ function cmp_render_super_admin_portal() {
     $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
     
-    $today = date('Y-m-d');
     $today_time = date('Y-m-d H:i:s');
 
-    // 1. Subscription Health & Financial Turnover
-    $all_subs = $wpdb->get_results("SELECT id, wc_order_id, total_days, start_date, expiry_date, status FROM $table_subs WHERE status != 'pending'");
+    // --- DATE FILTER LOGIC ---
+    $start_date = isset($_GET['start_date']) ? sanitize_text_field($_GET['start_date']) : date('Y-m-d');
+    $end_date   = isset($_GET['end_date']) ? sanitize_text_field($_GET['end_date']) : date('Y-m-d');
+
+    // Prep Dates target the *following* day's eating date
+    $prep_target_start = date('Y-m-d', strtotime($start_date . ' +1 day'));
+    $prep_target_end   = date('Y-m-d', strtotime($end_date . ' +1 day'));
+
+    // --- 1. SUBSCRIPTION HEALTH & TRUE CHURN (LIVE SNAPSHOT) ---
+    $all_subs = $wpdb->get_results("SELECT id, user_id, wc_order_id, total_days, start_date, expiry_date, status FROM $table_subs WHERE status != 'pending'");
     
     $active_count = 0;
     $paused_count = 0;
-    $inactive_count = 0;
     $active_turnover = 0.0;
     
+    $user_status = array();
+    
     foreach ($all_subs as $sub) {
+        $uid = $sub->user_id;
+        
+        // Initialize user tracking
+        if (!isset($user_status[$uid])) {
+            $user_status[$uid] = array('has_active' => false, 'has_completed' => false);
+        }
+        
         $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $is_completed = ($usage_days >= $sub->total_days || $sub->expiry_date < $today_time);
         
         if ($sub->status === 'paused') {
+            $user_status[$uid]['has_active'] = true;
             $paused_count++;
-        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today_time) {
-            $inactive_count++;
+        } elseif ($is_completed) {
+            $user_status[$uid]['has_completed'] = true;
         } else {
+            $user_status[$uid]['has_active'] = true;
             $active_count++;
             
             // Calculate active financial turnover via WooCommerce
@@ -76,12 +94,24 @@ function cmp_render_super_admin_portal() {
         }
     }
 
-    // 2. Operational Pulse
-    $today_load = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE target_date = %s AND delivery_result NOT IN ('Cancelled', 'Returned')", $today));
-    $active_menu_items = $wpdb->get_var("SELECT COUNT(*) FROM $table_foods WHERE is_active = 1");
+    // Calculate True Churn: Users with completed plans but NO active plans
+    $true_churn_count = 0;
+    foreach ($user_status as $uid => $stats) {
+        if ($stats['has_completed'] && !$stats['has_active']) {
+            $true_churn_count++;
+        }
+    }
 
-    // Pending Chef's Assignments
-    $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE is_chefs_choice = 1 AND target_date >= %s", $today));
+    // --- 2. OPERATIONAL PULSE (FILTERED BY DATE RANGE) ---
+    $total_preps = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1", $prep_target_start, $prep_target_end));
+    $done_preps  = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND is_prepared = 1", $prep_target_start, $prep_target_end));
+
+    $dispatch_load = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND delivery_result NOT IN ('Cancelled', 'Returned') AND is_locked = 1", $start_date, $end_date));
+    
+    $active_menu_items = $wpdb->get_var("SELECT COUNT(id) FROM $table_foods WHERE is_active = 1");
+
+    // Pending Chef's Assignments (Filtered)
+    $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE is_chefs_choice = 1 AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
     $active_food_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1");
     $pending_chef_count = 0;
     
@@ -100,12 +130,12 @@ function cmp_render_super_admin_portal() {
         }
     }
 
-    // 3. Delivery Analytics
-    $successful_deliveries = $wpdb->get_var("SELECT COUNT(*) FROM $table_logs WHERE delivery_result = 'Successful' AND pos_updated = 1");
-    $failed_deliveries = $wpdb->get_var("SELECT COUNT(*) FROM $table_logs WHERE delivery_result IN ('Cancelled', 'Returned')");
+    // --- 3. DELIVERY ANALYTICS (FILTERED BY DATE RANGE) ---
+    $successful_deliveries = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE delivery_result = 'Successful' AND pos_updated = 1 AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
+    $failed_deliveries = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE delivery_result IN ('Cancelled', 'Returned') AND target_date >= %s AND target_date <= %s", $start_date, $end_date));
     
-    $total_deliveries_ever = $successful_deliveries + $failed_deliveries;
-    $success_rate = ($total_deliveries_ever > 0) ? round(($successful_deliveries / $total_deliveries_ever) * 100, 1) : 0;
+    $total_deliveries_period = $successful_deliveries + $failed_deliveries;
+    $success_rate = ($total_deliveries_period > 0) ? round(($successful_deliveries / $total_deliveries_period) * 100, 1) : 0;
 
     $formatted_turnover = function_exists('wc_price') ? wc_price($active_turnover) : 'AED ' . number_format($active_turnover, 2);
 
@@ -166,6 +196,20 @@ function cmp_render_super_admin_portal() {
             </div>
         </div>
 
+        <!-- Date Range Filter -->
+        <div style="background: #fff; padding: 15px 25px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;">
+            <div style="font-weight: 800; color: #0f172a; font-size: 1.1em;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 5px; color: #3b82f6;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                Reporting Period Filter
+            </div>
+            <form method="GET" style="margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <input type="date" name="start_date" value="<?php echo esc_attr($start_date); ?>" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155;">
+                <span style="color: #64748b; font-weight: 600;">to</span>
+                <input type="date" name="end_date" value="<?php echo esc_attr($end_date); ?>" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155;">
+                <button type="submit" style="background: #3b82f6; color: white; border: none; padding: 9px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;">Apply Filter</button>
+            </form>
+        </div>
+
         <!-- Quick Launch Bar -->
         <h2 class="sa-section-title">Quick Launch Portals</h2>
         <div class="sa-quick-launch">
@@ -176,7 +220,7 @@ function cmp_render_super_admin_portal() {
         </div>
 
         <!-- Tier 1: Subscription Health -->
-        <h2 class="sa-section-title">Subscription Health</h2>
+        <h2 class="sa-section-title">Subscription Health & Finance <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Live Global Snapshot)</span></h2>
         <div class="sa-kpi-grid">
             <div class="sa-kpi-card green">
                 <div class="sa-kpi-title">Active Customers</div>
@@ -189,54 +233,59 @@ function cmp_render_super_admin_portal() {
                 <div class="sa-kpi-subtitle">Plans placed on temporary hold</div>
             </div>
             <div class="sa-kpi-card red">
-                <div class="sa-kpi-title">Completed / Churned</div>
-                <div class="sa-kpi-value"><?php echo number_format($inactive_count); ?></div>
-                <div class="sa-kpi-subtitle">Plans fully consumed or expired</div>
+                <div class="sa-kpi-title">Churned Customers</div>
+                <div class="sa-kpi-value"><?php echo number_format($true_churn_count); ?></div>
+                <div class="sa-kpi-subtitle">Subscribers with completed plans & no active renewals</div>
+            </div>
+            <div class="sa-kpi-card dark">
+                <div class="sa-kpi-title">Active Financial Turnover</div>
+                <div class="sa-kpi-value" style="font-size: 2.2em; color: #10b981; margin-top: 5px;"><?php echo $formatted_turnover; ?></div>
+                <div class="sa-kpi-subtitle">Total gross value of current non-manual subscriptions</div>
             </div>
         </div>
 
         <!-- Tier 2: Operational Pulse -->
-        <h2 class="sa-section-title">Operational Pulse</h2>
+        <h2 class="sa-section-title">Operational Pulse <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Period: <?php echo date('M j', strtotime($start_date)); ?> - <?php echo date('M j', strtotime($end_date)); ?>)</span></h2>
         <div class="sa-kpi-grid">
+            <div class="sa-kpi-card teal">
+                <div class="sa-kpi-title">Meal Preparations</div>
+                <div class="sa-kpi-value"><?php echo number_format($done_preps); ?> / <?php echo number_format($total_preps); ?></div>
+                <div class="sa-kpi-subtitle">Meals prepped vs total needed for this period</div>
+            </div>
             <div class="sa-kpi-card blue">
-                <div class="sa-kpi-title">Today's Dispatch Load</div>
-                <div class="sa-kpi-value"><?php echo number_format($today_load); ?></div>
-                <div class="sa-kpi-subtitle">Total meals assigned for delivery today</div>
+                <div class="sa-kpi-title">Dispatch Load</div>
+                <div class="sa-kpi-value"><?php echo number_format($dispatch_load); ?></div>
+                <div class="sa-kpi-subtitle">Total active meals assigned for delivery</div>
             </div>
             <div class="sa-kpi-card <?php echo ($pending_chef_count > 0) ? 'red' : 'green'; ?>">
                 <div class="sa-kpi-title">Pending Chef's Assignments</div>
                 <div class="sa-kpi-value"><?php echo number_format($pending_chef_count); ?></div>
-                <div class="sa-kpi-subtitle">Upcoming meals requiring manual Chef input</div>
+                <div class="sa-kpi-subtitle">Meals requiring manual Chef input</div>
             </div>
-            <div class="sa-kpi-card teal">
+            <div class="sa-kpi-card gold">
                 <div class="sa-kpi-title">Active Menu Catalog</div>
                 <div class="sa-kpi-value"><?php echo number_format($active_menu_items); ?></div>
-                <div class="sa-kpi-subtitle">Total items available for customer selection</div>
+                <div class="sa-kpi-subtitle">Total distinct items available globally</div>
             </div>
         </div>
 
-        <!-- Tier 3: Delivery Analytics & Finance -->
-        <h2 class="sa-section-title">Performance & Finance</h2>
-        <div class="sa-kpi-grid">
-            <div class="sa-kpi-card gold">
+        <!-- Tier 3: Delivery Analytics -->
+        <h2 class="sa-section-title">Logistics Analytics <span style="font-size: 0.6em; color: #64748b; font-weight: normal; vertical-align: middle; margin-left: 10px;">(Period: <?php echo date('M j', strtotime($start_date)); ?> - <?php echo date('M j', strtotime($end_date)); ?>)</span></h2>
+        <div class="sa-kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));">
+            <div class="sa-kpi-card dark">
                 <div class="sa-kpi-title">Delivery Success Rate</div>
                 <div class="sa-kpi-value"><?php echo $success_rate; ?>%</div>
-                <div class="sa-kpi-subtitle">Across <?php echo number_format($total_deliveries_ever); ?> total lifetime deliveries</div>
+                <div class="sa-kpi-subtitle">Success percentage for the selected timeframe</div>
             </div>
-            <div class="sa-kpi-card dark">
+            <div class="sa-kpi-card green">
+                <div class="sa-kpi-title">Successful Deliveries</div>
+                <div class="sa-kpi-value"><?php echo number_format($successful_deliveries); ?></div>
+                <div class="sa-kpi-subtitle">Total deliveries completed and verified via POS</div>
+            </div>
+            <div class="sa-kpi-card red">
                 <div class="sa-kpi-title">Returned / Cancelled</div>
                 <div class="sa-kpi-value"><?php echo number_format($failed_deliveries); ?></div>
                 <div class="sa-kpi-subtitle">Total logistics failures logged by FOH</div>
-            </div>
-            <div class="sa-kpi-card green" style="grid-column: 1 / -1;">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-                    <div>
-                        <div class="sa-kpi-title">Active Financial Turnover</div>
-                        <div class="sa-kpi-value" style="font-size: 3.5em; color: #10b981;"><?php echo $formatted_turnover; ?></div>
-                        <div class="sa-kpi-subtitle">Total gross value of all currently active (non-manual) WooCommerce subscriptions.</div>
-                    </div>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                </div>
             </div>
         </div>
 
