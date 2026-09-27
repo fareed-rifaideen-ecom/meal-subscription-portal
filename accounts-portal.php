@@ -156,12 +156,50 @@ function cmp_render_accounts_dashboard() {
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     
-    // Filters
+    // Fetch Dynamic Lookback Defaults from WP Settings
+    $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
+    $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
+
+    // Filters & Active Selections
     $dash_start = isset($_GET['dash_start']) ? sanitize_text_field($_GET['dash_start']) : date('Y-m-d', strtotime('-3 months'));
     $dash_end   = isset($_GET['dash_end']) ? sanitize_text_field($_GET['dash_end']) : date('Y-m-d');
     
-    $pos_start  = isset($_GET['pos_start']) ? sanitize_text_field($_GET['pos_start']) : date('Y-m-d', strtotime('-3 days'));
+    $pos_start  = isset($_GET['pos_start']) ? sanitize_text_field($_GET['pos_start']) : date('Y-m-d', strtotime("-{$foh_days} days"));
     $pos_end    = isset($_GET['pos_end']) ? sanitize_text_field($_GET['pos_end']) : date('Y-m-d');
+
+    $kit_start  = isset($_GET['kit_start']) ? sanitize_text_field($_GET['kit_start']) : date('Y-m-d', strtotime("-{$kit_days} days"));
+    $kit_end    = isset($_GET['kit_end']) ? sanitize_text_field($_GET['kit_end']) : date('Y-m-d');
+
+    // Helper to Calculate Delivery Dates & Tags
+    $process_timing_data = function($log_array) {
+        foreach($log_array as $p) {
+            $order = wc_get_order($p->wc_order_id);
+            $timing = '';
+            if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
+            if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
+            
+            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+            $is_day_before = (stripos($timing, 'Day Before') !== false);
+            
+            $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
+            $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
+            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
+        }
+        return $log_array;
+    };
+
+    // --- KITCHEN OPERATIONS DATA ---
+    $pending_kitchen = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
+         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+         WHERE l.is_locked = 1 
+         AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending') 
+         AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $kit_start, $kit_end
+    ));
+    $pending_kitchen = $process_timing_data($pending_kitchen);
+
 
     // --- POS CHECKS DATA (PENDING & COMPLETED) ---
     $pending_pos = $wpdb->get_results($wpdb->prepare(
@@ -180,26 +218,8 @@ function cmp_render_accounts_dashboard() {
         $pos_start, $pos_end
     ));
 
-    // Helper to Calculate Delivery Dates & Tags
-    $process_pos_data = function($pos_array) {
-        foreach($pos_array as $p) {
-            $order = wc_get_order($p->wc_order_id);
-            $timing = '';
-            if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
-            if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
-            
-            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
-            $is_day_before = (stripos($timing, 'Day Before') !== false);
-            
-            $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
-            $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
-            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
-        }
-        return $pos_array;
-    };
-
-    $pending_pos = $process_pos_data($pending_pos);
-    $completed_pos = $process_pos_data($completed_pos);
+    $pending_pos = $process_timing_data($pending_pos);
+    $completed_pos = $process_timing_data($completed_pos);
 
     // --- SUBSCRIPTION DATA & SORTING ---
     $all_subs_data = $wpdb->get_results($wpdb->prepare(
@@ -281,12 +301,76 @@ function cmp_render_accounts_dashboard() {
             </div>
         </div>
 
-        <!-- POS NOTIFICATIONS -->
+        <!-- 1. KITCHEN NOTIFICATIONS -->
+        <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
+            <span style="color:#0f172a;">Compliance: Kitchen Operations</span>
+            <form method="GET" class="acc-filter">
+                <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
+                <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
+                <input type="hidden" name="pos_start" value="<?php echo esc_attr($pos_start); ?>">
+                <input type="hidden" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
+                <span>Audit Period:</span>
+                <input type="date" name="kit_start" value="<?php echo esc_attr($kit_start); ?>"> <span>to</span>
+                <input type="date" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
+                <button type="submit" style="background:#ea580c;">Apply</button>
+            </form>
+        </div>
+
+        <div style="margin-bottom:40px;">
+            <?php if(empty($pending_kitchen)): ?>
+                <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold;">
+                    ✓ Perfect compliance. No pending Kitchen tasks found.
+                </div>
+            <?php else: ?>
+                <div style="background:#fff7ed; padding:20px; border-radius:8px; border:1px solid #fed7aa;">
+                    <h4 style="margin:0 0 15px 0; color:#c2410c; font-size:1.1em;">Attention: <?php echo count($pending_kitchen); ?> Incomplete Kitchen Logs</h4>
+                    <div style="max-height: 250px; overflow-y: auto;">
+                        <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
+                            <tr style="border-bottom:2px solid #fdba74; color:#9a3412;">
+                                <th style="padding:8px;">Meal Date (Eating)</th>
+                                <th style="padding:8px; border-right:2px solid #fdba74;">Delivery Date</th>
+                                <th style="padding:8px;">Order ID</th>
+                                <th style="padding:8px;">Customer</th>
+                                <th style="padding:8px;">Plan</th>
+                                <th style="padding:8px;">Missing Step(s)</th>
+                            </tr>
+                            <?php foreach($pending_kitchen as $k): 
+                                $missing_badges = [];
+                                if (!$k->is_prepared) $missing_badges[] = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Prep</span>';
+                                if (!$k->dispatch_status) $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
+                                if ($k->delivery_result === 'Pending') $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
+                            ?>
+                            <tr style="border-bottom:1px solid #fed7aa;">
+                                <td style="padding:8px;">
+                                    <strong><?php echo date('d M Y', strtotime($k->target_date)); ?></strong><br>
+                                    <span style="font-size:0.85em; color:#c2410c;">(<?php echo $k->timing_label; ?>)</span>
+                                </td>
+                                <td style="padding:8px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date('d M Y', strtotime($k->computed_delivery_date)); ?></td>
+                                <td style="padding:8px;"><?php echo $k->wc_order_id > 0 ? '#'.$k->wc_order_id : 'Manual'; ?></td>
+                                <td style="padding:8px;"><?php echo esc_html($k->display_name); ?></td>
+                                <td style="padding:8px;"><?php echo esc_html($k->plan_name); ?></td>
+                                <td style="padding:8px;">
+                                    <div style="display:flex; gap:5px; flex-wrap:wrap;">
+                                        <?php echo implode('', $missing_badges); ?>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </table>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
+
+
+        <!-- 2. POS NOTIFICATIONS -->
         <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
             <span style="color:#0f172a;">Compliance: POS Reconciliations</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
                 <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
+                <input type="hidden" name="kit_start" value="<?php echo esc_attr($kit_start); ?>">
+                <input type="hidden" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
                 <span>Audit Period:</span>
                 <input type="date" name="pos_start" value="<?php echo esc_attr($pos_start); ?>"> <span>to</span>
                 <input type="date" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
@@ -368,12 +452,14 @@ function cmp_render_accounts_dashboard() {
             <?php endif; ?>
         </div>
 
-        <!-- KPI SECTION (TABS) -->
+        <!-- 3. KPI SECTION (TABS) -->
         <div class="acc-section-title cmp-no-print">
             <span>Subscription Metrics</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="pos_start" value="<?php echo esc_attr($pos_start); ?>">
                 <input type="hidden" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
+                <input type="hidden" name="kit_start" value="<?php echo esc_attr($kit_start); ?>">
+                <input type="hidden" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
                 <span>Filter:</span>
                 <input type="date" name="dash_start" value="<?php echo esc_attr($dash_start); ?>"> <span>to</span>
                 <input type="date" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
