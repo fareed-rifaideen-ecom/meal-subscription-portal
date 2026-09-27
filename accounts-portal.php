@@ -124,9 +124,30 @@ function cmp_export_accounts_sub() {
 }
 
 // ==========================================
+// HELPER: PROCESS TIMING DATA
+// ==========================================
+if(!function_exists('cmp_process_timing_data')){
+    function cmp_process_timing_data($log_array) {
+        foreach($log_array as $p) {
+            $order = wc_get_order($p->wc_order_id);
+            $timing = '';
+            if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
+            if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
+            
+            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+            $is_day_before = (stripos($timing, 'Day Before') !== false);
+            
+            $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
+            $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
+            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
+        }
+        return $log_array;
+    }
+}
+
+// ==========================================
 // 2. ACCOUNTS PORTAL ROUTER
 // ==========================================
-
 add_shortcode('meal_accounts_portal', 'cmp_render_accounts_portal');
 function cmp_render_accounts_portal() {
     
@@ -140,8 +161,14 @@ function cmp_render_accounts_portal() {
         return '<div style="max-width:600px; margin:50px auto; padding:30px; background:#fff; border-left:4px solid #dc3232; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><p style="font-size:1.1em; color:#dc3232;"><strong>Access Denied:</strong> Finance / Accounts clearance required.</p><a href="'.wp_logout_url(get_permalink()).'" style="display:inline-block; background:#222; color:white; padding:8px 15px; text-decoration:none; border-radius:4px;">Log Out</a></div>';
     }
 
-    // Route to the correct view
-    if ( isset($_GET['view_sub']) && intval($_GET['view_sub']) > 0 ) {
+    // Smart Routing
+    $view = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : '';
+    
+    if ($view === 'kitchen_audit') {
+        return cmp_render_kitchen_audit_view();
+    } elseif ($view === 'pos_audit') {
+        return cmp_render_pos_audit_view();
+    } elseif ( isset($_GET['view_sub']) && intval($_GET['view_sub']) > 0 ) {
         return cmp_render_accounts_sub_view(intval($_GET['view_sub']));
     } else {
         return cmp_render_accounts_dashboard();
@@ -170,56 +197,22 @@ function cmp_render_accounts_dashboard() {
     $kit_start  = isset($_GET['kit_start']) ? sanitize_text_field($_GET['kit_start']) : date('Y-m-d', strtotime("-{$kit_days} days"));
     $kit_end    = isset($_GET['kit_end']) ? sanitize_text_field($_GET['kit_end']) : date('Y-m-d');
 
-    // Helper to Calculate Delivery Dates & Tags
-    $process_timing_data = function($log_array) {
-        foreach($log_array as $p) {
-            $order = wc_get_order($p->wc_order_id);
-            $timing = '';
-            if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
-            if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
-            
-            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
-            $is_day_before = (stripos($timing, 'Day Before') !== false);
-            
-            $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
-            $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
-            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
-        }
-        return $log_array;
-    };
-
-    // --- KITCHEN OPERATIONS DATA ---
-    $pending_kitchen = $wpdb->get_results($wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
-         JOIN $table_subs s ON l.subscription_id = s.id 
-         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+    // --- KITCHEN COMPLIANCE (COUNT ONLY FOR PERFORMANCE) ---
+    $pending_kitchen_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(l.id) FROM $table_logs l 
          WHERE l.is_locked = 1 
          AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending') 
-         AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+         AND l.target_date >= %s AND l.target_date <= %s",
         $kit_start, $kit_end
     ));
-    $pending_kitchen = $process_timing_data($pending_kitchen);
 
-
-    // --- POS CHECKS DATA (PENDING & COMPLETED) ---
-    $pending_pos = $wpdb->get_results($wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
-         JOIN $table_subs s ON l.subscription_id = s.id 
-         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-         WHERE l.pos_updated = 0 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+    // --- POS COMPLIANCE (COUNT ONLY FOR PERFORMANCE) ---
+    $pending_pos_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(l.id) FROM $table_logs l 
+         WHERE l.pos_updated = 0 AND l.delivery_result != 'Pending' AND l.is_locked = 1 
+         AND l.target_date >= %s AND l.target_date <= %s",
         $pos_start, $pos_end
     ));
-
-    $completed_pos = $wpdb->get_results($wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
-         JOIN $table_subs s ON l.subscription_id = s.id 
-         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-         WHERE l.pos_updated = 1 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
-        $pos_start, $pos_end
-    ));
-
-    $pending_pos = $process_timing_data($pending_pos);
-    $completed_pos = $process_timing_data($completed_pos);
 
     // --- SUBSCRIPTION DATA & SORTING ---
     $all_subs_data = $wpdb->get_results($wpdb->prepare(
@@ -257,7 +250,7 @@ function cmp_render_accounts_dashboard() {
         .acc-section-title { font-size: 1.4em; color: #0f172a; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
         
         .acc-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
-        .acc-kpi-card { background: #fff; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #3b82f6; box-shadow: 0 4px 6px rgba(0,0,0,0.02); cursor: pointer; transition: 0.2s; position: relative; }
+        .acc-kpi-card { background: #fff; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #3b82f6; box-shadow: 0 4px 6px rgba(0,0,0,0.02); cursor: pointer; transition: 0.2s; position: relative; text-decoration:none; display:block; }
         .acc-kpi-card:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.05); }
         .acc-kpi-card.active-tab { box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.1); border-color:#0f172a; }
         
@@ -279,15 +272,6 @@ function cmp_render_accounts_dashboard() {
         .acc-tab-content { display: none; }
         .acc-tab-content.active { display: block; animation: fadeIn 0.3s; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-
-        @media print {
-            .cmp-no-print { display: none !important; }
-            body, html { background: #fff !important; }
-            .acc-table { border: 1px solid #000; box-shadow: none; }
-            .acc-table th, .acc-table td { border: 1px solid #000; }
-            .acc-tab-content { display: none; }
-            .acc-tab-content.active { display: block !important; }
-        }
     </style>
 
     <div class="acc-wrap">
@@ -301,165 +285,42 @@ function cmp_render_accounts_dashboard() {
             </div>
         </div>
 
-        <!-- 1. KITCHEN NOTIFICATIONS -->
+        <!-- COMPLIANCE TILES -->
         <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
-            <span style="color:#0f172a;">Compliance: Kitchen Operations</span>
+            <span style="color:#0f172a;">Operational Auditing</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
                 <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
-                <input type="hidden" name="pos_start" value="<?php echo esc_attr($pos_start); ?>">
-                <input type="hidden" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
                 <span>Audit Period:</span>
                 <input type="date" name="kit_start" value="<?php echo esc_attr($kit_start); ?>"> <span>to</span>
                 <input type="date" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
-                <button type="submit" style="background:#ea580c;">Apply</button>
+                <button type="submit" style="background:#ea580c;">Apply to Both</button>
             </form>
         </div>
 
-        <div style="margin-bottom:40px;">
-            <?php if(empty($pending_kitchen)): ?>
-                <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold;">
-                    ✓ Perfect compliance. No pending Kitchen tasks found.
-                </div>
-            <?php else: ?>
-                <div style="background:#fff7ed; padding:20px; border-radius:8px; border:1px solid #fed7aa;">
-                    <h4 style="margin:0 0 15px 0; color:#c2410c; font-size:1.1em;">Attention: <?php echo count($pending_kitchen); ?> Incomplete Kitchen Logs</h4>
-                    <div style="max-height: 250px; overflow-y: auto;">
-                        <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
-                            <tr style="border-bottom:2px solid #fdba74; color:#9a3412;">
-                                <th style="padding:8px;">Meal Date (Eating)</th>
-                                <th style="padding:8px; border-right:2px solid #fdba74;">Delivery Date</th>
-                                <th style="padding:8px;">Order ID</th>
-                                <th style="padding:8px;">Customer</th>
-                                <th style="padding:8px;">Plan</th>
-                                <th style="padding:8px;">Missing Step(s)</th>
-                            </tr>
-                            <?php foreach($pending_kitchen as $k): 
-                                $missing_badges = [];
-                                if (!$k->is_prepared) $missing_badges[] = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Prep</span>';
-                                if (!$k->dispatch_status) $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
-                                if ($k->delivery_result === 'Pending') $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
-                            ?>
-                            <tr style="border-bottom:1px solid #fed7aa;">
-                                <td style="padding:8px;">
-                                    <strong><?php echo date('d M Y', strtotime($k->target_date)); ?></strong><br>
-                                    <span style="font-size:0.85em; color:#c2410c;">(<?php echo $k->timing_label; ?>)</span>
-                                </td>
-                                <td style="padding:8px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date('d M Y', strtotime($k->computed_delivery_date)); ?></td>
-                                <td style="padding:8px;"><?php echo $k->wc_order_id > 0 ? '#'.$k->wc_order_id : 'Manual'; ?></td>
-                                <td style="padding:8px;"><?php echo esc_html($k->display_name); ?></td>
-                                <td style="padding:8px;"><?php echo esc_html($k->plan_name); ?></td>
-                                <td style="padding:8px;">
-                                    <div style="display:flex; gap:5px; flex-wrap:wrap;">
-                                        <?php echo implode('', $missing_badges); ?>
-                                    </div>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </table>
-                    </div>
-                </div>
-            <?php endif; ?>
+        <div class="acc-kpi-grid cmp-no-print">
+            <a href="?view=kitchen_audit&kit_start=<?php echo esc_attr($kit_start); ?>&kit_end=<?php echo esc_attr($kit_end); ?>" class="acc-kpi-card <?php echo $pending_kitchen_count > 0 ? 'red' : 'green'; ?>">
+                <div style="font-weight:800; color:#64748b; text-transform:uppercase;">Kitchen Compliance</div>
+                <div class="acc-kpi-val"><?php echo number_format($pending_kitchen_count); ?></div>
+                <div style="font-size:0.85em; color:#94a3b8; margin-top:5px; font-weight:bold;">Incomplete Kitchen Logs (Click to view)</div>
+            </a>
+            
+            <a href="?view=pos_audit&pos_start=<?php echo esc_attr($kit_start); ?>&pos_end=<?php echo esc_attr($kit_end); ?>" class="acc-kpi-card <?php echo $pending_pos_count > 0 ? 'orange' : 'green'; ?>">
+                <div style="font-weight:800; color:#64748b; text-transform:uppercase;">POS Reconciliations</div>
+                <div class="acc-kpi-val"><?php echo number_format($pending_pos_count); ?></div>
+                <div style="font-size:0.85em; color:#94a3b8; margin-top:5px; font-weight:bold;">Pending POS Checks (Click to view)</div>
+            </a>
         </div>
 
 
-        <!-- 2. POS NOTIFICATIONS -->
-        <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
-            <span style="color:#0f172a;">Compliance: POS Reconciliations</span>
-            <form method="GET" class="acc-filter">
-                <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
-                <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
-                <input type="hidden" name="kit_start" value="<?php echo esc_attr($kit_start); ?>">
-                <input type="hidden" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
-                <span>Audit Period:</span>
-                <input type="date" name="pos_start" value="<?php echo esc_attr($pos_start); ?>"> <span>to</span>
-                <input type="date" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
-                <button type="submit" style="background:#f59e0b;">Apply</button>
-            </form>
-        </div>
-        
-        <div style="margin-bottom:40px;">
-            <!-- Pending POS Table -->
-            <?php if(empty($pending_pos)): ?>
-                <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold; margin-bottom:20px;">
-                    ✓ Perfect compliance. No pending POS checks found.
-                </div>
-            <?php else: ?>
-                <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a; margin-bottom:20px;">
-                    <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count($pending_pos); ?> Missing Reconciliations</h4>
-                    <div style="max-height: 250px; overflow-y: auto;">
-                        <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
-                            <tr style="border-bottom:2px solid #fcd34d; color:#92400e;">
-                                <th style="padding:8px;">Meal Date (Eating)</th>
-                                <th style="padding:8px; border-right:2px solid #fcd34d;">Delivery Date</th>
-                                <th style="padding:8px;">Order ID</th>
-                                <th style="padding:8px;">Customer</th>
-                                <th style="padding:8px;">Plan</th>
-                                <th style="padding:8px;">Delivery Logged As</th>
-                            </tr>
-                            <?php foreach($pending_pos as $p): ?>
-                            <tr style="border-bottom:1px solid #fde68a;">
-                                <td style="padding:8px;">
-                                    <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
-                                    <span style="font-size:0.85em; color:#b45309;">(<?php echo $p->timing_label; ?>)</span>
-                                </td>
-                                <td style="padding:8px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                                <td style="padding:8px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
-                                <td style="padding:8px;"><?php echo esc_html($p->display_name); ?></td>
-                                <td style="padding:8px;"><?php echo esc_html($p->plan_name); ?></td>
-                                <td style="padding:8px;">
-                                    <span style="background:#fecdd3; color:#9f1239; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </table>
-                    </div>
-                </div>
-            <?php endif; ?>
-
-            <!-- Completed POS Table -->
-            <?php if(!empty($completed_pos)): ?>
-                <div style="background:#f0fdf4; padding:20px; border-radius:8px; border:1px solid #bbf7d0;">
-                    <h4 style="margin:0 0 15px 0; color:#166534; font-size:1.1em;">✓ <?php echo count($completed_pos); ?> Completed Reconciliations</h4>
-                    <div style="max-height: 250px; overflow-y: auto;">
-                        <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
-                            <tr style="border-bottom:2px solid #86efac; color:#14532d;">
-                                <th style="padding:8px;">Meal Date (Eating)</th>
-                                <th style="padding:8px; border-right:2px solid #86efac;">Delivery Date</th>
-                                <th style="padding:8px;">Order ID</th>
-                                <th style="padding:8px;">Customer</th>
-                                <th style="padding:8px;">Plan</th>
-                                <th style="padding:8px;">Delivery Logged As</th>
-                            </tr>
-                            <?php foreach($completed_pos as $p): ?>
-                            <tr style="border-bottom:1px solid #bbf7d0;">
-                                <td style="padding:8px;">
-                                    <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
-                                    <span style="font-size:0.85em; color:#166534;">(<?php echo $p->timing_label; ?>)</span>
-                                </td>
-                                <td style="padding:8px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                                <td style="padding:8px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
-                                <td style="padding:8px;"><?php echo esc_html($p->display_name); ?></td>
-                                <td style="padding:8px;"><?php echo esc_html($p->plan_name); ?></td>
-                                <td style="padding:8px;">
-                                    <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </table>
-                    </div>
-                </div>
-            <?php endif; ?>
-        </div>
-
-        <!-- 3. KPI SECTION (TABS) -->
-        <div class="acc-section-title cmp-no-print">
+        <!-- SUBSCRIPTION METRICS TILES -->
+        <div class="acc-section-title cmp-no-print" style="margin-top: 50px;">
             <span>Subscription Metrics</span>
             <form method="GET" class="acc-filter">
-                <input type="hidden" name="pos_start" value="<?php echo esc_attr($pos_start); ?>">
-                <input type="hidden" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
                 <input type="hidden" name="kit_start" value="<?php echo esc_attr($kit_start); ?>">
                 <input type="hidden" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
+                <input type="hidden" name="pos_start" value="<?php echo esc_attr($pos_start); ?>">
+                <input type="hidden" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
                 <span>Filter:</span>
                 <input type="date" name="dash_start" value="<?php echo esc_attr($dash_start); ?>"> <span>to</span>
                 <input type="date" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
@@ -569,21 +430,240 @@ function cmp_render_accounts_dashboard() {
 
     <script>
     function switchAccTab(targetId, cardElement) {
-        // Hide all tables
         var contents = document.getElementsByClassName('acc-tab-content');
-        for (var i = 0; i < contents.length; i++) {
-            contents[i].classList.remove('active');
-        }
-        // Remove active outline from all cards
+        for (var i = 0; i < contents.length; i++) { contents[i].classList.remove('active'); }
         var cards = document.getElementsByClassName('acc-kpi-card');
-        for (var i = 0; i < cards.length; i++) {
-            cards[i].classList.remove('active-tab');
-        }
-        // Show target table and highlight clicked card
+        for (var i = 0; i < cards.length; i++) { cards[i].classList.remove('active-tab'); }
         document.getElementById(targetId).classList.add('active');
         cardElement.classList.add('active-tab');
     }
     </script>
+    <?php
+    return ob_get_clean();
+}
+
+
+// ==========================================
+// DRILL-DOWN: KITCHEN AUDIT VIEW
+// ==========================================
+function cmp_render_kitchen_audit_view() {
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    
+    $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
+    $kit_start = isset($_GET['kit_start']) ? sanitize_text_field($_GET['kit_start']) : date('Y-m-d', strtotime("-{$kit_days} days"));
+    $kit_end = isset($_GET['kit_end']) ? sanitize_text_field($_GET['kit_end']) : date('Y-m-d');
+
+    $pending_kitchen = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
+         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+         WHERE l.is_locked = 1 
+         AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending') 
+         AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $kit_start, $kit_end
+    ));
+    $pending_kitchen = cmp_process_timing_data($pending_kitchen);
+
+    ob_start();
+    ?>
+    <style>
+        .acc-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; }
+        .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; }
+        .acc-filter input[type="date"] { padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; }
+        .acc-filter button { background: #3b82f6; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .acc-section-title { font-size: 1.4em; color: #0f172a; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
+    </style>
+    <div class="acc-wrap">
+        <div class="cmp-no-print" style="margin-bottom: 20px;">
+            <a href="?" style="color:#0073aa; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
+        </div>
+        
+        <div class="acc-section-title cmp-no-print">
+            <span style="color:#0f172a;">Audit: Kitchen Operations</span>
+            <form method="GET" class="acc-filter">
+                <input type="hidden" name="view" value="kitchen_audit">
+                <span>Period:</span>
+                <input type="date" name="kit_start" value="<?php echo esc_attr($kit_start); ?>"> <span>to</span>
+                <input type="date" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
+                <button type="submit" style="background:#ea580c;">Apply</button>
+            </form>
+        </div>
+
+        <?php if(empty($pending_kitchen)): ?>
+            <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold;">
+                ✓ Perfect compliance. No pending Kitchen tasks found.
+            </div>
+        <?php else: ?>
+            <div style="background:#fff7ed; padding:20px; border-radius:8px; border:1px solid #fed7aa;">
+                <h4 style="margin:0 0 15px 0; color:#c2410c; font-size:1.1em;">Attention: <?php echo count($pending_kitchen); ?> Incomplete Kitchen Logs</h4>
+                <div style="overflow-x: auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
+                        <tr style="border-bottom:2px solid #fdba74; color:#9a3412;">
+                            <th style="padding:12px;">Meal Date (Eating)</th>
+                            <th style="padding:12px; border-right:2px solid #fdba74;">Delivery Date</th>
+                            <th style="padding:12px;">Order ID</th>
+                            <th style="padding:12px;">Customer</th>
+                            <th style="padding:12px;">Plan</th>
+                            <th style="padding:12px;">Missing Step(s)</th>
+                        </tr>
+                        <?php foreach($pending_kitchen as $k): 
+                            $missing_badges = [];
+                            if (!$k->is_prepared) $missing_badges[] = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Prep</span>';
+                            if (!$k->dispatch_status) $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
+                            if ($k->delivery_result === 'Pending') $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
+                        ?>
+                        <tr style="border-bottom:1px solid #fed7aa;">
+                            <td style="padding:12px;">
+                                <strong><?php echo date('d M Y', strtotime($k->target_date)); ?></strong><br>
+                                <span style="font-size:0.85em; color:#c2410c;">(<?php echo $k->timing_label; ?>)</span>
+                            </td>
+                            <td style="padding:12px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date('d M Y', strtotime($k->computed_delivery_date)); ?></td>
+                            <td style="padding:12px;"><?php echo $k->wc_order_id > 0 ? '#'.$k->wc_order_id : 'Manual'; ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($k->display_name); ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($k->plan_name); ?></td>
+                            <td style="padding:12px;">
+                                <div style="display:flex; gap:5px; flex-wrap:wrap;">
+                                    <?php echo implode('', $missing_badges); ?>
+                                </div>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+// ==========================================
+// DRILL-DOWN: POS AUDIT VIEW
+// ==========================================
+function cmp_render_pos_audit_view() {
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    
+    $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
+    $pos_start = isset($_GET['pos_start']) ? sanitize_text_field($_GET['pos_start']) : date('Y-m-d', strtotime("-{$foh_days} days"));
+    $pos_end = isset($_GET['pos_end']) ? sanitize_text_field($_GET['pos_end']) : date('Y-m-d');
+
+    $pending_pos = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
+         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+         WHERE l.pos_updated = 0 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $pos_start, $pos_end
+    ));
+    $completed_pos = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.wc_order_id, s.user_id, s.plan_name, u.display_name FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
+         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+         WHERE l.pos_updated = 1 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $pos_start, $pos_end
+    ));
+
+    $pending_pos = cmp_process_timing_data($pending_pos);
+    $completed_pos = cmp_process_timing_data($completed_pos);
+
+    ob_start();
+    ?>
+    <style>
+        .acc-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; }
+        .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; }
+        .acc-filter input[type="date"] { padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; }
+        .acc-filter button { background: #3b82f6; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .acc-section-title { font-size: 1.4em; color: #0f172a; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
+    </style>
+    <div class="acc-wrap">
+        <div class="cmp-no-print" style="margin-bottom: 20px;">
+            <a href="?" style="color:#0073aa; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
+        </div>
+
+        <div class="acc-section-title cmp-no-print">
+            <span style="color:#0f172a;">Audit: POS Reconciliations</span>
+            <form method="GET" class="acc-filter">
+                <input type="hidden" name="view" value="pos_audit">
+                <span>Period:</span>
+                <input type="date" name="pos_start" value="<?php echo esc_attr($pos_start); ?>"> <span>to</span>
+                <input type="date" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
+                <button type="submit" style="background:#f59e0b;">Apply</button>
+            </form>
+        </div>
+
+        <?php if(empty($pending_pos)): ?>
+            <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold; margin-bottom:20px;">
+                ✓ Perfect compliance. No pending POS checks found.
+            </div>
+        <?php else: ?>
+            <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a; margin-bottom:20px;">
+                <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count($pending_pos); ?> Missing Reconciliations</h4>
+                <div style="overflow-x: auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
+                        <tr style="border-bottom:2px solid #fcd34d; color:#92400e;">
+                            <th style="padding:12px;">Meal Date (Eating)</th>
+                            <th style="padding:12px; border-right:2px solid #fcd34d;">Delivery Date</th>
+                            <th style="padding:12px;">Order ID</th>
+                            <th style="padding:12px;">Customer</th>
+                            <th style="padding:12px;">Plan</th>
+                            <th style="padding:12px;">Delivery Logged As</th>
+                        </tr>
+                        <?php foreach($pending_pos as $p): ?>
+                        <tr style="border-bottom:1px solid #fde68a;">
+                            <td style="padding:12px;">
+                                <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
+                                <span style="font-size:0.85em; color:#b45309;">(<?php echo $p->timing_label; ?>)</span>
+                            </td>
+                            <td style="padding:12px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
+                            <td style="padding:12px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($p->display_name); ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
+                            <td style="padding:12px;">
+                                <span style="background:#fecdd3; color:#9f1239; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if(!empty($completed_pos)): ?>
+            <div style="background:#f0fdf4; padding:20px; border-radius:8px; border:1px solid #bbf7d0;">
+                <h4 style="margin:0 0 15px 0; color:#166534; font-size:1.1em;">✓ <?php echo count($completed_pos); ?> Completed Reconciliations</h4>
+                <div style="overflow-x: auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
+                        <tr style="border-bottom:2px solid #86efac; color:#14532d;">
+                            <th style="padding:12px;">Meal Date (Eating)</th>
+                            <th style="padding:12px; border-right:2px solid #86efac;">Delivery Date</th>
+                            <th style="padding:12px;">Order ID</th>
+                            <th style="padding:12px;">Customer</th>
+                            <th style="padding:12px;">Plan</th>
+                            <th style="padding:12px;">Delivery Logged As</th>
+                        </tr>
+                        <?php foreach($completed_pos as $p): ?>
+                        <tr style="border-bottom:1px solid #bbf7d0;">
+                            <td style="padding:12px;">
+                                <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
+                                <span style="font-size:0.85em; color:#166534;">(<?php echo $p->timing_label; ?>)</span>
+                            </td>
+                            <td style="padding:12px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
+                            <td style="padding:12px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($p->display_name); ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
+                            <td style="padding:12px;">
+                                <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
+    </div>
     <?php
     return ob_get_clean();
 }
