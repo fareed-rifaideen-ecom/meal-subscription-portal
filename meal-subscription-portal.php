@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.2
+ * Version: 2.3
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -20,7 +20,6 @@ function cmp_activate_plugin() {
     require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
     $charset_collate = $wpdb->get_charset_collate();
 
-    // Table 1: Foods Database
     $table_foods = $wpdb->prefix . 'cmp_foods';
     $sql_foods = "CREATE TABLE $table_foods (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
@@ -38,7 +37,6 @@ function cmp_activate_plugin() {
     ) $charset_collate;";
     dbDelta( $sql_foods );
 
-    // Table 2: Subscriptions Database
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $sql_subs = "CREATE TABLE $table_subs (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
@@ -54,7 +52,6 @@ function cmp_activate_plugin() {
     ) $charset_collate;";
     dbDelta( $sql_subs );
 
-    // Table 3: Daily Meal Logs Database
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $sql_logs = "CREATE TABLE $table_logs (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
@@ -79,7 +76,6 @@ function cmp_activate_plugin() {
     ) $charset_collate;";
     dbDelta( $sql_logs );
 
-    // Generate Custom Roles upon activation
     cmp_register_custom_roles();
 }
 
@@ -88,19 +84,10 @@ function cmp_activate_plugin() {
 // ==========================================
 add_action('init', 'cmp_register_custom_roles');
 function cmp_register_custom_roles() {
-    if (!get_role('foh_manager')) {
-        add_role('foh_manager', 'FOH Manager', array('read' => true));
-    }
-    if (!get_role('kitchen_staff')) {
-        add_role('kitchen_staff', 'Kitchen Staff', array('read' => true));
-    }
-    if (!get_role('menu_manager')) {
-        add_role('menu_manager', 'Menu Manager', array('read' => true));
-    }
-    // NEW: Accounts Team Role
-    if (!get_role('accounts_team')) {
-        add_role('accounts_team', 'Accounts Team', array('read' => true));
-    }
+    if (!get_role('foh_manager')) { add_role('foh_manager', 'FOH Manager', array('read' => true)); }
+    if (!get_role('kitchen_staff')) { add_role('kitchen_staff', 'Kitchen Staff', array('read' => true)); }
+    if (!get_role('menu_manager')) { add_role('menu_manager', 'Menu Manager', array('read' => true)); }
+    if (!get_role('accounts_team')) { add_role('accounts_team', 'Accounts Team', array('read' => true)); }
 }
 
 // ==========================================
@@ -117,7 +104,7 @@ $files_to_include = array(
     'menu-manager-portal.php',
     'super-admin-portal.php',
     'chef-assignment-portal.php',
-    'accounts-portal.php' // <-- ADDED ACCOUNTS PORTAL
+    'accounts-portal.php' 
 );
 
 foreach ( $files_to_include as $file ) {
@@ -129,33 +116,26 @@ foreach ( $files_to_include as $file ) {
 // ==========================================
 // 4. CRON JOBS: DAILY DIGEST & HOURLY WATCHDOG
 // ==========================================
-
 add_action('init', 'cmp_setup_crons');
 function cmp_setup_crons() {
-    // Daily Digest Cron
     if ( ! wp_next_scheduled( 'cmp_daily_digest_cron_hook' ) ) {
         $tz = new DateTimeZone('Asia/Dubai');
         $cutoff_hour = intval(get_option('cmp_cutoff_time', '11'));
         $date = new DateTime("today $cutoff_hour:30", $tz);
-        if ($date < new DateTime('now', $tz)) {
-            $date->modify('+1 day');
-        }
+        if ($date < new DateTime('now', $tz)) { $date->modify('+1 day'); }
         wp_schedule_event( $date->getTimestamp(), 'daily', 'cmp_daily_digest_cron_hook' );
     }
 
-    // Hourly Watchdog (For FOH POS Alerts)
     if ( ! wp_next_scheduled( 'cmp_hourly_watchdog_cron_hook' ) ) {
         wp_schedule_event( time(), 'hourly', 'cmp_hourly_watchdog_cron_hook' );
     }
 }
 
-// Daily Digest Handler
+// --- DAILY DIGEST HANDLER ---
 add_action( 'cmp_daily_digest_cron_hook', 'cmp_send_daily_digest_email' );
 function cmp_send_daily_digest_email() {
     $updated_subs = get_option('cmp_daily_updated_subs', array());
-    if (empty($updated_subs) || !is_array($updated_subs)) {
-        return; 
-    }
+    if (empty($updated_subs) || !is_array($updated_subs)) { return; }
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -181,73 +161,97 @@ function cmp_send_daily_digest_email() {
         $subject = "Meal Selections Updated - Daily Digest";
         $message = "The following customers have selected or modified their meal calendars in the last 24 hours:\n\n";
         $message .= $customer_list;
-        $message .= "\nLog in to the Kitchen Command Center to view their exact meal assignments.\n";
-        $message .= site_url('/kitchen-command-center/');
+        $message .= "\nLog in to the Kitchen Command Center to view their exact meal assignments.\n" . site_url('/kitchen-command-center/');
         wp_mail($to, $subject, $message);
     }
     update_option('cmp_daily_updated_subs', array());
 }
 
-// NEW: Hourly Watchdog for POS Alerts Handler
+// --- HOURLY WATCHDOG (FOH & KITCHEN ALERTS) ---
 add_action( 'cmp_hourly_watchdog_cron_hook', 'cmp_run_hourly_watchdog' );
 function cmp_run_hourly_watchdog() {
-    $emails_raw = get_option('cmp_pos_alert_emails', '');
-    if (empty(trim($emails_raw))) return; 
-
-    $to = array_filter(array_map('trim', explode(',', $emails_raw)));
-    if (empty($to)) return;
-
+    
     $tz = new DateTimeZone('Asia/Dubai');
     $now = new DateTime('now', $tz);
     $current_date = $now->format('Y-m-d');
     $current_hour = (int) $now->format('H');
 
-    $time_1 = intval(get_option('cmp_pos_alert_time_1', '18'));
-    $time_2 = intval(get_option('cmp_pos_alert_time_2', '10'));
-
-    $last_alert_1 = get_option('cmp_last_pos_alert_1_date', '');
-    $last_alert_2 = get_option('cmp_last_pos_alert_2_date', '');
-
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
 
-    // ALERT 1: Same Day check (Runs at designated hour e.g., 18:00)
-    if ($current_hour >= $time_1 && $last_alert_1 !== $current_date) {
-        // Find Target Date = Tomorrow (Prepared Today)
-        $target_date_obj = clone $now;
-        $target_date_obj->modify('+1 day');
-        $target_date_str = $target_date_obj->format('Y-m-d');
-        
-        // FIXED LOGIC: Only count if delivery result is NOT 'Pending'
-        $missed_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(id) FROM $table_logs WHERE target_date = %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
-            $target_date_str
+    // Dates for 7-Day Rolling Window
+    $seven_days_ago = date('Y-m-d', strtotime('-7 days', $now->getTimestamp()));
+    $tomorrow       = date('Y-m-d', strtotime('+1 day', $now->getTimestamp()));
+
+    // ==========================================
+    // 1. FOH POS REMINDERS
+    // ==========================================
+    $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
+    if (!empty($foh_emails)) {
+        $foh_t1 = intval(get_option('cmp_pos_alert_time_1', '18'));
+        $foh_t2 = intval(get_option('cmp_pos_alert_time_2', '10'));
+        $last_foh_1 = get_option('cmp_last_pos_alert_1_date', '');
+        $last_foh_2 = get_option('cmp_last_pos_alert_2_date', '');
+
+        // Check Logic: Unchecked POS from the past 7 days up until tomorrow
+        $foh_missed = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
+            $seven_days_ago, $tomorrow
         ));
 
-        if ($missed_count > 0) {
-            $subject = "ACTION REQUIRED: Pending POS Checks (Prepared Today)";
-            $message = "Hello FOH Team,\n\nThere are {$missed_count} un-reconciled orders from today's Kitchen Preparation batch.\n\nPlease log in to the Kitchen Portal, verify the delivery statuses, and click the POS checkboxes to finalize the daily reconciliation.\n\n" . site_url('/kitchen-command-center/');
-            wp_mail($to, $subject, $message);
+        // Alert 1 (Same Day)
+        if ($current_hour >= $foh_t1 && $last_foh_1 !== $current_date && $foh_missed > 0) {
+            $subject = "ACTION REQUIRED: Pending POS Checks (Past 7 Days)";
+            $message = "Hello FOH Team,\n\nYou have {$foh_missed} un-reconciled orders pending in the system from the past 7 days.\n\nPlease log in to the Kitchen Portal, verify the delivery statuses, and click the POS checkboxes to finalize reconciliation.\n\n" . site_url('/kitchen-command-center/');
+            wp_mail($foh_emails, $subject, $message);
+            update_option('cmp_last_pos_alert_1_date', $current_date);
         }
-        update_option('cmp_last_pos_alert_1_date', $current_date);
+        // Alert 2 (Next Day / Escalation)
+        elseif ($current_hour >= $foh_t2 && $current_hour < $foh_t1 && $last_foh_2 !== $current_date && $foh_missed > 0) {
+            $subject = "ESCALATION: Missed POS Checks Detected";
+            $message = "Hello FOH Team,\n\nYou still have {$foh_missed} un-reconciled orders from the past week.\n\nPlease log in to the Kitchen Portal immediately and finalize the POS checks so customer portals and accounting records update correctly.\n\n" . site_url('/kitchen-command-center/');
+            wp_mail($foh_emails, $subject, $message);
+            update_option('cmp_last_pos_alert_2_date', $current_date);
+        }
     }
 
-    // ALERT 2: Next Day check (Runs at designated hour e.g., 10:00 AM)
-    if ($current_hour >= $time_2 && $last_alert_2 !== $current_date) {
-        // Find Target Date = Today (Prepared Yesterday)
-        $target_date_str = $current_date;
-        
-        // FIXED LOGIC: Only count if delivery result is NOT 'Pending'
-        $missed_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(id) FROM $table_logs WHERE target_date = %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
-            $target_date_str
+    // ==========================================
+    // 2. KITCHEN OPERATIONAL ALERTS
+    // ==========================================
+    $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
+    if (!empty($kitchen_emails)) {
+        $kit_t1 = intval(get_option('cmp_kitchen_alert_time_1', '18'));
+        $kit_t2 = intval(get_option('cmp_kitchen_alert_time_2', '10'));
+        $last_kit_1 = get_option('cmp_last_kitchen_alert_1_date', '');
+        $last_kit_2 = get_option('cmp_last_kitchen_alert_2_date', '');
+
+        // Check Logic: 
+        // A) Any day from 7 days ago to Today where Prep, Dispatch, OR Delivery is missing.
+        // B) Tomorrow where Prep is missing (Tomorrow's food is prepped today).
+        $kitchen_missed = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(id) FROM $table_logs 
+             WHERE is_locked = 1 
+             AND (
+                (target_date >= %s AND target_date <= %s AND (is_prepared = 0 OR dispatch_status = 0 OR delivery_result = 'Pending'))
+                OR 
+                (target_date = %s AND is_prepared = 0)
+             )",
+            $seven_days_ago, $current_date, $tomorrow
         ));
 
-        if ($missed_count > 0) {
-            $subject = "ESCALATION: Missed POS Checks from Yesterday";
-            $message = "Hello FOH Team,\n\nThere are STILL {$missed_count} un-reconciled orders from yesterday's food batch.\n\nPlease log in to the Kitchen Portal immediately and finalize the POS checks so customer portals update correctly.\n\n" . site_url('/kitchen-command-center/?prep_date=' . date('Y-m-d', strtotime('-1 day')));
-            wp_mail($to, $subject, $message);
+        // Alert 1 (Same Day)
+        if ($current_hour >= $kit_t1 && $last_kit_1 !== $current_date && $kitchen_missed > 0) {
+            $subject = "ACTION REQUIRED: Pending Kitchen Logs (Past 7 Days)";
+            $message = "Hello Kitchen Team,\n\nYou have {$kitchen_missed} incomplete logs in the system from the past week.\n\nThis means meals have not been checked as 'Prepared', 'Dispatched', or given a final 'Delivery Status'. Please log in and finalize these records for today and the past 7 days.\n\n" . site_url('/kitchen-command-center/');
+            wp_mail($kitchen_emails, $subject, $message);
+            update_option('cmp_last_kitchen_alert_1_date', $current_date);
         }
-        update_option('cmp_last_pos_alert_2_date', $current_date);
+        // Alert 2 (Next Day / Escalation)
+        elseif ($current_hour >= $kit_t2 && $current_hour < $kit_t1 && $last_kit_2 !== $current_date && $kitchen_missed > 0) {
+            $subject = "ESCALATION: Missed Kitchen Operational Logs";
+            $message = "Hello Kitchen Team,\n\nYou still have {$kitchen_missed} incomplete logs from the past week.\n\nPlease log in immediately to ensure all meals from yesterday and the past 7 days are properly marked as Prepared, Dispatched, and Delivered.\n\n" . site_url('/kitchen-command-center/');
+            wp_mail($kitchen_emails, $subject, $message);
+            update_option('cmp_last_kitchen_alert_2_date', $current_date);
+        }
     }
 }
