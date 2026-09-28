@@ -302,6 +302,8 @@ function cmp_render_kitchen_portal() {
     
     // SMART DATE MATH: Prep Date is ALWAYS Target Date - 1 day.
     $target_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
+    $prev_date = date('Y-m-d', strtotime($selected_date . ' - 1 day'));
+    $next_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
 
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, u.display_name, u.user_email 
@@ -458,7 +460,9 @@ function cmp_render_kitchen_portal() {
         .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85em; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
         .k-table th { background: #222; color: #fff; padding: 12px 8px; text-align: left; }
         .k-table td { padding: 10px 8px; border-bottom: 1px solid #ddd; vertical-align: middle; }
-        .chk-large { transform: scale(1.5); cursor: pointer; }
+        
+        /* INCREASED CHECKBOX SIZE */
+        .chk-large { transform: scale(2.0); cursor: pointer; margin: 10px; }
         
         .k-customer-meta { margin: 2px 0; color: #555; display: flex; align-items: center; gap: 5px; }
         .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; }
@@ -482,7 +486,10 @@ function cmp_render_kitchen_portal() {
         <div class="cmp-no-print" style="background: #f1f1f1; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #ddd; flex-wrap: wrap; gap: 15px;">
             <form method="GET" id="cmp-kitchen-date-form" style="margin: 0; display: flex; align-items: center; gap: 10px;">
                 <label style="font-weight: bold; font-size: 1.1em;">Food Preparation Date:</label>
+                <!-- NAVIGATION BUTTONS -->
+                <a href="?prep_date=<?php echo $prev_date; ?>" style="background: #ccc; color: #333; text-decoration: none; padding: 8px 12px; border-radius: 4px; font-weight: bold;">&laquo; Prev</a>
                 <input type="date" name="prep_date" value="<?php echo esc_attr($selected_date); ?>" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;" onchange="document.getElementById('cmp-kitchen-date-form').submit();">
+                <a href="?prep_date=<?php echo $next_date; ?>" style="background: #ccc; color: #333; text-decoration: none; padding: 8px 12px; border-radius: 4px; font-weight: bold;">Next &raquo;</a>
             </form>
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
