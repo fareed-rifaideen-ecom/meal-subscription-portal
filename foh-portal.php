@@ -160,6 +160,23 @@ function cmp_render_foh_portal() {
                             
                             $search_data = esc_attr(strtolower($full_name . ' ' . $sub->user_email . ' ' . $phone));
                             $plan_data = esc_attr($sub->plan_name);
+
+                            // --- NEW PRICE AND DISCOUNT LOGIC ---
+                            $price_display = 'N/A';
+                            if ($order) {
+                                $total = (float) $order->get_total();
+                                $discount = (float) $order->get_discount_total();
+                                $currency = get_woocommerce_currency_symbol($order->get_currency());
+                                
+                                if ($discount > 0) {
+                                    $original_price = $total + $discount;
+                                    $discount_percentage = round(($discount / $original_price) * 100);
+                                    
+                                    $price_display = $currency . number_format($total, 2) . ' <span style="color:#d63638; font-weight:bold; font-size:0.9em;">(-' . $discount_percentage . '%)</span>';
+                                } else {
+                                    $price_display = $currency . number_format($total, 2);
+                                }
+                            }
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
@@ -176,8 +193,9 @@ function cmp_render_foh_portal() {
                                 </span>
                             </td>
                             <td>
-                                <strong><?php echo esc_html($sub->plan_name); ?></strong><br>
-                                <span style="color: #666;">Total Days: <?php echo $sub->total_days; ?></span>
+                                <strong style="color: #222;"><?php echo esc_html($sub->plan_name); ?></strong><br>
+                                <span style="color: #666;">Total Days: <?php echo $sub->total_days; ?></span><br>
+                                <span style="color: #2271b1; font-weight:bold; margin-top:5px; display:inline-block;">Price: <?php echo $price_display; ?></span>
                             </td>
                             <td style="text-align: center;">
                                 <div style="background: #f1f1f1; padding: 10px; border-radius: 4px; display: inline-block; text-align: left; width: 100%; box-sizing: border-box;">
