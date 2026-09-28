@@ -109,6 +109,8 @@ function cmp_render_foh_portal() {
         .sub-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
         .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: top; }
         .remark-edit-box { transition: all 0.3s ease; overflow: hidden; }
+        .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
+        .metric-progress-fill { background-color: #16a34a; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
     </style>
 
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
@@ -150,12 +152,13 @@ function cmp_render_foh_portal() {
                 <table class="sub-table">
                     <thead>
                         <tr>
+                            <!-- ADJUSTED WIDTHS FOR OPTIMAL FIT -->
                             <th style="width: 8%;">Order ID</th>
-                            <th style="width: 20%;">Customer Info</th>
+                            <th style="width: 22%;">Customer Info</th>
                             <th style="width: 22%;">Plan Details</th>
-                            <th style="width: 25%; text-align: center;">Tracking Metrics</th>
+                            <th style="width: 18%; text-align: center;">Tracking Metrics</th>
                             <th style="width: 13%;">Expiry Management</th>
-                            <th style="width: 12%; text-align: center;">Actions</th>
+                            <th style="width: 17%; text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -199,6 +202,9 @@ function cmp_render_foh_portal() {
                             $remark_text = !empty($sub->foh_remarks) ? $sub->foh_remarks : '';
                             $short_remark = mb_strimwidth($remark_text, 0, 32, '...');
                             $preview_html = empty($remark_text) ? '<span style="color:#94a3b8; font-style:italic; font-weight:normal;">No remarks</span>' : esc_html($short_remark);
+                            
+                            // PROGRESS BAR CALCULATION
+                            $usage_percent = ($sub->total_days > 0) ? round(($sub->usage / $sub->total_days) * 100) : 0;
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
@@ -216,11 +222,11 @@ function cmp_render_foh_portal() {
                             </td>
                             <td>
                                 <strong style="color: #222;"><?php echo esc_html($sub->plan_name); ?></strong><br>
-                                <span style="color: #666;">Total Days: <?php echo $sub->total_days; ?></span><br>
-                                <span style="color: #2271b1; font-weight:bold; margin-top:5px; display:inline-block;">Price: <?php echo $price_display; ?></span>
+                                <!-- Total Days removed as per request to de-clutter -->
+                                <span style="color: #2271b1; font-weight:bold; margin-top:3px; display:inline-block;">Price: <?php echo $price_display; ?></span>
                                 
                                 <!-- FOH Remarks Inline Toggle -->
-                                <div style="margin-top: 10px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                                <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
                                         <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#0073aa; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
@@ -232,10 +238,20 @@ function cmp_render_foh_portal() {
                                 </div>
                             </td>
                             <td style="text-align: center;">
-                                <div style="background: #f1f1f1; padding: 10px; border-radius: 4px; display: inline-block; text-align: left; width: 100%; box-sizing: border-box;">
-                                    <span style="color: #555;">Filled Days: <strong><?php echo $sub->filled; ?> / <?php echo $sub->total_days; ?></strong></span><br>
-                                    <span style="color: #46b450;">Usage (Delivered): <strong><?php echo $sub->usage; ?></strong></span><br>
-                                    <span style="color: #0073aa; font-size: 1.1em; display: block; border-top: 1px solid #ddd; margin-top: 5px; padding-top: 5px;">Balance Days: <strong><?php echo $sub->balance; ?></strong></span>
+                                <!-- NEW VISUAL PROGRESS BAR & CONDENSED METRICS -->
+                                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; text-align: left; width: 100%; box-sizing: border-box;">
+                                    <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
+                                        <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
+                                        <span style="color: #16a34a;">Used: <strong><?php echo $sub->usage; ?></strong></span>
+                                    </div>
+                                    
+                                    <div class="metric-progress-bar">
+                                        <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
+                                    </div>
+                                    
+                                    <div style="color: #0369a1; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
+                                        Balance: <?php echo $sub->balance; ?> Days
+                                    </div>
                                 </div>
                             </td>
                             <td>
@@ -246,17 +262,19 @@ function cmp_render_foh_portal() {
                                     <button type="submit" class="expiry-btn" style="width: 100%; background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
                                 </form>
                             </td>
-                            <td style="text-align: center;">
-                                <?php if($tab_key !== 'inactive'): ?>
-                                <form class="ajax-status-form" style="margin-bottom: 5px;">
-                                    <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
-                                    <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                    <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;">
-                                        <?php echo $is_paused ? 'Resume Plan' : 'Pause Plan'; ?>
-                                    </button>
-                                </form>
-                                <?php endif; ?>
-                                <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="display: block; background: #46b450; color: white; text-decoration: none; padding: 8px; border-radius: 4px; font-weight: bold; box-sizing: border-box;">Edit / View Customer Portal</a>
+                            <td style="text-align: center; vertical-align: middle;">
+                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                    <?php if($tab_key !== 'inactive'): ?>
+                                    <form class="ajax-status-form" style="margin: 0;">
+                                        <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
+                                        <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
+                                        <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;">
+                                            <?php echo $is_paused ? 'Resume Plan' : 'Pause Plan'; ?>
+                                        </button>
+                                    </form>
+                                    <?php endif; ?>
+                                    <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="display: block; background: #46b450; color: white; text-decoration: none; padding: 8px; border-radius: 4px; font-weight: bold; box-sizing: border-box;">Edit / View Portal</a>
+                                </div>
                             </td>
                         </tr>
                         <?php endforeach; endif; ?>
