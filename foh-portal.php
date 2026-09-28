@@ -150,12 +150,12 @@ function cmp_render_foh_portal() {
                 <table class="sub-table">
                     <thead>
                         <tr>
-                            <th>Order ID</th>
-                            <th>Customer Info</th>
-                            <th style="width: 28%;">Plan Details</th>
-                            <th style="text-align: center;">Tracking Metrics</th>
-                            <th>Expiry Management</th>
-                            <th style="text-align: center;">Actions</th>
+                            <th style="width: 8%;">Order ID</th>
+                            <th style="width: 20%;">Customer Info</th>
+                            <th style="width: 22%;">Plan Details</th>
+                            <th style="width: 25%; text-align: center;">Tracking Metrics</th>
+                            <th style="width: 13%;">Expiry Management</th>
+                            <th style="width: 12%; text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -240,10 +240,10 @@ function cmp_render_foh_portal() {
                             </td>
                             <td>
                                 <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
-                                <form class="ajax-expiry-form" style="display: flex; gap: 5px; margin-top: 5px;">
+                                <form class="ajax-expiry-form" style="display: flex; flex-direction: column; gap: 5px; margin-top: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
-                                    <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
-                                    <button type="submit" class="expiry-btn" style="background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
+                                    <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                                    <button type="submit" class="expiry-btn" style="width: 100%; background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
                                 </form>
                             </td>
                             <td style="text-align: center;">
