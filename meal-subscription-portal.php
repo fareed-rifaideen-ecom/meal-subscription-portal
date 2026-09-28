@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.5
+ * Version: 2.6
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -118,29 +118,32 @@ foreach ( $files_to_include as $file ) {
 // 4. CRON JOBS & SCHEDULING LOGIC
 // ==========================================
 
-// Helper Function: Dynamically schedule a daily event based on a specific DB Setting
-function cmp_schedule_exact_daily_cron($hook_name, $setting_key, $default_hour) {
+// Helper Function: Dynamically schedule a daily event based on EXACT time setting
+function cmp_schedule_exact_daily_cron($hook_name, $setting_key, $default_time) {
     $tz = new DateTimeZone('Asia/Dubai');
-    $target_hour = intval(get_option($setting_key, $default_hour));
+    $raw_val = get_option($setting_key, $default_time);
+    
+    // Auto-correct legacy integer settings (e.g. '19') to HTML5 time format ('19:00')
+    $target_time = (strpos($raw_val, ':') !== false) ? $raw_val : str_pad($raw_val, 2, '0', STR_PAD_LEFT) . ':00';
     
     $next_scheduled = wp_next_scheduled($hook_name);
     $reschedule = false;
 
-    // If it's already scheduled, check if the hour matches the current WP setting
+    // If already scheduled, check if the exact minute matches the current WP setting
     if ($next_scheduled) {
         $scheduled_date = new DateTime('@' . $next_scheduled);
         $scheduled_date->setTimezone($tz);
-        if (intval($scheduled_date->format('H')) !== $target_hour) {
+        if ($scheduled_date->format('H:i') !== $target_time) {
             $reschedule = true;
-            wp_clear_scheduled_hook($hook_name); // Unschedule the old incorrect time
+            wp_clear_scheduled_hook($hook_name); // Destroy the old schedule
         }
     }
 
-    // Schedule it if it's missing or needs to be updated to a new hour
+    // Schedule the new exact time
     if (!$next_scheduled || $reschedule) {
-        $date = new DateTime("today $target_hour:00", $tz);
+        $date = new DateTime("today $target_time", $tz);
         if ($date < new DateTime('now', $tz)) {
-            $date->modify('+1 day'); // Push to tomorrow if the time has already passed today
+            $date->modify('+1 day'); // Push to tomorrow if the time has passed today
         }
         wp_schedule_event( $date->getTimestamp(), 'daily', $hook_name );
     }
@@ -149,10 +152,14 @@ function cmp_schedule_exact_daily_cron($hook_name, $setting_key, $default_hour) 
 add_action('init', 'cmp_setup_crons');
 function cmp_setup_crons() {
     
-    // CLEANUP: Destroy the old flawed Hourly Watchdog
+    // CLEANUP: Destroy old flawed Watchdogs & Legacy Hooks
     wp_clear_scheduled_hook('cmp_hourly_watchdog_cron_hook');
+    wp_clear_scheduled_hook('cmp_foh_sameday_alert_hook');
+    wp_clear_scheduled_hook('cmp_foh_nextday_alert_hook');
+    wp_clear_scheduled_hook('cmp_kit_sameday_alert_hook');
+    wp_clear_scheduled_hook('cmp_kit_nextday_alert_hook');
 
-    // 1. Daily Digest Cron (100% UNTOUCHED)
+    // 1. Daily Digest Cron (UNTOUCHED)
     if ( ! wp_next_scheduled( 'cmp_daily_digest_cron_hook' ) ) {
         $tz = new DateTimeZone('Asia/Dubai');
         $cutoff_hour = intval(get_option('cmp_cutoff_time', '11'));
@@ -161,11 +168,11 @@ function cmp_setup_crons() {
         wp_schedule_event( $date->getTimestamp(), 'daily', 'cmp_daily_digest_cron_hook' );
     }
 
-    // 2. Exact-Time Daily Crons for FOH & Kitchen
-    cmp_schedule_exact_daily_cron('cmp_foh_sameday_alert_hook', 'cmp_pos_alert_time_1', 19);
-    cmp_schedule_exact_daily_cron('cmp_foh_nextday_alert_hook', 'cmp_pos_alert_time_2', 10);
-    cmp_schedule_exact_daily_cron('cmp_kit_sameday_alert_hook', 'cmp_kitchen_alert_time_1', 19);
-    cmp_schedule_exact_daily_cron('cmp_kit_nextday_alert_hook', 'cmp_kitchen_alert_time_2', 10);
+    // 2. Exact-Time Daily Crons for FOH & Kitchen (Down to the minute)
+    cmp_schedule_exact_daily_cron('cmp_foh_alert_1_hook', 'cmp_pos_alert_time_1', '19:00');
+    cmp_schedule_exact_daily_cron('cmp_foh_alert_2_hook', 'cmp_pos_alert_time_2', '10:00');
+    cmp_schedule_exact_daily_cron('cmp_kit_alert_1_hook', 'cmp_kitchen_alert_time_1', '19:00');
+    cmp_schedule_exact_daily_cron('cmp_kit_alert_2_hook', 'cmp_kitchen_alert_time_2', '10:00');
 }
 
 
@@ -210,9 +217,9 @@ function cmp_send_daily_digest_email() {
 // 5. ISOLATED COMPLIANCE ALERT HANDLERS
 // ==========================================
 
-// FOH: Same-Day Alert
-add_action( 'cmp_foh_sameday_alert_hook', 'cmp_run_foh_sameday_alert' );
-function cmp_run_foh_sameday_alert() {
+// FOH: Alert 1 (Standard)
+add_action( 'cmp_foh_alert_1_hook', 'cmp_run_foh_alert_1' );
+function cmp_run_foh_alert_1() {
     $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
     if (empty($foh_emails)) return;
 
@@ -234,13 +241,13 @@ function cmp_run_foh_sameday_alert() {
     if ($foh_missed > 0) {
         $subject = "ACTION REQUIRED: Pending POS Checks (Past {$foh_days} Days)";
         $message = "Hello FOH Team,\n\nYou have {$foh_missed} un-reconciled orders pending in the system from the past {$foh_days} days.\n\nPlease log in to the Kitchen Portal, verify the delivery statuses, and click the POS checkboxes to finalize reconciliation.\n\n" . site_url('/kitchen-command-center/');
-        wp_mail($foh_emails, $subject, $message);
+        foreach ( $foh_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
 
-// FOH: Next-Day Alert
-add_action( 'cmp_foh_nextday_alert_hook', 'cmp_run_foh_nextday_alert' );
-function cmp_run_foh_nextday_alert() {
+// FOH: Alert 2 (Escalation)
+add_action( 'cmp_foh_alert_2_hook', 'cmp_run_foh_alert_2' );
+function cmp_run_foh_alert_2() {
     $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
     if (empty($foh_emails)) return;
 
@@ -262,14 +269,14 @@ function cmp_run_foh_nextday_alert() {
     if ($foh_missed > 0) {
         $subject = "ESCALATION: Missed POS Checks Detected";
         $message = "Hello FOH Team,\n\nYou still have {$foh_missed} un-reconciled orders from the past {$foh_days} days.\n\nPlease log in to the Kitchen Portal immediately and finalize the POS checks so customer portals and accounting records update correctly.\n\n" . site_url('/kitchen-command-center/');
-        wp_mail($foh_emails, $subject, $message);
+        foreach ( $foh_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
 
 
-// KITCHEN: Same-Day Alert
-add_action( 'cmp_kit_sameday_alert_hook', 'cmp_run_kit_sameday_alert' );
-function cmp_run_kit_sameday_alert() {
+// KITCHEN: Alert 1 (Standard)
+add_action( 'cmp_kit_alert_1_hook', 'cmp_run_kit_alert_1' );
+function cmp_run_kit_alert_1() {
     $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
     if (empty($kitchen_emails)) return;
 
@@ -298,13 +305,13 @@ function cmp_run_kit_sameday_alert() {
     if ($kitchen_missed > 0) {
         $subject = "ACTION REQUIRED: Pending Kitchen Logs (Past {$kit_days} Days)";
         $message = "Hello Kitchen Team,\n\nYou have {$kitchen_missed} incomplete logs in the system from the past {$kit_days} days.\n\nThis means meals have not been checked as 'Prepared', 'Dispatched', or given a final 'Delivery Status'. Please log in and finalize these records.\n\n" . site_url('/kitchen-command-center/');
-        wp_mail($kitchen_emails, $subject, $message);
+        foreach ( $kitchen_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
 
-// KITCHEN: Next-Day Alert
-add_action( 'cmp_kit_nextday_alert_hook', 'cmp_run_kit_nextday_alert' );
-function cmp_run_kit_nextday_alert() {
+// KITCHEN: Alert 2 (Escalation)
+add_action( 'cmp_kit_alert_2_hook', 'cmp_run_kit_alert_2' );
+function cmp_run_kit_alert_2() {
     $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
     if (empty($kitchen_emails)) return;
 
@@ -333,6 +340,6 @@ function cmp_run_kit_nextday_alert() {
     if ($kitchen_missed > 0) {
         $subject = "ESCALATION: Missed Kitchen Operational Logs";
         $message = "Hello Kitchen Team,\n\nYou still have {$kitchen_missed} incomplete logs from the past {$kit_days} days.\n\nPlease log in immediately to ensure all meals from yesterday and the past {$kit_days} days are properly marked as Prepared, Dispatched, and Delivered.\n\n" . site_url('/kitchen-command-center/');
-        wp_mail($kitchen_emails, $subject, $message);
+        foreach ( $kitchen_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
