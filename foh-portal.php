@@ -219,10 +219,10 @@ function cmp_render_foh_portal() {
                                 <span style="color: #666;">Total Days: <?php echo $sub->total_days; ?></span><br>
                                 <span style="color: #2271b1; font-weight:bold; margin-top:5px; display:inline-block;">Price: <?php echo $price_display; ?></span>
                                 
-                                <!-- FOH Remarks Inline Toggle -->
+                                <!-- FOH Remarks Inline Toggle (Icon Removed) -->
                                 <div style="margin-top: 10px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span style="font-size:0.9em; color:#475569;">📝 <strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
+                                        <span style="font-size:0.9em; color:#475569;">Remarks: <strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
                                         <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#0073aa; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
                                     </div>
                                     <div id="remark-box-<?php echo $sub->id; ?>" class="remark-edit-box" style="display:none; margin-top:8px;">
