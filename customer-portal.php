@@ -591,8 +591,6 @@ function cmp_render_customer_portal() {
                                     $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
                                 } elseif (in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
                                     $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
-                                } elseif ($log->dispatch_status == 1) {
-                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Out for Delivery</span>';
                                 } elseif ($log_id > 0) {
                                     $status_badge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                                 }
@@ -1165,7 +1163,6 @@ function cmp_export_customer_csv() {
         $status = 'Pending';
         if ($log->delivery_result === 'Successful') { $status = 'Successful'; }
         elseif (in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
-        elseif ($log->dispatch_status == 1) { $status = 'Out for Delivery'; }
         elseif ($log->id > 0) { $status = 'Confirmed'; }
 
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
