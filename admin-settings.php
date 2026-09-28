@@ -37,14 +37,20 @@ function cmp_register_settings() {
         register_setting( 'cmp_settings_group', 'cmp_pos_alert_emails' );
         register_setting( 'cmp_settings_group', 'cmp_pos_alert_time_1' );
         register_setting( 'cmp_settings_group', 'cmp_pos_alert_time_2' );
-        register_setting( 'cmp_settings_group', 'cmp_pos_alert_days' ); // NEW
+        register_setting( 'cmp_settings_group', 'cmp_pos_alert_days' ); 
 
         // Kitchen Alert Settings
         register_setting( 'cmp_settings_group', 'cmp_kitchen_alert_emails' );
         register_setting( 'cmp_settings_group', 'cmp_kitchen_alert_time_1' );
         register_setting( 'cmp_settings_group', 'cmp_kitchen_alert_time_2' );
-        register_setting( 'cmp_settings_group', 'cmp_kitchen_alert_days' ); // NEW
+        register_setting( 'cmp_settings_group', 'cmp_kitchen_alert_days' ); 
     }
+}
+
+// Helper: Format legacy integers (e.g., '19') to time strings ('19:00')
+function cmp_format_time_setting($val) {
+    if (strpos($val, ':') !== false) return $val;
+    return str_pad($val, 2, '0', STR_PAD_LEFT) . ':00';
 }
 
 // 3. Build the Backend User Interface
@@ -108,14 +114,14 @@ function cmp_render_settings_page() {
                                     <span style="font-size: 0.85em; color:#666;">(Days to audit)</span>
                                 </div>
                                 <div>
-                                    <label style="font-weight:bold; display:block;">Same-Day Alert</label>
-                                    <input type="number" name="cmp_pos_alert_time_1" value="<?php echo esc_attr( get_option('cmp_pos_alert_time_1', '18') ); ?>" min="0" max="23" style="width: 80px;" />
-                                    <span style="font-size: 0.85em; color:#666;">(e.g., 18 = 6 PM)</span>
+                                    <label style="font-weight:bold; display:block;">Daily Alert 1</label>
+                                    <input type="time" name="cmp_pos_alert_time_1" value="<?php echo esc_attr( cmp_format_time_setting(get_option('cmp_pos_alert_time_1', '19:00')) ); ?>" style="width: 110px;" />
+                                    <span style="font-size: 0.85em; color:#666; display:block;">(Standard Alert)</span>
                                 </div>
                                 <div>
-                                    <label style="font-weight:bold; display:block;">Next-Day Alert</label>
-                                    <input type="number" name="cmp_pos_alert_time_2" value="<?php echo esc_attr( get_option('cmp_pos_alert_time_2', '10') ); ?>" min="0" max="23" style="width: 80px;" />
-                                    <span style="font-size: 0.85em; color:#666;">(e.g., 10 = 10 AM)</span>
+                                    <label style="font-weight:bold; display:block;">Daily Alert 2</label>
+                                    <input type="time" name="cmp_pos_alert_time_2" value="<?php echo esc_attr( cmp_format_time_setting(get_option('cmp_pos_alert_time_2', '10:00')) ); ?>" style="width: 110px;" />
+                                    <span style="font-size: 0.85em; color:#666; display:block;">(Escalation Alert)</span>
                                 </div>
                             </div>
                         </td>
@@ -135,14 +141,14 @@ function cmp_render_settings_page() {
                                     <span style="font-size: 0.85em; color:#666;">(Days to audit)</span>
                                 </div>
                                 <div>
-                                    <label style="font-weight:bold; display:block;">Same-Day Alert</label>
-                                    <input type="number" name="cmp_kitchen_alert_time_1" value="<?php echo esc_attr( get_option('cmp_kitchen_alert_time_1', '18') ); ?>" min="0" max="23" style="width: 80px;" />
-                                    <span style="font-size: 0.85em; color:#666;">(e.g., 18 = 6 PM)</span>
+                                    <label style="font-weight:bold; display:block;">Daily Alert 1</label>
+                                    <input type="time" name="cmp_kitchen_alert_time_1" value="<?php echo esc_attr( cmp_format_time_setting(get_option('cmp_kitchen_alert_time_1', '19:00')) ); ?>" style="width: 110px;" />
+                                    <span style="font-size: 0.85em; color:#666; display:block;">(Standard Alert)</span>
                                 </div>
                                 <div>
-                                    <label style="font-weight:bold; display:block;">Next-Day Alert</label>
-                                    <input type="number" name="cmp_kitchen_alert_time_2" value="<?php echo esc_attr( get_option('cmp_kitchen_alert_time_2', '10') ); ?>" min="0" max="23" style="width: 80px;" />
-                                    <span style="font-size: 0.85em; color:#666;">(e.g., 10 = 10 AM)</span>
+                                    <label style="font-weight:bold; display:block;">Daily Alert 2</label>
+                                    <input type="time" name="cmp_kitchen_alert_time_2" value="<?php echo esc_attr( cmp_format_time_setting(get_option('cmp_kitchen_alert_time_2', '10:00')) ); ?>" style="width: 110px;" />
+                                    <span style="font-size: 0.85em; color:#666; display:block;">(Escalation Alert)</span>
                                 </div>
                             </div>
                         </td>

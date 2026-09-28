@@ -83,7 +83,7 @@ function cmp_render_super_admin_portal() {
     
     $active_count = 0;
     $paused_count = 0;
-    $active_turnover = 0.0;
+    $new_turnover = 0.0;
     $user_status = array();
     
     foreach ($all_subs as $sub) {
@@ -91,6 +91,14 @@ function cmp_render_super_admin_portal() {
         
         if (!isset($user_status[$uid])) {
             $user_status[$uid] = array('has_active' => false, 'has_completed' => false);
+        }
+
+        // NEW LOGIC: Calculate turnover for EVERY subscription created in this date range
+        if ($sub->wc_order_id > 0 && function_exists('wc_get_order')) {
+            $order = wc_get_order($sub->wc_order_id);
+            if ($order) {
+                $new_turnover += floatval($order->get_total());
+            }
         }
         
         $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
@@ -104,13 +112,6 @@ function cmp_render_super_admin_portal() {
         } else {
             $user_status[$uid]['has_active'] = true;
             $active_count++;
-            
-            if ($sub->wc_order_id > 0 && function_exists('wc_get_order')) {
-                $order = wc_get_order($sub->wc_order_id);
-                if ($order) {
-                    $active_turnover += floatval($order->get_total());
-                }
-            }
         }
     }
 
@@ -159,7 +160,7 @@ function cmp_render_super_admin_portal() {
     $total_deliveries_period = $successful_deliveries + $failed_deliveries;
     $success_rate = ($total_deliveries_period > 0) ? round(($successful_deliveries / $total_deliveries_period) * 100, 1) : 0;
 
-    $formatted_turnover = function_exists('wc_price') ? wc_price($active_turnover) : 'AED ' . number_format($active_turnover, 2);
+    $formatted_turnover = function_exists('wc_price') ? wc_price($new_turnover) : 'AED ' . number_format($new_turnover, 2);
 
     ob_start();
     ?>
@@ -300,9 +301,9 @@ function cmp_render_super_admin_portal() {
                 <div class="sa-kpi-subtitle">Subscribers from this period who didn't renew</div>
             </div>
             <div class="sa-kpi-card dark">
-                <div class="sa-kpi-title">Active Financial Turnover</div>
+                <div class="sa-kpi-title">New Financial Turnover</div>
                 <div class="sa-kpi-value" style="font-size: 2.2em; color: #10b981; margin-top: 5px;"><?php echo $formatted_turnover; ?></div>
-                <div class="sa-kpi-subtitle">Gross value of active plans from this period</div>
+                <div class="sa-kpi-subtitle">Gross value of all plans acquired in this period</div>
             </div>
         </div>
 
