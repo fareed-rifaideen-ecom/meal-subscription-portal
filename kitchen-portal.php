@@ -462,7 +462,7 @@ function cmp_render_kitchen_portal() {
         .k-table td { padding: 10px 8px; border-bottom: 1px solid #ddd; vertical-align: middle; }
         
         /* INCREASED CHECKBOX SIZE */
-        .chk-large { transform: scale(2.0); cursor: pointer; margin: 10px; }
+        .chk-large { transform: scale(3.0); cursor: pointer; margin: 10px; }
         
         .k-customer-meta { margin: 2px 0; color: #555; display: flex; align-items: center; gap: 5px; }
         .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; }
