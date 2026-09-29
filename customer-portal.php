@@ -1204,11 +1204,3 @@ function cmp_export_customer_csv() {
     fclose($output); exit;
 }
 ?>
-
-Instead of  "Please log in to manage your plan." below Dashboard Login header.
-I want to add a text:
-
-"The Daily menu is unlocked at 3.00pm GST.
-Please choose your meals 24hrs in advance."
-
-Make "3.00pm GST." bold.
