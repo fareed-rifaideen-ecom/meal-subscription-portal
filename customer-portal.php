@@ -210,8 +210,15 @@ function cmp_render_customer_portal() {
         }
     }
 
+    // --- NEW FALLBACK FOR NO ACTIVE PLANS ---
     if ( empty($subs) ) {
-        return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;"><h3 style="color:#0073aa;">No Active Plans Found</h3><p style="color:#666;">It looks like your plans have expired or been completed.</p><br><a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold;">Log Out</a></div>';
+        return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;">
+                    <h3 style="color:#0073aa; margin-bottom: 10px;">No Active Plans Found</h3>
+                    <p style="color:#666; margin-bottom: 25px;">It looks like your plans have expired or been completed.</p>
+                    <a href="' . site_url('/meal-plans/') . '" style="background:#0073aa; color:#fff; text-decoration:none; padding:12px 25px; border-radius:4px; font-weight:bold; display:inline-block; margin-bottom:15px; transition: background 0.2s;">Subscribe to a New Meal Plan</a>
+                    <br>
+                    <a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold; text-decoration:none;">Log Out</a>
+                </div>';
     }
 
     if (($is_admin_override || $is_chef_override) && !empty($subs)) {
@@ -1197,3 +1204,11 @@ function cmp_export_customer_csv() {
     fclose($output); exit;
 }
 ?>
+
+Instead of  "Please log in to manage your plan." below Dashboard Login header.
+I want to add a text:
+
+"The Daily menu is unlocked at 3.00pm GST.
+Please choose your meals 24hrs in advance."
+
+Make "3.00pm GST." bold.
