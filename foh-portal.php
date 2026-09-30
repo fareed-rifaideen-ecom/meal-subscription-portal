@@ -41,6 +41,80 @@ function cmp_ajax_foh_save_remark() {
     wp_send_json_success();
 }
 
+// 4. AJAX HANDLER: Export CSV
+add_action('wp_ajax_cmp_foh_export_csv', 'cmp_foh_export_csv');
+function cmp_foh_export_csv() {
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { 
+        wp_die('Access Denied'); 
+    }
+
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $today = date('Y-m-d H:i:s');
+
+    // Fetch all active/paused/inactive subscriptions
+    $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="FOH_Subscriptions_Export_' . date('Y-m-d') . '.csv"');
+    $output = fopen('php://output', 'w');
+    
+    // Add BOM to fix UTF-8 in Excel
+    fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
+
+    // Write CSV Headers
+    fputcsv($output, array('Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Details', 'Status', 'Filled Days', 'Used Days', 'Balance Days', 'FOH Remarks'));
+
+    foreach ($all_subs as $sub) {
+        $order = wc_get_order($sub->wc_order_id);
+        
+        // Build Customer Name
+        $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
+        $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+        $fallback_name = trim($fname . ' ' . $lname);
+        if (empty($fallback_name)) $fallback_name = $sub->display_name;
+        
+        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+        if (empty(trim($full_name))) { $full_name = $fallback_name; }
+
+        // Build Phone Number
+        $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
+
+        // Calculate Usage Metrics
+        $filled_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result NOT IN ('Cancelled', 'Returned')", $sub->id));
+        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $balance = max(0, $sub->total_days - $usage_days);
+
+        // Determine Status Label
+        $status_label = 'Active';
+        if ($sub->status === 'paused') {
+            $status_label = 'Paused';
+        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
+            $status_label = 'Inactive/Expired';
+        }
+
+        // Clean Remarks for CSV
+        $remarks = !empty($sub->foh_remarks) ? wp_strip_all_tags($sub->foh_remarks) : '';
+
+        fputcsv($output, array(
+            ($sub->wc_order_id > 0) ? '#' . $sub->wc_order_id : 'Manual',
+            $full_name,
+            $sub->user_email,
+            $phone,
+            $sub->plan_name,
+            $status_label,
+            $filled_days,
+            $usage_days,
+            $balance,
+            $remarks
+        ));
+    }
+    
+    fclose($output); 
+    exit;
+}
+
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
 
@@ -121,6 +195,7 @@ function cmp_render_foh_portal() {
                 <p style="margin: 5px 0 0 0; color: #ccc;">Manage Customer Subscriptions.</p>
             </div>
             <div style="display: flex; gap: 10px;">
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_foh_export_csv')); ?>" style="background: #10b981; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; transition: background 0.2s;">Export CSV</a>
                 <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #2271b1; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold;">View Live Kitchen Report</a>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
