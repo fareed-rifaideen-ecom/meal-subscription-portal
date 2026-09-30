@@ -29,6 +29,17 @@ function cmp_ajax_foh_toggle_status() {
     wp_send_json_success();
 }
 
+// 3. AJAX HANDLER: Save FOH Remarks
+add_action('wp_ajax_cmp_foh_save_remark', 'cmp_ajax_foh_save_remark');
+function cmp_ajax_foh_save_remark() {
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $remark = sanitize_textarea_field($_POST['remark']);
+    $wpdb->update($table_subs, array('foh_remarks' => $remark), array('id' => intval($_POST['sub_id'])));
+    wp_send_json_success();
+}
 
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
@@ -56,6 +67,12 @@ function cmp_render_foh_portal() {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    // --- AUTO-PATCH: Ensure foh_remarks column exists ---
+    $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'foh_remarks'");
+    if (empty($col_check)) { 
+        $wpdb->query("ALTER TABLE {$table_subs} ADD foh_remarks TEXT NULL AFTER status"); 
+    }
 
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
     $unique_plans = $wpdb->get_col("SELECT DISTINCT plan_name FROM $table_subs WHERE status != 'pending' ORDER BY plan_name ASC");
@@ -91,6 +108,9 @@ function cmp_render_foh_portal() {
         .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.95em; }
         .sub-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
         .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+        .remark-edit-box { transition: all 0.3s ease; overflow: hidden; }
+        .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
+        .metric-progress-fill { background-color: #16a34a; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
     </style>
 
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
@@ -132,12 +152,13 @@ function cmp_render_foh_portal() {
                 <table class="sub-table">
                     <thead>
                         <tr>
-                            <th>Order ID</th>
-                            <th>Customer Info</th>
-                            <th>Plan Details</th>
-                            <th style="text-align: center;">Tracking Metrics</th>
-                            <th>Expiry Management</th>
-                            <th style="text-align: center;">Actions</th>
+                            <!-- ADJUSTED WIDTHS FOR OPTIMAL FIT -->
+                            <th style="width: 8%;">Order ID</th>
+                            <th style="width: 22%;">Customer Info</th>
+                            <th style="width: 22%;">Plan Details</th>
+                            <th style="width: 18%; text-align: center;">Tracking Metrics</th>
+                            <th style="width: 13%;">Expiry Management</th>
+                            <th style="width: 17%; text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -146,7 +167,6 @@ function cmp_render_foh_portal() {
                         <?php else: foreach($tabs[$tab_key] as $sub): 
                             $order = wc_get_order($sub->wc_order_id);
                             
-                            // --- FIX 6: Bulletproof FOH Portal Name Fetching ---
                             $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
                             $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
                             $fallback_name = trim($fname . ' ' . $lname);
@@ -160,6 +180,31 @@ function cmp_render_foh_portal() {
                             
                             $search_data = esc_attr(strtolower($full_name . ' ' . $sub->user_email . ' ' . $phone));
                             $plan_data = esc_attr($sub->plan_name);
+
+                            // PRICE AND DISCOUNT LOGIC
+                            $price_display = 'N/A';
+                            if ($order) {
+                                $total = (float) $order->get_total();
+                                $discount = (float) $order->get_discount_total();
+                                $currency = get_woocommerce_currency_symbol($order->get_currency());
+                                
+                                if ($discount > 0) {
+                                    $original_price = $total + $discount;
+                                    $discount_percentage = round(($discount / $original_price) * 100);
+                                    
+                                    $price_display = $currency . number_format($total, 2) . ' <span style="color:#d63638; font-weight:bold; font-size:0.9em;">(-' . $discount_percentage . '%)</span>';
+                                } else {
+                                    $price_display = $currency . number_format($total, 2);
+                                }
+                            }
+
+                            // REMARKS PREVIEW LOGIC
+                            $remark_text = !empty($sub->foh_remarks) ? $sub->foh_remarks : '';
+                            $short_remark = mb_strimwidth($remark_text, 0, 32, '...');
+                            $preview_html = empty($remark_text) ? '<span style="color:#94a3b8; font-style:italic; font-weight:normal;">No remarks</span>' : esc_html($short_remark);
+                            
+                            // PROGRESS BAR CALCULATION
+                            $usage_percent = ($sub->total_days > 0) ? round(($sub->usage / $sub->total_days) * 100) : 0;
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
@@ -176,35 +221,60 @@ function cmp_render_foh_portal() {
                                 </span>
                             </td>
                             <td>
-                                <strong><?php echo esc_html($sub->plan_name); ?></strong><br>
-                                <span style="color: #666;">Total Days: <?php echo $sub->total_days; ?></span>
+                                <strong style="color: #222;"><?php echo esc_html($sub->plan_name); ?></strong><br>
+                                <!-- Total Days removed as per request to de-clutter -->
+                                <span style="color: #2271b1; font-weight:bold; margin-top:3px; display:inline-block;">Price: <?php echo $price_display; ?></span>
+                                
+                                <!-- FOH Remarks Inline Toggle -->
+                                <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
+                                        <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#0073aa; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
+                                    </div>
+                                    <div id="remark-box-<?php echo $sub->id; ?>" class="remark-edit-box" style="display:none; margin-top:8px;">
+                                        <textarea id="remark-text-<?php echo $sub->id; ?>" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:0.9em; min-height:60px; box-sizing:border-box;" placeholder="Add specific delivery or kitchen notes here..."><?php echo esc_textarea($remark_text); ?></textarea>
+                                        <button class="save-remark-btn" data-sub-id="<?php echo $sub->id; ?>" style="margin-top:4px; background:#46b450; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Note</button>
+                                    </div>
+                                </div>
                             </td>
                             <td style="text-align: center;">
-                                <div style="background: #f1f1f1; padding: 10px; border-radius: 4px; display: inline-block; text-align: left; width: 100%; box-sizing: border-box;">
-                                    <span style="color: #555;">Filled Days: <strong><?php echo $sub->filled; ?> / <?php echo $sub->total_days; ?></strong></span><br>
-                                    <span style="color: #46b450;">Usage (Delivered): <strong><?php echo $sub->usage; ?></strong></span><br>
-                                    <span style="color: #0073aa; font-size: 1.1em; display: block; border-top: 1px solid #ddd; margin-top: 5px; padding-top: 5px;">Balance Days: <strong><?php echo $sub->balance; ?></strong></span>
+                                <!-- NEW VISUAL PROGRESS BAR & CONDENSED METRICS -->
+                                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; text-align: left; width: 100%; box-sizing: border-box;">
+                                    <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
+                                        <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
+                                        <span style="color: #16a34a;">Used: <strong><?php echo $sub->usage; ?></strong></span>
+                                    </div>
+                                    
+                                    <div class="metric-progress-bar">
+                                        <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
+                                    </div>
+                                    
+                                    <div style="color: #0369a1; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
+                                        Balance: <?php echo $sub->balance; ?> Days
+                                    </div>
                                 </div>
                             </td>
                             <td>
                                 <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
-                                <form class="ajax-expiry-form" style="display: flex; gap: 5px; margin-top: 5px;">
+                                <form class="ajax-expiry-form" style="display: flex; flex-direction: column; gap: 5px; margin-top: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
-                                    <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
-                                    <button type="submit" class="expiry-btn" style="background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
+                                    <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                                    <button type="submit" class="expiry-btn" style="width: 100%; background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
                                 </form>
                             </td>
-                            <td style="text-align: center;">
-                                <?php if($tab_key !== 'inactive'): ?>
-                                <form class="ajax-status-form" style="margin-bottom: 5px;">
-                                    <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
-                                    <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                    <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;">
-                                        <?php echo $is_paused ? 'Resume Plan' : 'Pause Plan'; ?>
-                                    </button>
-                                </form>
-                                <?php endif; ?>
-                                <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="display: block; background: #46b450; color: white; text-decoration: none; padding: 8px; border-radius: 4px; font-weight: bold; box-sizing: border-box;">Edit / View Customer Portal</a>
+                            <td style="text-align: center; vertical-align: middle;">
+                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                    <?php if($tab_key !== 'inactive'): ?>
+                                    <form class="ajax-status-form" style="margin: 0;">
+                                        <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
+                                        <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
+                                        <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;">
+                                            <?php echo $is_paused ? 'Resume Plan' : 'Pause Plan'; ?>
+                                        </button>
+                                    </form>
+                                    <?php endif; ?>
+                                    <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="display: block; background: #46b450; color: white; text-decoration: none; padding: 8px; border-radius: 4px; font-weight: bold; box-sizing: border-box;">Edit / View Portal</a>
+                                </div>
                             </td>
                         </tr>
                         <?php endforeach; endif; ?>
@@ -224,6 +294,7 @@ function cmp_render_foh_portal() {
 
     document.addEventListener("DOMContentLoaded", function() {
         
+        // Expiry Form
         document.querySelectorAll('.ajax-expiry-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -266,6 +337,7 @@ function cmp_render_foh_portal() {
             });
         });
 
+        // Status Form
         document.querySelectorAll('.ajax-status-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -310,6 +382,76 @@ function cmp_render_foh_portal() {
             });
         });
 
+        // Remarks Toggle Logic
+        document.querySelectorAll('.toggle-remark-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const targetId = this.getAttribute('data-target');
+                const box = document.getElementById(targetId);
+                if (box.style.display === 'none') {
+                    box.style.display = 'block';
+                    this.innerText = 'Close';
+                } else {
+                    box.style.display = 'none';
+                    this.innerText = 'Edit';
+                }
+            });
+        });
+
+        // Remarks Saving Logic
+        document.querySelectorAll('.save-remark-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const subId = this.getAttribute('data-sub-id');
+                const textVal = document.getElementById('remark-text-' + subId).value;
+                const originalText = this.innerText;
+                
+                this.innerText = 'Saving...';
+                this.disabled = true;
+
+                const formData = new URLSearchParams();
+                formData.append('action', 'cmp_foh_save_remark');
+                formData.append('nonce', fohNonce);
+                formData.append('sub_id', subId);
+                formData.append('remark', textVal);
+
+                fetch(fohAjaxUrl, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(response => {
+                    if (response.success) {
+                        this.innerText = '✓ Saved';
+                        this.style.background = '#0f766e';
+                        
+                        // Update preview instantly
+                        let displayTxt = textVal.trim();
+                        let newPreview = displayTxt.length > 0 
+                            ? (displayTxt.length > 32 ? displayTxt.substring(0, 32).replace(/</g, "&lt;").replace(/>/g, "&gt;") + '...' : displayTxt.replace(/</g, "&lt;").replace(/>/g, "&gt;")) 
+                            : '<span style="color:#94a3b8; font-style:italic; font-weight:normal;">No remarks</span>';
+                        
+                        document.getElementById('remark-preview-' + subId).innerHTML = newPreview;
+
+                        setTimeout(() => {
+                            this.innerText = 'Save Note';
+                            this.style.background = '#46b450';
+                            this.disabled = false;
+                            
+                            // Auto-close the inline editor
+                            document.getElementById('remark-box-' + subId).style.display = 'none';
+                            document.querySelector('.toggle-remark-btn[data-target="remark-box-' + subId + '"]').innerText = 'Edit';
+                        }, 1000);
+                    } else {
+                        alert('Error saving note.');
+                        this.innerText = originalText;
+                        this.disabled = false;
+                    }
+                }).catch(() => {
+                    this.innerText = originalText;
+                    this.disabled = false;
+                });
+            });
+        });
+
+        // Filters
         document.getElementById('fohSearch').addEventListener('keyup', function() {
             currentPage = 1;
             renderTable();

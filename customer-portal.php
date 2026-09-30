@@ -210,8 +210,15 @@ function cmp_render_customer_portal() {
         }
     }
 
+    // --- NEW FALLBACK FOR NO ACTIVE PLANS ---
     if ( empty($subs) ) {
-        return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;"><h3 style="color:#0073aa;">No Active Plans Found</h3><p style="color:#666;">It looks like your plans have expired or been completed.</p><br><a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold;">Log Out</a></div>';
+        return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;">
+                    <h3 style="color:#0073aa; margin-bottom: 10px;">No Active Plans Found</h3>
+                    <p style="color:#666; margin-bottom: 25px;">It looks like your plans have expired or been completed.</p>
+                    <a href="' . site_url('/') . '" style="background:#0073aa; color:#fff; text-decoration:none; padding:12px 25px; border-radius:4px; font-weight:bold; display:inline-block; margin-bottom:15px; transition: background 0.2s;">Subscribe to a New Meal Plan</a>
+                    <br>
+                    <a href="'.wp_logout_url(get_permalink()).'" style="color:#dc3232; font-weight:bold; text-decoration:none;">Log Out</a>
+                </div>';
     }
 
     if (($is_admin_override || $is_chef_override) && !empty($subs)) {
@@ -591,8 +598,6 @@ function cmp_render_customer_portal() {
                                     $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
                                 } elseif (in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
                                     $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
-                                } elseif ($log->dispatch_status == 1) {
-                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Out for Delivery</span>';
                                 } elseif ($log_id > 0) {
                                     $status_badge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                                 }
@@ -1165,7 +1170,6 @@ function cmp_export_customer_csv() {
         $status = 'Pending';
         if ($log->delivery_result === 'Successful') { $status = 'Successful'; }
         elseif (in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
-        elseif ($log->dispatch_status == 1) { $status = 'Out for Delivery'; }
         elseif ($log->id > 0) { $status = 'Confirmed'; }
 
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
