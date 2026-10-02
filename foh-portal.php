@@ -122,7 +122,7 @@ function cmp_ajax_foh_toggle_deposit() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
     
     $user_id = intval($_POST['user_id']);
-    $new_status = sanitize_text_field($_POST['new_status']); // Accepts 'yes' or 'no'
+    $new_status = sanitize_text_field($_POST['new_status']); // Accepts 'yes', 'no', 'own_bag'
     
     update_user_meta($user_id, '_cmp_deposit_held', $new_status);
     wp_send_json_success();
@@ -298,7 +298,10 @@ function cmp_render_foh_portal() {
                             // DEPOSIT WALLET STATUS
                             $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
                             if ($deposit_held === '') { $deposit_held = 'yes'; } // Grandfathered logic
-                            $is_deposit_held = ($deposit_held === 'yes');
+                            
+                            $status_color = '#dc2626'; $status_bg = '#fee2e2'; $status_text = 'Refunded / No Deposit (Charge AED 150)';
+                            if ($deposit_held === 'yes') { $status_color = '#10b981'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held (Waived)'; }
+                            if ($deposit_held === 'own_bag') { $status_color = '#8b5cf6'; $status_bg = '#ede9fe'; $status_text = "Customer's Own Bag (Waived)"; }
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
@@ -369,15 +372,20 @@ function cmp_render_foh_portal() {
                                     <?php endif; ?>
                                     <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="display: block; background: #46b450; color: white; text-decoration: none; padding: 8px; border-radius: 4px; font-weight: bold; box-sizing: border-box;">Edit / View Portal</a>
                                     
-                                    <!-- NEW: DEPOSIT WALLET TOGGLE -->
-                                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cbd5e1;">
-                                        <form class="ajax-deposit-form" style="margin: 0;">
+                                    <!-- NEW: DEPOSIT WALLET TOGGLE DROPDOWN -->
+                                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cbd5e1; text-align: left;">
+                                        <div style="margin-bottom: 5px;">
+                                            <span style="font-weight: bold; color: #334155; font-size: 0.85em;">Bag Status: </span>
+                                            <span class="deposit-status-pill" style="color: <?php echo $status_color; ?>; font-weight: bold; background: <?php echo $status_bg; ?>; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; display: inline-block; text-align: center;"><?php echo $status_text; ?></span>
+                                        </div>
+                                        <form class="ajax-deposit-form" style="margin: 0; display: flex; gap: 5px; flex-wrap: wrap;">
                                             <input type="hidden" name="user_id" value="<?php echo $sub->user_id; ?>">
-                                            <input type="hidden" name="new_deposit_status" value="<?php echo $is_deposit_held ? 'no' : 'yes'; ?>">
-                                            <button type="submit" class="deposit-btn" style="width: 100%; background: <?php echo $is_deposit_held ? '#10b981' : '#f59e0b'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: background 0.2s; box-sizing: border-box;">
-                                                <?php echo $is_deposit_held ? 'Bag Deposit: Held' : 'Deposit: Refunded'; ?>
-                                            </button>
-                                            <div style="font-size: 0.75em; color: #64748b; margin-top: 4px; text-align: center; line-height: 1.2;">Click to toggle refund status</div>
+                                            <select name="new_deposit_status" style="padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85em; flex: 1;">
+                                                <option value="yes" <?php selected($deposit_held, 'yes'); ?>>Deposit Held</option>
+                                                <option value="own_bag" <?php selected($deposit_held, 'own_bag'); ?>>Own Bag</option>
+                                                <option value="no" <?php selected($deposit_held, 'no'); ?>>Refunded</option>
+                                            </select>
+                                            <button type="submit" class="deposit-btn" style="background: #334155; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: 0.2s;">Update</button>
                                         </form>
                                     </div>
 
@@ -489,19 +497,21 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Deposit Toggle Form
+        // Deposit Toggle Form (Dropdown)
         document.querySelectorAll('.ajax-deposit-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
                 const btn = this.querySelector('.deposit-btn');
                 const userId = this.querySelector('input[name="user_id"]').value;
-                const statusInput = this.querySelector('input[name="new_deposit_status"]');
+                const statusInput = this.querySelector('select[name="new_deposit_status"]');
                 const newStatus = statusInput.value;
+                const pill = this.parentElement.querySelector('.deposit-status-pill');
 
                 btn.disabled = true;
                 btn.style.opacity = '0.7';
                 let originalText = btn.innerText;
-                btn.innerText = 'Updating...';
+                let originalBg = btn.style.background;
+                btn.innerText = '...';
 
                 const formData = new URLSearchParams();
                 formData.append('action', 'cmp_foh_toggle_deposit');
@@ -514,25 +524,47 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'yes') {
-                            btn.innerText = 'Bag Deposit: Held';
-                            btn.style.background = '#10b981';
-                            statusInput.value = 'no';
+                            pill.innerText = 'Bag Deposit Held (Waived)';
+                            pill.style.background = '#dcfce7'; pill.style.color = '#10b981';
+                        } else if (newStatus === 'own_bag') {
+                            pill.innerText = "Customer's Own Bag (Waived)";
+                            pill.style.background = '#ede9fe'; pill.style.color = '#8b5cf6';
                         } else {
-                            btn.innerText = 'Deposit: Refunded';
-                            btn.style.background = '#f59e0b';
-                            statusInput.value = 'yes';
+                            pill.innerText = 'Refunded / No Deposit (Charge AED 150)';
+                            pill.style.background = '#fee2e2'; pill.style.color = '#dc2626';
                         }
-                        btn.style.opacity = '1';
-                        btn.disabled = false;
+                        
+                        btn.innerText = '✓';
+                        btn.style.background = '#10b981';
+                        
+                        // Sync across multiple rows for the same user if they exist
+                        document.querySelectorAll('.ajax-deposit-form').forEach(otherForm => {
+                            if (otherForm.querySelector('input[name="user_id"]').value === userId) {
+                                otherForm.querySelector('select[name="new_deposit_status"]').value = newStatus;
+                                let otherPill = otherForm.parentElement.querySelector('.deposit-status-pill');
+                                otherPill.innerText = pill.innerText;
+                                otherPill.style.background = pill.style.background;
+                                otherPill.style.color = pill.style.color;
+                            }
+                        });
+
+                        setTimeout(() => {
+                            btn.innerText = originalText;
+                            btn.style.background = originalBg;
+                            btn.style.opacity = '1';
+                            btn.disabled = false;
+                        }, 1000);
                     } else {
                         alert('Error updating deposit status.');
                         btn.innerText = originalText;
+                        btn.style.background = originalBg;
                         btn.style.opacity = '1';
                         btn.disabled = false;
                     }
                 }).catch(() => {
                     alert('Connection error.');
                     btn.innerText = originalText;
+                    btn.style.background = originalBg;
                     btn.style.opacity = '1';
                     btn.disabled = false;
                 });
