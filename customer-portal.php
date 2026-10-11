@@ -157,6 +157,39 @@ function cmp_ajax_save_daily_log() {
     wp_send_json_success($response_data);
 }
 
+// 1.5 AJAX HANDLER: FOH INLINE LOGISTICS EDITING
+add_action('wp_ajax_cmp_foh_update_customer_logistics', 'cmp_ajax_foh_update_customer_logistics');
+function cmp_ajax_foh_update_customer_logistics() {
+    check_ajax_referer('cmp_portal_nonce', 'nonce');
+    
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied');
+    }
+
+    $user_id = intval($_POST['user_id']);
+    $order_id = intval($_POST['order_id']);
+    $timing = sanitize_text_field($_POST['delivery_timing']);
+    $allergies = sanitize_textarea_field($_POST['allergies']);
+
+    if ($user_id > 0) {
+        update_user_meta($user_id, 'delivery_timing', $timing);
+        update_user_meta($user_id, 'allergies', $allergies);
+    }
+
+    if ($order_id > 0) {
+        $order = wc_get_order($order_id);
+        if ($order) {
+            $order->update_meta_data('delivery_timing', $timing);
+            $order->update_meta_data('_cmp_delivery_timing', $timing);
+            $order->update_meta_data('allergies', $allergies);
+            $order->set_customer_note($allergies);
+            $order->save();
+        }
+    }
+
+    wp_send_json_success(array('timing' => $timing, 'allergies' => $allergies ?: 'No Allergies Recorded'));
+}
+
 // ==========================================
 // 2. DASHBOARD RENDERER
 // ==========================================
@@ -493,26 +526,51 @@ function cmp_render_customer_portal() {
             <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:25px; margin-bottom:20px; box-shadow:0 2px 4px rgba(0,0,0,0.02); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
                 <div style="flex:1; min-width:250px;">
                     <h3 style="margin:0 0 10px 0; color:#0073aa; font-size:1.3em;">Account Details</h3>
-                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> #<?php echo esc_html($sub->wc_order_id); ?></p>
+                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <?php echo esc_html($display_name); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
                     <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
                     <p style="margin:0; color:#334155;"><strong>Address:</strong> <?php echo esc_html($address); ?></p>
                 </div>
                 
-                <div style="flex:1; min-width:250px; background:#f8fafc; padding:15px; border-radius:6px; border:1px solid #f1f5f9;">
-                    <h3 style="margin:0 0 12px 0; color:#0f172a; font-size:1.1em;">Active Logistics</h3>
-                    <p style="margin:0 0 8px 0; color:#475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
-                    <p style="margin:0 0 8px 0; color:#475569;"><strong>Receive By:</strong> <?php echo esc_html($timing_display); ?></p>
-                    <p style="margin:0 0 8px 0; color:#475569;"><strong>Time Slot:</strong> <?php echo esc_html($time_slot_display); ?></p>
-                    <div style="margin-top:15px; padding-top:15px; border-top:1px dashed #cbd5e1;">
-                        <p style="margin:0; color:#b45309;"><strong>Allergies:</strong> <?php echo !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded'; ?></p>
+                <div style="flex:1; min-width:250px; background:#f8fafc; padding:15px; border-radius:6px; border:1px solid #f1f5f9; position:relative;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; color:#0f172a; font-size:1.1em;">Active Logistics</h3>
+                        <?php if ($is_admin_override): ?>
+                            <button class="toggle-logistics-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
+                        <?php endif; ?>
                     </div>
+                    
+                    <div id="logistics-view-<?php echo $sub->id; ?>">
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Receive By:</strong> <span id="timing-val-<?php echo $sub->id; ?>"><?php echo esc_html($timing_display); ?></span></p>
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Time Slot:</strong> <?php echo esc_html($time_slot_display); ?></p>
+                        <div style="margin-top:15px; padding-top:15px; border-top:1px dashed #cbd5e1;">
+                            <p style="margin:0; color:#b45309;"><strong>Allergies:</strong> <span id="allergies-val-<?php echo $sub->id; ?>"><?php echo !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded'; ?></span></p>
+                        </div>
+                    </div>
+
+                    <?php if ($is_admin_override): ?>
+                    <div id="logistics-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
+                        <div style="margin-bottom:8px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Receive By:</label>
+                            <select id="edit-timing-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                                <option value="Deliver Day Before" <?php selected($timing, 'Deliver Day Before'); ?>>Deliver Day Before</option>
+                                <option value="Deliver Same Day" <?php selected($timing, 'Deliver Same Day'); ?>>Deliver Same Day</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Allergies:</label>
+                            <textarea id="edit-allergies-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;"><?php echo esc_textarea($allergies); ?></textarea>
+                        </div>
+                        <button class="save-logistics-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Changes</button>
+                    </div>
+                    <?php endif; ?>
+
                 </div>
 
-                <div style="width: 100%; border-top: 1px solid #eee; margin-top: 10px; padding-top: 20px; display: flex; justify-content: space-between; align-items: center;">
-                    <p style="color: <?php echo $note_color; ?>; font-size: 0.9em; font-weight: bold; margin: 0;"><em><?php echo $note_text; ?></em></p>
-                    <a href="<?php echo $order ? $order->get_view_order_url() : '#'; ?>" target="_blank" style="background:#e2e8f0; color:#334155; padding:8px 15px; border-radius:4px; font-weight:bold; text-decoration:none; font-size:0.9em;">Download Receipt</a>
+                <div style="width: 100%; border-top: 1px solid #eee; margin-top: 10px; padding-top: 20px;">
+                    <p style="color: <?php echo $note_color; ?>; font-size: 0.9em; font-weight: bold; margin: 0; text-align:center;"><em><?php echo $note_text; ?></em></p>
                 </div>
             </div>
 
@@ -731,6 +789,65 @@ function cmp_render_customer_portal() {
         var isAdminOrChef = (isAdminOverride || isChefOverride);
         var chefsChoiceLabel = "<?php echo esc_js($label_chefs_choice); ?>";
         var blackoutDates = <?php echo json_encode($blackout_dates_array); ?>;
+
+        // FOH INLINE LOGISTICS EDIT LOGIC
+        $('.toggle-logistics-edit').on('click', function(e) {
+            e.preventDefault();
+            var subId = $(this).data('sub-id');
+            var viewDiv = $('#logistics-view-' + subId);
+            var editDiv = $('#logistics-edit-' + subId);
+            
+            if (editDiv.is(':visible')) {
+                editDiv.hide();
+                viewDiv.show();
+                $(this).text('Edit');
+            } else {
+                viewDiv.hide();
+                editDiv.show();
+                $(this).text('Cancel');
+            }
+        });
+
+        $('.save-logistics-btn').on('click', function(e) {
+            e.preventDefault();
+            var btn = $(this);
+            var subId = btn.data('sub-id');
+            var userId = btn.data('user-id');
+            var orderId = btn.data('order-id');
+            var timing = $('#edit-timing-' + subId).val();
+            var allergies = $('#edit-allergies-' + subId).val();
+            var origText = btn.text();
+
+            btn.text('Saving...').prop('disabled', true);
+
+            var data = {
+                action: 'cmp_foh_update_customer_logistics',
+                nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
+                user_id: userId,
+                order_id: orderId,
+                delivery_timing: timing,
+                allergies: allergies
+            };
+
+            $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(res) {
+                if (res.success) {
+                    $('#timing-val-' + subId).text(res.data.timing);
+                    $('#allergies-val-' + subId).text(res.data.allergies);
+                    
+                    btn.text('✓ Saved').css('background', '#0f766e');
+                    
+                    setTimeout(function() {
+                        $('#logistics-edit-' + subId).hide();
+                        $('#logistics-view-' + subId).show();
+                        $('.toggle-logistics-edit[data-sub-id="' + subId + '"]').text('Edit');
+                        btn.text(origText).css('background', '#46b450').prop('disabled', false);
+                    }, 1000);
+                } else {
+                    alert('Error: ' + res.data);
+                    btn.text(origText).prop('disabled', false);
+                }
+            });
+        });
 
         function populateDynamicDropdowns(rowElement) {
             var dateVal = rowElement.find('.cmp-date-picker').val();
