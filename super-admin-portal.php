@@ -75,9 +75,10 @@ function cmp_render_super_admin_portal() {
 
 
     // --- TIER 2: SUBSCRIPTION HEALTH & TRUE CHURN ---
-    // Filters Subscriptions created within the selected date range
+    // Extract plan_price and discount_amount natively to massively speed up financial turnover calculation
     $all_subs = $wpdb->get_results($wpdb->prepare(
-        "SELECT id, user_id, wc_order_id, total_days, start_date, expiry_date, status FROM $table_subs WHERE status != 'pending' AND DATE(start_date) >= %s AND DATE(start_date) <= %s", 
+        "SELECT id, user_id, wc_order_id, total_days, start_date, expiry_date, status, plan_price, discount_amount 
+         FROM $table_subs WHERE status != 'pending' AND DATE(start_date) >= %s AND DATE(start_date) <= %s", 
         $sub_start, $sub_end
     ));
     
@@ -93,14 +94,22 @@ function cmp_render_super_admin_portal() {
             $user_status[$uid] = array('has_active' => false, 'has_completed' => false);
         }
 
-        // NEW LOGIC: Calculate turnover for EVERY subscription created in this date range
-        if ($sub->wc_order_id > 0 && function_exists('wc_get_order')) {
+        // NEW LOGIC: Calculate Native Financial Turnover (Allows Manual & Online orders to blend perfectly)
+        $price      = isset($sub->plan_price) ? floatval($sub->plan_price) : 0;
+        $discount   = isset($sub->discount_amount) ? floatval($sub->discount_amount) : 0;
+        $final_paid = max(0, $price - $discount);
+        
+        // Legacy Fallback: If DB pricing is 0 but it has a valid Woo Order, pull from Woo
+        if ($final_paid == 0 && $sub->wc_order_id > 0 && function_exists('wc_get_order')) {
             $order = wc_get_order($sub->wc_order_id);
             if ($order) {
-                $new_turnover += floatval($order->get_total());
+                $final_paid = floatval($order->get_total());
             }
         }
         
+        $new_turnover += $final_paid;
+        
+        // Health calculations
         $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
         $is_completed = ($usage_days >= $sub->total_days || $sub->expiry_date < $today_time);
         
@@ -121,7 +130,6 @@ function cmp_render_super_admin_portal() {
             $true_churn_count++;
         }
     }
-
 
     // --- TIER 3: OPERATIONAL PULSE ---
     // Prep Dates target the *following* day's eating date
@@ -151,7 +159,6 @@ function cmp_render_super_admin_portal() {
             if ($menu_exists) { $pending_chef_count++; }
         }
     }
-
 
     // --- TIER 4: DELIVERY ANALYTICS ---
     $successful_deliveries = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE delivery_result = 'Successful' AND pos_updated = 1 AND target_date >= %s AND target_date <= %s", $log_start, $log_end));
@@ -230,7 +237,7 @@ function cmp_render_super_admin_portal() {
         <div class="sa-quick-launch">
             <a href="<?php echo site_url('/foh-admin-portal/'); ?>" target="_blank" class="sa-launch-btn" style="background: #0ea5e9;">FOH Command Center ⇗</a>
             <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" class="sa-launch-btn" style="background: #dc2626;">Kitchen Report ⇗</a>
-            <a href="https://mealplan.thecyclebistro.com/menu-manager-portal/" target="_blank" class="sa-launch-btn" style="background: #10b981;">Menu Manager ⇗</a>
+            <a href="<?php echo site_url('/menu-manager-portal/'); ?>" target="_blank" class="sa-launch-btn" style="background: #10b981;">Menu Manager ⇗</a>
             <a href="<?php echo site_url('/admin-tools/'); ?>" target="_blank" class="sa-launch-btn" style="background: #f59e0b;">Admin Tools ⇗</a>
         </div>
 
