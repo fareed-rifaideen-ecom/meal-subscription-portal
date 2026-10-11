@@ -116,7 +116,7 @@ function cmp_export_kitchen_csv() {
     $target_date = date('Y-m-d', strtotime($prep_date . ' + 1 day'));
     
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.expiry_date, u.display_name, u.user_email 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.expiry_date, s.foh_remarks, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
@@ -166,9 +166,7 @@ function cmp_export_kitchen_csv() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        // --- NEW VISUAL CLEANUP ---
         $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
-
         $is_day_before = (stripos($timing, 'Day Before') !== false);
         $delivery_date = $is_day_before ? $prep_date : $log->target_date;
 
@@ -215,7 +213,6 @@ function cmp_export_kitchen_csv() {
         $delivery = $log->delivery_result ?: 'Pending';
         $pos_check = $log->pos_updated ? 'Yes' : 'No';
         
-        // Fulfillment Tracker
         $day_number = $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
              WHERE subscription_id = %d AND target_date <= %s 
@@ -223,9 +220,17 @@ function cmp_export_kitchen_csv() {
             $log->subscription_id, $log->target_date
         ));
         
+        // Recipient Extraction
         $plan_parts = explode(' - ', $log->plan_name);
-        $plan_string = $plan_parts[0] . " ({$day_number}/{$log->total_days})";
-        if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
+        $potential_recipient = end($plan_parts);
+        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+            array_pop($plan_parts);
+            $core_plan_name = implode(' - ', $plan_parts);
+        } else {
+            $core_plan_name = $log->plan_name;
+        }
+
+        $plan_string = $core_plan_name . " ({$day_number}/{$log->total_days})";
         
         $order_id_display = 'Manual';
         if ($log->wc_order_id < 0) { $order_id_display = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
@@ -417,6 +422,19 @@ function cmp_render_kitchen_portal() {
         $expiry_ymd = date('Y-m-d', strtotime($log->expiry_date));
         $is_expired = ($target_ymd > $expiry_ymd);
 
+        // Recipient Extraction
+        $plan_parts = explode(' - ', $log->plan_name);
+        $potential_recipient = end($plan_parts);
+        $recipient_badge = '';
+        
+        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
+            array_pop($plan_parts);
+            $core_plan_name = implode(' - ', $plan_parts);
+        } else {
+            $core_plan_name = $log->plan_name;
+        }
+
         $display_order_id = 'Manual';
         if ($log->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
         elseif ($log->wc_order_id > 0) { $display_order_id = '#' . $log->wc_order_id; }
@@ -433,6 +451,8 @@ function cmp_render_kitchen_portal() {
             'delivery_date' => $delivery_date, 
             'time_slot' => $time_slot, 
             'plan' => $log->plan_name,
+            'core_plan_name' => $core_plan_name,
+            'recipient_badge' => $recipient_badge,
             'total_days' => $log->total_days,
             'day_number' => $day_number,
             'allergies' => !empty($allergies) ? $allergies : 'No Allergies', 
@@ -576,21 +596,27 @@ function cmp_render_kitchen_portal() {
                             }
                             $search_name = esc_attr(strtolower($c['name']));
                             
-                            // Splitting Plan Name logically
+                            $plan_duration = $c['core_plan_name'];
                             $plan_parts = explode(' - ', $c['plan']);
-                            $plan_duration = $plan_parts[0];
                             $plan_meals = isset($plan_parts[1]) ? $plan_parts[1] : '';
+                            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', end($plan_parts))) {
+                                $plan_meals = count($plan_parts) > 2 ? $plan_parts[1] : '';
+                            }
                         ?>
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
-                                <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                <div>
+                                    <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                    <?php echo $c['recipient_badge']; ?>
+                                </div>
                                 
-                                <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; white-space:nowrap;">
-                                    Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
-                                </span>
-                                <br>
+                                <div style="margin-top:6px;">
+                                    <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; vertical-align: middle; white-space:nowrap;">
+                                        Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
+                                    </span>
+                                </div>
                                 
-                                <div style="margin-top:4px; font-size:0.95em; line-height:1.4;">
+                                <div style="margin-top:6px; font-size:0.95em; line-height:1.4;">
                                     <span class="k-customer-meta" style="color: #334155; font-weight: bold;">
                                         Order: <?php echo $c['order_id']; ?>
                                     </span>
