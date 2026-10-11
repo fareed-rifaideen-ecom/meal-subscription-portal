@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.6
+ * Version: 2.7
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -45,6 +45,8 @@ function cmp_activate_plugin() {
         plan_name varchar(255) NOT NULL,
         total_days int(11) NOT NULL,
         allowed_categories varchar(255) NOT NULL,
+        plan_price decimal(10,2) DEFAULT '0.00',
+        discount_amount decimal(10,2) DEFAULT '0.00',
         start_date datetime DEFAULT CURRENT_TIMESTAMP,
         expiry_date datetime NOT NULL,
         status varchar(50) DEFAULT 'active',
@@ -77,6 +79,22 @@ function cmp_activate_plugin() {
     dbDelta( $sql_logs );
 
     cmp_register_custom_roles();
+}
+
+// ==========================================
+// 1.5 AUTO-PATCHER (UPGRADES LIVE DATABASE SAFELY)
+// ==========================================
+add_action('admin_init', 'cmp_auto_patch_database');
+function cmp_auto_patch_database() {
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    
+    // Check if the new pricing columns exist. If not, inject them safely.
+    $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'plan_price'");
+    if (empty($col_check)) {
+        $wpdb->query("ALTER TABLE {$table_subs} ADD plan_price DECIMAL(10,2) DEFAULT '0.00' AFTER allowed_categories");
+        $wpdb->query("ALTER TABLE {$table_subs} ADD discount_amount DECIMAL(10,2) DEFAULT '0.00' AFTER plan_price");
+    }
 }
 
 // ==========================================

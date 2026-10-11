@@ -42,7 +42,6 @@ function cmp_export_accounts_main() {
         
         $is_completed = ($used >= $s->total_days || $s->expiry_date < current_time('mysql'));
         
-        // Determine internal status for filtering
         if ($is_completed) {
             $internal_status = 'completed';
             $derived_status = 'Completed/Expired';
@@ -54,13 +53,16 @@ function cmp_export_accounts_main() {
             $derived_status = 'Active';
         }
 
-        // Apply the Export Filter
         if ($status_filter !== 'all' && $status_filter !== $internal_status) {
             continue; 
         }
 
+        $display_order_id = 'Manual';
+        if ($s->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($s->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+        elseif ($s->wc_order_id > 0) { $display_order_id = '#' . $s->wc_order_id; }
+
         fputcsv($output, array(
-            $s->wc_order_id > 0 ? '#'.$s->wc_order_id : 'Manual',
+            $display_order_id,
             $name, $s->user_email, $phone, $s->plan_name, $derived_status,
             $s->total_days, $used, $balance, 
             date('Y-m-d', strtotime($s->start_date)), date('Y-m-d', strtotime($s->expiry_date))
@@ -90,13 +92,17 @@ function cmp_export_accounts_sub() {
     $foods = $wpdb->get_results("SELECT id, food_name FROM $table_foods");
     $fmap = array(); foreach($foods as $f) $fmap[$f->id] = $f->food_name;
 
+    $display_order_id = 'Manual';
+    if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+    elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; }
+
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="Customer_Record_' . str_replace(' ', '_', $name) . '.csv"');
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
     fputcsv($output, array('CUSTOMER RECORD'));
-    fputcsv($output, array('Name:', $name, 'Order:', $sub->wc_order_id > 0 ? '#'.$sub->wc_order_id : 'Manual'));
+    fputcsv($output, array('Name:', $name, 'Order:', $display_order_id));
     fputcsv($output, array('Plan:', $sub->plan_name));
     fputcsv($output, array(''));
     fputcsv($output, array('Date', 'Meals Scheduled', 'Delivery Status', 'POS Reconciled'));
@@ -122,6 +128,20 @@ function cmp_export_accounts_sub() {
     }
     fclose($output); exit;
 }
+
+// 1.5 AJAX HANDLER: ACCOUNTS DEPOSIT TOGGLE
+add_action('wp_ajax_cmp_acc_toggle_deposit', 'cmp_acc_toggle_deposit');
+function cmp_acc_toggle_deposit() {
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) { wp_send_json_error('Access Denied'); }
+    check_ajax_referer('cmp_acc_nonce', 'nonce');
+    
+    $user_id = intval($_POST['user_id']);
+    $new_status = sanitize_text_field($_POST['new_status']); 
+    
+    update_user_meta($user_id, '_cmp_deposit_held', $new_status);
+    wp_send_json_success();
+}
+
 
 // ==========================================
 // HELPER: PROCESS TIMING DATA
@@ -386,8 +406,26 @@ function cmp_render_accounts_dashboard() {
                     elseif ($balance <= 0 || $sub->expiry_date < current_time('mysql')) { $status_color = '#ef4444'; $status_label = 'COMPLETED'; }
                     else { $status_color = '#10b981'; $status_label = 'ACTIVE'; }
 
+                    $display_order_id = '<span style="color:#ef4444;">Manual</span>';
+                    if ($sub->wc_order_id < 0) {
+                        $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
+                    } elseif ($sub->wc_order_id > 0) {
+                        $display_order_id = '#' . esc_html($sub->wc_order_id);
+                    }
+
+                    // Deposit Logic for Pill
+                    global $wpdb;
+                    $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
+                    if ($deposit_held === '') {
+                        $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
+                        $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
+                    }
+                    $b_color = '#dc2626'; $b_bg = '#fee2e2'; $b_text = 'Refunded / No Deposit';
+                    if ($deposit_held === 'yes') { $b_color = '#10b981'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
+                    if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
+
                     echo "<tr>
-                        <td><strong style='color:#0f172a; font-size:1.1em;'>" . ($sub->wc_order_id > 0 ? '#'.esc_html($sub->wc_order_id) : '<span style="color:#ef4444;">Manual</span>') . "</strong></td>
+                        <td><strong style='color:#0f172a; font-size:1.1em;'>{$display_order_id}</strong></td>
                         <td>
                             <strong style='color:#0073aa;'>" . esc_html($name) . "</strong><br>
                             <span style='color:#64748b; font-size:0.9em;'>" . esc_html($sub->user_email) . "</span><br>
@@ -413,6 +451,16 @@ function cmp_render_accounts_dashboard() {
                         </td>
                         <td style='text-align:center;' class='cmp-no-print'>
                             <a href='" . add_query_arg('view_sub', $sub->id) . "' class='acc-btn'>View Record</a>
+                            <div class='deposit-pill-wrapper' data-user-id='{$sub->user_id}' style='margin-top:8px;'>
+                                <span class='deposit-status-pill' style='color:{$b_color}; font-weight:bold; background:{$b_bg}; padding:4px 8px; border-radius:12px; font-size:0.75em; display:inline-block; cursor:pointer; border:1px solid {$b_color}; transition:0.2s;' title='Click to Change Status'>
+                                    {$b_text} &#9662;
+                                </span>
+                                <select class='deposit-status-select' style='display:none; width:100%; padding:4px; font-size:0.8em; border-radius:4px; border:1px solid #cbd5e1; margin-top:4px;'>
+                                    <option value='yes' ".selected($deposit_held, 'yes', false).">Held (Waived)</option>
+                                    <option value='own_bag' ".selected($deposit_held, 'own_bag', false).">Own Bag (Waived)</option>
+                                    <option value='no' ".selected($deposit_held, 'no', false).">Refunded / No Deposit</option>
+                                </select>
+                            </div>
                         </td>
                     </tr>";
                 }
@@ -439,6 +487,7 @@ function cmp_render_accounts_dashboard() {
     }
     </script>
     <?php
+    cmp_render_acc_bag_script();
     return ob_get_clean();
 }
 
@@ -513,6 +562,10 @@ function cmp_render_kitchen_audit_view() {
                             if (!$k->is_prepared) $missing_badges[] = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Prep</span>';
                             if (!$k->dispatch_status) $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
                             if ($k->delivery_result === 'Pending') $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
+                            
+                            $display_order_id = 'Manual';
+                            if ($k->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($k->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+                            elseif ($k->wc_order_id > 0) { $display_order_id = '#' . $k->wc_order_id; }
                         ?>
                         <tr style="border-bottom:1px solid #fed7aa;">
                             <td style="padding:12px;">
@@ -520,7 +573,7 @@ function cmp_render_kitchen_audit_view() {
                                 <span style="font-size:0.85em; color:#c2410c;">(<?php echo $k->timing_label; ?>)</span>
                             </td>
                             <td style="padding:12px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date('d M Y', strtotime($k->computed_delivery_date)); ?></td>
-                            <td style="padding:12px;"><?php echo $k->wc_order_id > 0 ? '#'.$k->wc_order_id : 'Manual'; ?></td>
+                            <td style="padding:12px;"><?php echo $display_order_id; ?></td>
                             <td style="padding:12px;"><?php echo esc_html($k->display_name); ?></td>
                             <td style="padding:12px;"><?php echo esc_html($k->plan_name); ?></td>
                             <td style="padding:12px;">
@@ -611,14 +664,18 @@ function cmp_render_pos_audit_view() {
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Delivery Logged As</th>
                         </tr>
-                        <?php foreach($pending_pos as $p): ?>
+                        <?php foreach($pending_pos as $p): 
+                            $display_order_id = 'Manual';
+                            if ($p->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($p->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+                            elseif ($p->wc_order_id > 0) { $display_order_id = '#' . $p->wc_order_id; }
+                        ?>
                         <tr style="border-bottom:1px solid #fde68a;">
                             <td style="padding:12px;">
                                 <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
                                 <span style="font-size:0.85em; color:#b45309;">(<?php echo $p->timing_label; ?>)</span>
                             </td>
                             <td style="padding:12px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                            <td style="padding:12px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
+                            <td style="padding:12px;"><?php echo $display_order_id; ?></td>
                             <td style="padding:12px;"><?php echo esc_html($p->display_name); ?></td>
                             <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
                             <td style="padding:12px;">
@@ -644,14 +701,18 @@ function cmp_render_pos_audit_view() {
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Delivery Logged As</th>
                         </tr>
-                        <?php foreach($completed_pos as $p): ?>
+                        <?php foreach($completed_pos as $p): 
+                            $display_order_id = 'Manual';
+                            if ($p->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($p->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+                            elseif ($p->wc_order_id > 0) { $display_order_id = '#' . $p->wc_order_id; }
+                        ?>
                         <tr style="border-bottom:1px solid #bbf7d0;">
                             <td style="padding:12px;">
                                 <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
                                 <span style="font-size:0.85em; color:#166534;">(<?php echo $p->timing_label; ?>)</span>
                             </td>
                             <td style="padding:12px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                            <td style="padding:12px;"><?php echo $p->wc_order_id > 0 ? '#'.$p->wc_order_id : 'Manual'; ?></td>
+                            <td style="padding:12px;"><?php echo $display_order_id; ?></td>
                             <td style="padding:12px;"><?php echo esc_html($p->display_name); ?></td>
                             <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
                             <td style="padding:12px;">
@@ -701,6 +762,20 @@ function cmp_render_accounts_sub_view($sub_id) {
     $is_completed = ($used >= $sub->total_days || $sub->expiry_date < current_time('mysql'));
     $derived_status = $is_completed ? 'Completed' : $sub->status;
 
+    $display_order_id = 'Manual';
+    if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+    elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; }
+
+    // Bag Status Logic
+    $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
+    if ($deposit_held === '') {
+        $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
+        $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
+    }
+    $b_color = '#dc2626'; $b_bg = '#fee2e2'; $b_text = 'Refunded / No Deposit';
+    if ($deposit_held === 'yes') { $b_color = '#10b981'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
+    if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
+
     ob_start();
     ?>
     <style>
@@ -736,8 +811,22 @@ function cmp_render_accounts_sub_view($sub_id) {
             </div>
             <div style="text-align:right;">
                 <div style="font-size:1.2em; font-weight:bold; color:#0f172a; margin-bottom:10px;"><?php echo esc_html($sub->plan_name); ?></div>
-                <div style="color:#64748b;">Order: <strong><?php echo $sub->wc_order_id > 0 ? '#'.esc_html($sub->wc_order_id) : 'Manual'; ?></strong></div>
+                <div style="color:#64748b;">Order: <strong><?php echo esc_html($display_order_id); ?></strong></div>
                 <div style="color:#64748b; margin-top:5px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status == 'active' ? '#10b981' : ($derived_status == 'Completed' ? '#ef4444' : '#f59e0b'); ?>;"><?php echo esc_html($derived_status); ?></strong></div>
+                
+                <div style="color:#64748b; margin-top:8px; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
+                    <span>Bag Status:</span>
+                    <div class="deposit-pill-wrapper" data-user-id="<?php echo $sub->user_id; ?>" style="display:inline-block;">
+                        <span class="deposit-status-pill cmp-no-print" style="color: <?php echo $b_color; ?>; font-weight: bold; background: <?php echo $b_bg; ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; cursor: pointer; border: 1px solid <?php echo $b_color; ?>; transition: 0.2s;" title="Click to Change Status">
+                            <?php echo $b_text; ?> &#9662;
+                        </span>
+                        <select class="deposit-status-select cmp-no-print" style="display:none; padding: 4px; font-size: 0.85em; border-radius: 4px; border: 1px solid #cbd5e1;">
+                            <option value="yes" <?php selected($deposit_held, 'yes'); ?>>Held</option>
+                            <option value="own_bag" <?php selected($deposit_held, 'own_bag'); ?>>Own Bag</option>
+                            <option value="no" <?php selected($deposit_held, 'no'); ?>>Refunded</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -827,5 +916,90 @@ function cmp_render_accounts_sub_view($sub_id) {
         </div>
     </div>
     <?php
+    cmp_render_acc_bag_script();
     return ob_get_clean();
+}
+
+// ==========================================
+// HELPER: INJECT JS FOR BAG PILL TOGGLE
+// ==========================================
+function cmp_render_acc_bag_script() {
+    ?>
+    <script>
+    const accAjaxUrl = '<?php echo admin_url("admin-ajax.php"); ?>';
+    const accNonce   = '<?php echo wp_create_nonce("cmp_acc_nonce"); ?>';
+
+    document.addEventListener("DOMContentLoaded", function() {
+        document.querySelectorAll('.deposit-status-pill').forEach(pill => {
+            pill.addEventListener('click', function(e) {
+                let wrapper = this.closest('.deposit-pill-wrapper');
+                let select = wrapper.querySelector('.deposit-status-select');
+                this.style.display = 'none';
+                select.style.display = 'inline-block';
+                select.focus();
+            });
+        });
+
+        document.querySelectorAll('.deposit-status-select').forEach(select => {
+            select.addEventListener('change', function(e) {
+                let wrapper = this.closest('.deposit-pill-wrapper');
+                let pill = wrapper.querySelector('.deposit-status-pill');
+                let userId = wrapper.getAttribute('data-user-id');
+                let newStatus = this.value;
+
+                this.disabled = true;
+                pill.innerHTML = 'Updating...';
+                pill.style.display = 'inline-block';
+                this.style.display = 'none';
+
+                const formData = new URLSearchParams();
+                formData.append('action', 'cmp_acc_toggle_deposit');
+                formData.append('nonce', accNonce);
+                formData.append('user_id', userId);
+                formData.append('new_status', newStatus);
+
+                fetch(accAjaxUrl, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(response => {
+                    if(response.success) {
+                        if (newStatus === 'yes') {
+                            pill.innerHTML = 'Bag Deposit Held &#9662;';
+                            pill.style.background = '#dcfce7'; pill.style.color = '#10b981'; pill.style.borderColor = '#10b981';
+                        } else if (newStatus === 'own_bag') {
+                            pill.innerHTML = "Customer's Own Bag &#9662;";
+                            pill.style.background = '#ede9fe'; pill.style.color = '#8b5cf6'; pill.style.borderColor = '#8b5cf6';
+                        } else {
+                            pill.innerHTML = 'Refunded / No Deposit &#9662;';
+                            pill.style.background = '#fee2e2'; pill.style.color = '#dc2626'; pill.style.borderColor = '#dc2626';
+                        }
+                        
+                        document.querySelectorAll(`.deposit-pill-wrapper[data-user-id="${userId}"]`).forEach(otherWrap => {
+                            otherWrap.querySelector('.deposit-status-select').value = newStatus;
+                            let otherPill = otherWrap.querySelector('.deposit-status-pill');
+                            otherPill.innerHTML = pill.innerHTML;
+                            otherPill.style.background = pill.style.background;
+                            otherPill.style.color = pill.style.color;
+                            otherPill.style.borderColor = pill.style.borderColor;
+                        });
+
+                    } else {
+                        alert('Error updating status.');
+                        pill.innerHTML = 'Error &#9662;';
+                    }
+                }).catch(() => {
+                    alert('Connection error.');
+                }).finally(() => {
+                    this.disabled = false;
+                });
+            });
+            
+            select.addEventListener('blur', function() {
+                this.style.display = 'none';
+                let wrapper = this.closest('.deposit-pill-wrapper');
+                wrapper.querySelector('.deposit-status-pill').style.display = 'inline-block';
+            });
+        });
+    });
+    </script>
+    <?php
 }

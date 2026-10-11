@@ -116,7 +116,7 @@ function cmp_export_kitchen_csv() {
     $target_date = date('Y-m-d', strtotime($prep_date . ' + 1 day'));
     
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, u.display_name, u.user_email 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.expiry_date, s.foh_remarks, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
@@ -166,9 +166,7 @@ function cmp_export_kitchen_csv() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
-        // --- NEW VISUAL CLEANUP ---
         $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
-
         $is_day_before = (stripos($timing, 'Day Before') !== false);
         $delivery_date = $is_day_before ? $prep_date : $log->target_date;
 
@@ -205,12 +203,16 @@ function cmp_export_kitchen_csv() {
         $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
         $pending_tag = "[Pending Chef]";
 
+        // Expiry verification for exports
+        $target_ymd = date('Y-m-d', strtotime($log->target_date));
+        $expiry_ymd = date('Y-m-d', strtotime($log->expiry_date));
+        $is_expired = ($target_ymd > $expiry_ymd);
+
         $prepared = $log->is_prepared ? 'Yes' : 'No';
         $dispatched = $log->dispatch_status ? 'Yes' : 'No';
         $delivery = $log->delivery_result ?: 'Pending';
         $pos_check = $log->pos_updated ? 'Yes' : 'No';
         
-        // Fulfillment Tracker
         $day_number = $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
              WHERE subscription_id = %d AND target_date <= %s 
@@ -218,17 +220,29 @@ function cmp_export_kitchen_csv() {
             $log->subscription_id, $log->target_date
         ));
         
+        // Recipient Extraction
         $plan_parts = explode(' - ', $log->plan_name);
-        $plan_string = $plan_parts[0] . " ({$day_number}/{$log->total_days})";
-        if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
+        $potential_recipient = end($plan_parts);
+        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+            array_pop($plan_parts);
+            $core_plan_name = implode(' - ', $plan_parts);
+        } else {
+            $core_plan_name = $log->plan_name;
+        }
+
+        $plan_string = $core_plan_name . " ({$day_number}/{$log->total_days})";
         
-        $order_id_display = $log->wc_order_id > 0 ? '#' . $log->wc_order_id : 'Manual';
+        $order_id_display = 'Manual';
+        if ($log->wc_order_id < 0) { $order_id_display = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+        elseif ($log->wc_order_id > 0) { $order_id_display = '#' . $log->wc_order_id; }
 
         $row_data = array();
 
         if ($export_type === 'juices') {
             $j1 = '-'; $j2 = '-'; $j3 = '-';
-            if ($log->is_chefs_choice && !$is_assigned) {
+            if ($is_expired) {
+                $j1 = 'PLAN EXPIRED'; $j2 = 'PLAN EXPIRED'; $j3 = 'PLAN EXPIRED';
+            } elseif ($log->is_chefs_choice && !$is_assigned) {
                 $j1 = $pending_tag; $j2 = $pending_tag; $j3 = $pending_tag;
             } else {
                 if ($log->juice_1_id) $j1 = ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag;
@@ -239,7 +253,9 @@ function cmp_export_kitchen_csv() {
         
         } else {
             $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
-            if ($log->is_chefs_choice && !$is_assigned) {
+            if ($is_expired) {
+                $b = 'PLAN EXPIRED'; $l = 'PLAN EXPIRED'; $d = 'PLAN EXPIRED'; $s1 = 'PLAN EXPIRED'; $s2 = 'PLAN EXPIRED';
+            } elseif ($log->is_chefs_choice && !$is_assigned) {
                 $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
             } else {
                 if ($log->breakfast_id) $b = ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
@@ -305,8 +321,9 @@ function cmp_render_kitchen_portal() {
     $prev_date = date('Y-m-d', strtotime($selected_date . ' - 1 day'));
     $next_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
 
+    // Updated Query: Pull FOH Remarks and Expiry Date from subscriptions
     $logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, u.display_name, u.user_email 
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.foh_remarks, s.expiry_date, u.display_name, u.user_email 
          FROM {$table_logs} l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
@@ -400,9 +417,31 @@ function cmp_render_kitchen_portal() {
             $log->subscription_id, $log->target_date
         ));
 
+        // EXPIRY LOGIC (Target Date vs Expiry Date)
+        $target_ymd = date('Y-m-d', strtotime($log->target_date));
+        $expiry_ymd = date('Y-m-d', strtotime($log->expiry_date));
+        $is_expired = ($target_ymd > $expiry_ymd);
+
+        // Recipient Extraction
+        $plan_parts = explode(' - ', $log->plan_name);
+        $potential_recipient = end($plan_parts);
+        $recipient_badge = '';
+        
+        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
+            array_pop($plan_parts);
+            $core_plan_name = implode(' - ', $plan_parts);
+        } else {
+            $core_plan_name = $log->plan_name;
+        }
+
+        $display_order_id = 'Manual';
+        if ($log->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+        elseif ($log->wc_order_id > 0) { $display_order_id = '#' . $log->wc_order_id; }
+
         $customers[] = array(
             'log_id' => $log->id, 
-            'order_id' => $log->wc_order_id,
+            'order_id' => $display_order_id,
             'name' => $full_name, 
             'phone' => $phone, 
             'email' => $email, 
@@ -412,9 +451,14 @@ function cmp_render_kitchen_portal() {
             'delivery_date' => $delivery_date, 
             'time_slot' => $time_slot, 
             'plan' => $log->plan_name,
+            'core_plan_name' => $core_plan_name,
+            'recipient_badge' => $recipient_badge,
             'total_days' => $log->total_days,
             'day_number' => $day_number,
             'allergies' => !empty($allergies) ? $allergies : 'No Allergies', 
+            'foh_remarks' => !empty($log->foh_remarks) ? wp_strip_all_tags($log->foh_remarks) : '',
+            'is_expired' => $is_expired,
+            'expiry_date' => $log->expiry_date,
             'prepared' => $log->is_prepared,
             'dispatch' => $log->dispatch_status,
             'delivery' => $log->delivery_result, 
@@ -441,7 +485,7 @@ function cmp_render_kitchen_portal() {
     $count_pending = 0;
     $count_assigned = 0;
     foreach ($customers as $c) {
-        if ($c['is_chefs_choice']) {
+        if ($c['is_chefs_choice'] && !$c['is_expired']) {
             if ($c['is_assigned']) {
                 $count_assigned++;
             } else {
@@ -540,35 +584,41 @@ function cmp_render_kitchen_portal() {
                         <?php foreach($customers as $c): 
                             $allergy_style = ($c['allergies'] !== 'No Allergies') ? 'background:#fff3cd; color:#856404; font-weight:bold; padding:2px 6px; border-radius:3px; display:inline-block; margin-top:3px;' : 'color:#666; font-style:italic; display:inline-block; margin-top:3px;';
                             
-                            $prepared_disabled = (!empty($chef_disabled) || $c['dispatch']) ? 'disabled' : '';
-                            $dispatch_disabled = (!empty($chef_disabled) || $c['pos']) ? 'disabled' : '';
-                            $delivery_disabled = (!$c['dispatch'] || !empty($chef_disabled) || $c['pos']) ? 'disabled' : '';
-                            $pos_disabled = (!$c['dispatch'] || $c['delivery'] === 'Pending' || !empty($foh_disabled)) ? 'disabled' : '';
+                            $prepared_disabled = (!empty($chef_disabled) || $c['dispatch'] || $c['is_expired']) ? 'disabled' : '';
+                            $dispatch_disabled = (!empty($chef_disabled) || $c['pos'] || $c['is_expired']) ? 'disabled' : '';
+                            $delivery_disabled = (!$c['dispatch'] || !empty($chef_disabled) || $c['pos'] || $c['is_expired']) ? 'disabled' : '';
+                            $pos_disabled = (!$c['dispatch'] || $c['delivery'] === 'Pending' || !empty($foh_disabled) || $c['is_expired']) ? 'disabled' : '';
 
                             // Filter classes for Tabs
                             $row_filter_class = 'filter-standard';
-                            if ($c['is_chefs_choice']) {
+                            if ($c['is_chefs_choice'] && !$c['is_expired']) {
                                 $row_filter_class = $c['is_assigned'] ? 'filter-assigned' : 'filter-pending';
                             }
                             $search_name = esc_attr(strtolower($c['name']));
                             
-                            // Splitting Plan Name logically
+                            $plan_duration = $c['core_plan_name'];
                             $plan_parts = explode(' - ', $c['plan']);
-                            $plan_duration = $plan_parts[0];
                             $plan_meals = isset($plan_parts[1]) ? $plan_parts[1] : '';
+                            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', end($plan_parts))) {
+                                $plan_meals = count($plan_parts) > 2 ? $plan_parts[1] : '';
+                            }
                         ?>
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
-                                <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                <div>
+                                    <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                    <?php echo $c['recipient_badge']; ?>
+                                </div>
                                 
-                                <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; white-space:nowrap;">
-                                    Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
-                                </span>
-                                <br>
+                                <div style="margin-top:6px;">
+                                    <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; vertical-align: middle; white-space:nowrap;">
+                                        Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
+                                    </span>
+                                </div>
                                 
-                                <div style="margin-top:4px; font-size:0.95em; line-height:1.4;">
+                                <div style="margin-top:6px; font-size:0.95em; line-height:1.4;">
                                     <span class="k-customer-meta" style="color: #334155; font-weight: bold;">
-                                        Order: <?php echo $c['order_id'] > 0 ? '#' . esc_html($c['order_id']) : '<span style="color:#d63638; font-weight:normal;">Manual</span>'; ?>
+                                        Order: <?php echo $c['order_id']; ?>
                                     </span>
                                     
                                     <span class="k-customer-meta">
@@ -589,6 +639,12 @@ function cmp_render_kitchen_portal() {
 
                                 <div style="<?php echo $allergy_style; ?>"><?php echo esc_html($c['allergies']); ?></div>
 
+                                <?php if (!empty($c['foh_remarks'])): ?>
+                                    <div style="background:#e0f2fe; color:#0369a1; padding:6px 8px; border-radius:4px; font-size:0.85em; margin-top:5px; border-left:3px solid #0284c7; line-height:1.3;">
+                                        <strong>FOH Note:</strong> <?php echo esc_html($c['foh_remarks']); ?>
+                                    </div>
+                                <?php endif; ?>
+
                                 <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
                                     <strong><?php echo esc_html($plan_duration); ?> (<?php echo $c['day_number']; ?>/<?php echo $c['total_days']; ?>)</strong><br>
                                     <span style="color:#64748b; font-size:0.9em;"><?php echo esc_html($plan_meals); ?></span>
@@ -605,7 +661,12 @@ function cmp_render_kitchen_portal() {
                             </td>
 
                             <td>
-                                <?php if ($c['is_chefs_choice']): ?>
+                                <?php if ($c['is_expired']): ?>
+                                    <div style="background:#fee2e2; color:#991b1b; padding:15px; border-radius:6px; text-align:center; border:1px solid #f87171;">
+                                        <strong style="font-size:1.1em; display:block; margin-bottom:5px;">PLAN EXPIRED</strong>
+                                        <span style="font-size:0.9em;">Do not prep meals. Plan ended on <?php echo date('M j, Y', strtotime($c['expiry_date'])); ?>.</span>
+                                    </div>
+                                <?php elseif ($c['is_chefs_choice']): ?>
                                     
                                     <?php 
                                     $display_style = $c['is_assigned'] ? 'block' : 'none'; 
