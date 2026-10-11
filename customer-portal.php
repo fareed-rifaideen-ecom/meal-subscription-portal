@@ -133,7 +133,7 @@ function cmp_ajax_save_daily_log() {
         'juice_1_id'      => !empty($_POST['juice_1']) ? intval($_POST['juice_1']) : null,
         'juice_2_id'      => !empty($_POST['juice_2']) ? intval($_POST['juice_2']) : null,
         'juice_3_id'      => !empty($_POST['juice_3']) ? intval($_POST['juice_3']) : null,
-        'is_locked'       => 1 // Kept for legacy compatibility, but time-locks override this now
+        'is_locked'       => 1 
     );
 
     if ($log_id > 0) {
@@ -148,7 +148,6 @@ function cmp_ajax_save_daily_log() {
     $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
     if (!is_array($updated_subs_queue)) { $updated_subs_queue = array(); }
     
-    // If the customer isn't already in the queue today, add them
     if (!in_array($sub_id, $updated_subs_queue)) {
         $updated_subs_queue[] = $sub_id;
         update_option('cmp_daily_updated_subs', $updated_subs_queue);
@@ -169,10 +168,12 @@ function cmp_ajax_foh_update_customer_logistics() {
     $user_id = intval($_POST['user_id']);
     $order_id = intval($_POST['order_id']);
     $timing = sanitize_text_field($_POST['delivery_timing']);
+    $time_slot = sanitize_text_field($_POST['time_slot']);
     $allergies = sanitize_textarea_field($_POST['allergies']);
 
     if ($user_id > 0) {
         update_user_meta($user_id, 'delivery_timing', $timing);
+        update_user_meta($user_id, 'time_slot', $time_slot);
         update_user_meta($user_id, 'allergies', $allergies);
     }
 
@@ -181,13 +182,63 @@ function cmp_ajax_foh_update_customer_logistics() {
         if ($order) {
             $order->update_meta_data('delivery_timing', $timing);
             $order->update_meta_data('_cmp_delivery_timing', $timing);
+            $order->update_meta_data('time_slot', $time_slot);
+            $order->update_meta_data('_cmp_time_slot', $time_slot);
             $order->update_meta_data('allergies', $allergies);
             $order->set_customer_note($allergies);
             $order->save();
         }
     }
 
-    wp_send_json_success(array('timing' => $timing, 'allergies' => $allergies ?: 'No Allergies Recorded'));
+    wp_send_json_success(array('timing' => $timing, 'time_slot' => $time_slot, 'allergies' => $allergies ?: 'No Allergies Recorded'));
+}
+
+// 1.6 AJAX HANDLER: ADMIN ACCOUNT DETAILS EDITING
+add_action('wp_ajax_cmp_admin_update_account_details', 'cmp_ajax_admin_update_account_details');
+function cmp_ajax_admin_update_account_details() {
+    check_ajax_referer('cmp_portal_nonce', 'nonce');
+    
+    if ( ! current_user_can('manage_options') ) {
+        wp_send_json_error('Permission Denied. Admins only.');
+    }
+
+    $user_id = intval($_POST['user_id']);
+    $order_id = intval($_POST['order_id']);
+    $first_name = sanitize_text_field($_POST['first_name']);
+    $last_name = sanitize_text_field($_POST['last_name']);
+    $address = sanitize_text_field($_POST['address']);
+
+    if ($user_id > 0) {
+        wp_update_user(['ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name]);
+        update_user_meta($user_id, 'billing_first_name', $first_name);
+        update_user_meta($user_id, 'billing_last_name', $last_name);
+        update_user_meta($user_id, 'billing_address_1', $address);
+        // Clear secondary lines to avoid concatenating duplicates
+        update_user_meta($user_id, 'billing_address_2', '');
+        update_user_meta($user_id, 'billing_city', '');
+    }
+
+    if ($order_id > 0) {
+        $order = wc_get_order($order_id);
+        if ($order) {
+            $order->set_billing_first_name($first_name);
+            $order->set_billing_last_name($last_name);
+            $order->set_shipping_first_name($first_name);
+            $order->set_shipping_last_name($last_name);
+            $order->set_billing_address_1($address);
+            $order->set_shipping_address_1($address);
+            $order->set_billing_address_2('');
+            $order->set_shipping_address_2('');
+            $order->set_billing_city('');
+            $order->set_shipping_city('');
+            $order->save();
+        }
+    }
+
+    wp_send_json_success(array(
+        'name' => trim($first_name . ' ' . $last_name),
+        'address' => $address ?: 'Address not provided'
+    ));
 }
 
 // ==========================================
@@ -243,7 +294,6 @@ function cmp_render_customer_portal() {
         }
     }
 
-    // --- NEW FALLBACK FOR NO ACTIVE PLANS ---
     if ( empty($subs) ) {
         return '<div style="padding:40px; text-align:center; background:#fff; border:1px solid #ddd; border-radius:8px;">
                     <h3 style="color:#0073aa; margin-bottom: 10px;">No Active Plans Found</h3>
@@ -444,11 +494,14 @@ function cmp_render_customer_portal() {
             
             $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
             $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+            if ($order) {
+                $fname = $order->get_billing_first_name() ?: $fname;
+                $lname = $order->get_billing_last_name() ?: $lname;
+            }
+
             $fallback_name = trim($fname . ' ' . $lname);
             if (empty($fallback_name)) $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
-            
-            $display_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
-            if (empty(trim($display_name))) { $display_name = $fallback_name; }
+            $display_name = $fallback_name;
 
             $timing = !empty($sub->delivery_timing) ? $sub->delivery_timing : '';
             if (empty($timing) && $order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
@@ -525,12 +578,41 @@ function cmp_render_customer_portal() {
             
             <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:25px; margin-bottom:20px; box-shadow:0 2px 4px rgba(0,0,0,0.02); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
                 <div style="flex:1; min-width:250px;">
-                    <h3 style="margin:0 0 10px 0; color:#0073aa; font-size:1.3em;">Account Details</h3>
-                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
-                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <?php echo esc_html($display_name); ?></p>
-                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
-                    <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
-                    <p style="margin:0; color:#334155;"><strong>Address:</strong> <?php echo esc_html($address); ?></p>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h3 style="margin:0; color:#0073aa; font-size:1.3em;">Account Details</h3>
+                        <?php if (current_user_can('manage_options')): ?>
+                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <div id="account-view-<?php echo $sub->id; ?>">
+                        <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
+                        <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <span id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($display_name); ?></span></p>
+                        <p style="margin:0 0 8px 0; color:#334155;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
+                        <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
+                        <p style="margin:0; color:#334155;"><strong>Address:</strong> <span id="address-val-<?php echo $sub->id; ?>"><?php echo esc_html($address); ?></span></p>
+                    </div>
+
+                    <?php if (current_user_can('manage_options')): ?>
+                    <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
+                        <div style="display:flex; gap:10px; margin-bottom:8px;">
+                            <div style="flex:1;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">First Name:</label>
+                                <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                            <div style="flex:1;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
+                                <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
+                            <input type="text" id="edit-address-<?php echo $sub->id; ?>" value="<?php echo esc_attr($address !== 'Address not provided' ? $address : ''); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                        </div>
+                        <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
+                    </div>
+                    <?php endif; ?>
+
                 </div>
                 
                 <div style="flex:1; min-width:250px; background:#f8fafc; padding:15px; border-radius:6px; border:1px solid #f1f5f9; position:relative;">
@@ -544,7 +626,7 @@ function cmp_render_customer_portal() {
                     <div id="logistics-view-<?php echo $sub->id; ?>">
                         <p style="margin:0 0 8px 0; color:#475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
                         <p style="margin:0 0 8px 0; color:#475569;"><strong>Receive By:</strong> <span id="timing-val-<?php echo $sub->id; ?>"><?php echo esc_html($timing_display); ?></span></p>
-                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Time Slot:</strong> <?php echo esc_html($time_slot_display); ?></p>
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Time Slot:</strong> <span id="time-slot-val-<?php echo $sub->id; ?>"><?php echo esc_html($time_slot_display); ?></span></p>
                         <div style="margin-top:15px; padding-top:15px; border-top:1px dashed #cbd5e1;">
                             <p style="margin:0; color:#b45309;"><strong>Allergies:</strong> <span id="allergies-val-<?php echo $sub->id; ?>"><?php echo !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded'; ?></span></p>
                         </div>
@@ -557,6 +639,16 @@ function cmp_render_customer_portal() {
                             <select id="edit-timing-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
                                 <option value="Deliver Day Before" <?php selected($timing, 'Deliver Day Before'); ?>>Deliver Day Before</option>
                                 <option value="Deliver Same Day" <?php selected($timing, 'Deliver Same Day'); ?>>Deliver Same Day</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom:8px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Time Slot:</label>
+                            <select id="edit-timeslot-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                                <option value="5:00 AM to 6:00 AM" <?php selected($time_slot, '5:00 AM to 6:00 AM'); ?>>5:00 AM to 6:00 AM</option>
+                                <option value="6:00 AM to 7:00 AM" <?php selected($time_slot, '6:00 AM to 7:00 AM'); ?>>6:00 AM to 7:00 AM</option>
+                                <option value="7:00 AM to 8:00 AM" <?php selected($time_slot, '7:00 AM to 8:00 AM'); ?>>7:00 AM to 8:00 AM</option>
+                                <option value="8:00 AM to 9:00 AM" <?php selected($time_slot, '8:00 AM to 9:00 AM'); ?>>8:00 AM to 9:00 AM</option>
+                                <option value="5:00 PM to 8:00 PM" <?php selected($time_slot, '5:00 PM to 8:00 PM'); ?>>5:00 PM to 8:00 PM</option>
                             </select>
                         </div>
                         <div style="margin-bottom:10px;">
@@ -815,6 +907,7 @@ function cmp_render_customer_portal() {
             var userId = btn.data('user-id');
             var orderId = btn.data('order-id');
             var timing = $('#edit-timing-' + subId).val();
+            var timeSlot = $('#edit-timeslot-' + subId).val();
             var allergies = $('#edit-allergies-' + subId).val();
             var origText = btn.text();
 
@@ -826,12 +919,14 @@ function cmp_render_customer_portal() {
                 user_id: userId,
                 order_id: orderId,
                 delivery_timing: timing,
+                time_slot: timeSlot,
                 allergies: allergies
             };
 
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(res) {
                 if (res.success) {
                     $('#timing-val-' + subId).text(res.data.timing);
+                    $('#time-slot-val-' + subId).text(res.data.time_slot);
                     $('#allergies-val-' + subId).text(res.data.allergies);
                     
                     btn.text('✓ Saved').css('background', '#0f766e');
@@ -840,6 +935,72 @@ function cmp_render_customer_portal() {
                         $('#logistics-edit-' + subId).hide();
                         $('#logistics-view-' + subId).show();
                         $('.toggle-logistics-edit[data-sub-id="' + subId + '"]').text('Edit');
+                        btn.text(origText).css('background', '#46b450').prop('disabled', false);
+                    }, 1000);
+                } else {
+                    alert('Error: ' + res.data);
+                    btn.text(origText).prop('disabled', false);
+                }
+            });
+        });
+
+        // ADMIN ACCOUNT DETAILS EDIT LOGIC
+        $('.toggle-account-edit').on('click', function(e) {
+            e.preventDefault();
+            var subId = $(this).data('sub-id');
+            var viewDiv = $('#account-view-' + subId);
+            var editDiv = $('#account-edit-' + subId);
+            
+            if (editDiv.is(':visible')) {
+                editDiv.hide();
+                viewDiv.show();
+                $(this).text('Edit');
+            } else {
+                viewDiv.hide();
+                editDiv.show();
+                $(this).text('Cancel');
+            }
+        });
+
+        $('.save-account-btn').on('click', function(e) {
+            e.preventDefault();
+            var btn = $(this);
+            var subId = btn.data('sub-id');
+            var userId = btn.data('user-id');
+            var orderId = btn.data('order-id');
+            var fName = $('#edit-fname-' + subId).val();
+            var lName = $('#edit-lname-' + subId).val();
+            var addr = $('#edit-address-' + subId).val();
+            var origText = btn.text();
+
+            if (!fName || !addr) {
+                alert("First Name and Address are required.");
+                return;
+            }
+
+            btn.text('Saving...').prop('disabled', true);
+
+            var data = {
+                action: 'cmp_admin_update_account_details',
+                nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
+                user_id: userId,
+                order_id: orderId,
+                first_name: fName,
+                last_name: lName,
+                address: addr
+            };
+
+            $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(res) {
+                if (res.success) {
+                    $('#name-val-' + subId).text(res.data.name);
+                    $('#address-val-' + subId).text(res.data.address);
+                    
+                    btn.text('✓ Saved').css('background', '#0f766e');
+                    
+                    setTimeout(function() {
+                        $('#account-edit-' + subId).hide();
+                        $('#account-view-' + subId).show();
+                        $('.toggle-account-edit[data-sub-id="' + subId + '"]').text('Edit');
                         btn.text(origText).css('background', '#46b450').prop('disabled', false);
                     }, 1000);
                 } else {
