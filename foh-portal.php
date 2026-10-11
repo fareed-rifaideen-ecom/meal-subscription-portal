@@ -76,7 +76,7 @@ function cmp_foh_export_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Details', 'Status', 'Filled Days', 'Used Days', 'Balance Days', 'FOH Remarks'));
+    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Used Days', 'Balance Days', 'Start Date', 'Expiry Date', 'FOH Remarks'));
 
     foreach ($all_subs as $sub) {
         $order = wc_get_order($sub->wc_order_id);
@@ -104,21 +104,65 @@ function cmp_foh_export_csv() {
 
         $remarks = !empty($sub->foh_remarks) ? wp_strip_all_tags($sub->foh_remarks) : '';
 
-        // Dynamic Sequence Handling for Export
+        // Extract Recipient
+        $plan_parts = explode(' - ', $sub->plan_name);
+        $potential_recipient = end($plan_parts);
+        $recipient_name = '';
+        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+            $recipient_name = $potential_recipient;
+            array_pop($plan_parts);
+            $core_plan_name = implode(' - ', $plan_parts);
+        } else {
+            $core_plan_name = $sub->plan_name;
+        }
+
+        // Pricing
+        $base_price = isset($sub->plan_price) ? (float) $sub->plan_price : 0;
+        $discount   = isset($sub->discount_amount) ? (float) $sub->discount_amount : 0;
+        if ($base_price == 0 && $order) {
+            $base_price = (float) $order->get_subtotal();
+            $discount = (float) $order->get_discount_total();
+        }
+        $final_price = max(0, $base_price - $discount);
+
+        // Bag Status
+        $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
+        if ($deposit_held === '') {
+            $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
+            $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
+        }
+        $bag_status_text = 'Refunded / No Deposit';
+        if ($deposit_held === 'yes') { $bag_status_text = 'Bag Deposit Held'; }
+        if ($deposit_held === 'own_bag') { $bag_status_text = "Customer's Own Bag"; }
+
+        // Dynamic Sequence Handling (Retroactive Manual)
         $display_order_id = 'Manual';
-        if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-        elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; }
+        if ($sub->wc_order_id < 0) { 
+            $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); 
+        } elseif ($sub->wc_order_id > 0) { 
+            $display_order_id = '#' . $sub->wc_order_id; 
+        } else {
+            // Retroactive fallback for old plans where order id is exactly 0
+            $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
+        }
 
         fputcsv($output, array(
             $display_order_id,
             $full_name,
+            $recipient_name,
             $sub->user_email,
             $phone,
-            $sub->plan_name,
+            $core_plan_name,
+            $base_price,
+            $discount,
+            $final_price,
             $status_label,
+            $bag_status_text,
             $filled_days,
             $usage_days,
             $balance,
+            date('Y-m-d', strtotime($sub->start_date)),
+            date('Y-m-d', strtotime($sub->expiry_date)),
             $remarks
         ));
     }
@@ -213,7 +257,12 @@ function cmp_render_foh_portal() {
         .foh-tab-content.active { display: block; }
         .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.95em; }
         .sub-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
-        .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+        
+        /* ALIGNMENT & HOVER UX FIXES */
+        .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+        .foh-row { transition: background-color 0.2s ease; }
+        .foh-row:hover { background-color: #f8fafc !important; }
+        
         .remark-edit-box { transition: all 0.3s ease; overflow: hidden; }
         .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
         .metric-progress-fill { background-color: #16a34a; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
@@ -233,7 +282,6 @@ function cmp_render_foh_portal() {
             </div>
         </div>
 
-        <!-- NEW KPI DASHBOARD -->
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
             <div style="background:#fff; border-left:4px solid #10b981; padding:20px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
                 <div style="color:#64748b; font-size:0.9em; font-weight:bold; text-transform:uppercase;">Active Customers</div>
@@ -275,13 +323,12 @@ function cmp_render_foh_portal() {
                 <table class="sub-table">
                     <thead>
                         <tr>
-                            <!-- ADJUSTED WIDTHS FOR OPTIMAL FIT -->
                             <th style="width: 8%;">Order ID</th>
-                            <th style="width: 22%;">Customer Info</th>
-                            <th style="width: 22%;">Plan Details</th>
-                            <th style="width: 18%; text-align: center;">Tracking Metrics</th>
-                            <th style="width: 13%;">Expiry Management</th>
-                            <th style="width: 17%; text-align: center;">Actions</th>
+                            <th style="width: 23%;">Customer Info</th>
+                            <th style="width: 23%;">Plan Details</th>
+                            <th style="width: 17%; text-align: center;">Tracking Metrics</th>
+                            <th style="width: 13%;">Expiry</th>
+                            <th style="width: 16%; text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -301,7 +348,7 @@ function cmp_render_foh_portal() {
                             $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
                             $is_paused = ($sub->status === 'paused');
                             
-                            // NEW: RECIPIENT NAME EXTRACTION
+                            // RECIPIENT NAME EXTRACTION
                             $plan_parts = explode(' - ', $sub->plan_name);
                             $potential_recipient = end($plan_parts);
                             $recipient_badge = '';
@@ -317,11 +364,10 @@ function cmp_render_foh_portal() {
                             $search_data = esc_attr(strtolower($full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $potential_recipient));
                             $plan_data = esc_attr($core_plan_name);
 
-                            // PRICE AND DISCOUNT LOGIC (PHASE 2 DB SYNC)
+                            // PRICE AND DISCOUNT LOGIC 
                             $base_price = isset($sub->plan_price) ? (float) $sub->plan_price : 0;
                             $discount   = isset($sub->discount_amount) ? (float) $sub->discount_amount : 0;
                             
-                            // Fallback for legacy subscriptions without DB prices
                             if ($base_price == 0 && $order) {
                                 $base_price = (float) $order->get_subtotal();
                                 $discount = (float) $order->get_discount_total();
@@ -347,20 +393,20 @@ function cmp_render_foh_portal() {
                             
                             // DEPOSIT WALLET STATUS
                             $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
-                            if ($deposit_held === '') { $deposit_held = 'yes'; } // Grandfathered logic
+                            if ($deposit_held === '') { $deposit_held = 'yes'; } 
                             
                             $status_color = '#dc2626'; $status_bg = '#fee2e2'; $status_text = 'Refunded / No Deposit';
                             if ($deposit_held === 'yes') { $status_color = '#10b981'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held'; }
                             if ($deposit_held === 'own_bag') { $status_color = '#8b5cf6'; $status_bg = '#ede9fe'; $status_text = "Customer's Own Bag"; }
 
-                            // SEQUENCE M-0000 LOGIC
+                            // DYNAMIC RETROACTIVE SEQUENCE M-0000 LOGIC
                             $display_order_id = '';
                             if ($sub->wc_order_id < 0) {
                                 $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
                             } elseif ($sub->wc_order_id > 0) {
                                 $display_order_id = '#' . esc_html($sub->wc_order_id);
                             } else {
-                                $display_order_id = '<span style="color:#d63638;">Manual</span>';
+                                $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
                             }
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
@@ -385,7 +431,6 @@ function cmp_render_foh_portal() {
                                 <div style="margin-top:3px; display:inline-block;">
                                     <span style="color: #2271b1; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
                                     
-                                    <!-- NEW: SUPER ADMIN EDIT CONTROLS -->
                                     <?php if (current_user_can('manage_options')): ?>
                                         <div style="margin-top: 5px;">
                                             <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; font-size:0.8em; font-weight:bold; padding:0; text-decoration:underline;">Edit Pricing</button>
@@ -400,7 +445,6 @@ function cmp_render_foh_portal() {
                                     <?php endif; ?>
                                 </div>
                                 
-                                <!-- FOH Remarks Inline Toggle -->
                                 <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
@@ -413,17 +457,14 @@ function cmp_render_foh_portal() {
                                 </div>
                             </td>
                             <td style="text-align: center;">
-                                <!-- VISUAL PROGRESS BAR & CONDENSED METRICS -->
                                 <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; text-align: left; width: 100%; box-sizing: border-box;">
                                     <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
                                         <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
                                         <span style="color: #16a34a;">Used: <strong><?php echo $sub->usage; ?></strong></span>
                                     </div>
-                                    
                                     <div class="metric-progress-bar">
                                         <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
                                     </div>
-                                    
                                     <div style="color: #0369a1; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
                                         Balance: <?php echo $sub->balance; ?> Days
                                     </div>
@@ -438,28 +479,29 @@ function cmp_render_foh_portal() {
                                 </form>
                             </td>
                             <td style="text-align: center; vertical-align: middle;">
-                                <div style="display: flex; flex-direction: column; gap: 6px;">
-                                    <?php if($tab_key !== 'inactive'): ?>
-                                    <form class="ajax-status-form" style="margin: 0;">
-                                        <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
-                                        <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                        <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;">
-                                            <?php echo $is_paused ? 'Resume Plan' : 'Pause Plan'; ?>
-                                        </button>
-                                    </form>
-                                    <?php endif; ?>
-                                    <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="display: block; background: #46b450; color: white; text-decoration: none; padding: 8px; border-radius: 4px; font-weight: bold; box-sizing: border-box;">Edit / View Portal</a>
+                                <div style="display: flex; flex-direction: column; gap: 8px; align-items: center;">
                                     
-                                    <!-- NEW: DEPOSIT WALLET INTERACTIVE PILL -->
-                                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cbd5e1; text-align: left;">
-                                        <div style="margin-bottom: 5px;">
-                                            <span style="font-weight: bold; color: #334155; font-size: 0.85em;">Bag Status: </span>
-                                        </div>
+                                    <!-- UI CLEANUP: SIDE-BY-SIDE BUTTONS -->
+                                    <div style="display: flex; gap: 5px; width: 100%;">
+                                        <?php if($tab_key !== 'inactive'): ?>
+                                        <form class="ajax-status-form" style="margin: 0; flex: 1;">
+                                            <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
+                                            <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
+                                            <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;">
+                                                <?php echo $is_paused ? 'Resume' : 'Pause'; ?>
+                                            </button>
+                                        </form>
+                                        <?php endif; ?>
+                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; display: block; background: #46b450; color: white; text-decoration: none; padding: 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
+                                    </div>
+                                    
+                                    <!-- UI CLEANUP: BAG PILL ONLY (NO LABEL) -->
+                                    <div style="width: 100%; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
                                         <div class="deposit-pill-wrapper" data-user-id="<?php echo $sub->user_id; ?>">
-                                            <span class="deposit-status-pill" style="color: <?php echo $status_color; ?>; font-weight: bold; background: <?php echo $status_bg; ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; display: inline-block; text-align: center; cursor: pointer; border: 1px solid <?php echo $status_color; ?>; transition: 0.2s;" title="Click to Change Status">
+                                            <span class="deposit-status-pill" style="color: <?php echo $status_color; ?>; font-weight: bold; background: <?php echo $status_bg; ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; display: inline-block; text-align: center; cursor: pointer; border: 1px solid <?php echo $status_color; ?>; transition: 0.2s; width: 100%; box-sizing: border-box;" title="Click to Change Status">
                                                 <?php echo $status_text; ?> &#9662;
                                             </span>
-                                            <select class="deposit-status-select" style="display:none; width: 100%; padding: 4px; font-size: 0.85em; border-radius: 4px; border: 1px solid #cbd5e1; margin-top: 4px;">
+                                            <select class="deposit-status-select" style="display:none; width: 100%; padding: 4px; font-size: 0.85em; border-radius: 4px; border: 1px solid #cbd5e1;">
                                                 <option value="yes" <?php selected($deposit_held, 'yes'); ?>>Held (Waived)</option>
                                                 <option value="own_bag" <?php selected($deposit_held, 'own_bag'); ?>>Own Bag (Waived)</option>
                                                 <option value="no" <?php selected($deposit_held, 'no'); ?>>Refunded / No Deposit</option>
@@ -553,11 +595,11 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'active') {
-                            btn.innerText = 'Pause Plan';
+                            btn.innerText = 'Pause';
                             btn.style.background = '#dba617';
                             statusInput.value = 'paused';
                         } else {
-                            btn.innerText = 'Resume Plan';
+                            btn.innerText = 'Resume';
                             btn.style.background = '#0073aa';
                             statusInput.value = 'active';
                         }
@@ -609,10 +651,10 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'yes') {
-                            pill.innerHTML = 'Bag Deposit Held (Waived) &#9662;';
+                            pill.innerHTML = 'Bag Deposit Held &#9662;';
                             pill.style.background = '#dcfce7'; pill.style.color = '#10b981'; pill.style.borderColor = '#10b981';
                         } else if (newStatus === 'own_bag') {
-                            pill.innerHTML = "Customer's Own Bag (Waived) &#9662;";
+                            pill.innerHTML = "Customer's Own Bag &#9662;";
                             pill.style.background = '#ede9fe'; pill.style.color = '#8b5cf6'; pill.style.borderColor = '#8b5cf6';
                         } else {
                             pill.innerHTML = 'Refunded / No Deposit &#9662;';
