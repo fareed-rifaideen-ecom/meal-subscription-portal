@@ -41,10 +41,10 @@ function cmp_ajax_foh_save_remark() {
     wp_send_json_success();
 }
 
-// 4. AJAX HANDLER: Update Super Admin Financials
+// 4. AJAX HANDLER: Update Super Admin & Menu Manager Financials
 add_action('wp_ajax_cmp_foh_update_financials', 'cmp_ajax_foh_update_financials');
 function cmp_ajax_foh_update_financials() {
-    if ( ! current_user_can( 'manage_options' ) ) { wp_send_json_error('Access Denied'); }
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
     check_ajax_referer('cmp_foh_nonce', 'nonce');
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -482,14 +482,14 @@ function cmp_render_foh_portal() {
                                 <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
                                     <span style="color: #2271b1; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
                                     
-                                    <?php if (current_user_can('manage_options')): ?>
+                                    <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
                                         <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#94a3b8; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Pricing">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                         </button>
                                     <?php endif; ?>
                                 </div>
 
-                                <?php if (current_user_can('manage_options')): ?>
+                                <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
                                     <div id="fin-edit-<?php echo $sub->id; ?>" class="fin-edit-box" style="display:none; margin-top:8px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
                                         <label style="font-size:0.8em; font-weight:bold;">Base Price (AED)</label>
                                         <input type="number" step="0.01" id="fin-price-<?php echo $sub->id; ?>" value="<?php echo esc_attr($base_price); ?>" style="width:100%; padding:4px; margin-bottom:5px; font-size:0.9em;">
