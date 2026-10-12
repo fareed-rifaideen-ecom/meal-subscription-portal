@@ -423,7 +423,7 @@ function cmp_render_kitchen_portal() {
         $recipient_badge = '';
         
         if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            $recipient_badge = ' <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span>';
+            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
             array_pop($plan_parts);
             $core_plan_name = implode(' - ', $plan_parts);
         } else {
@@ -633,12 +633,15 @@ function cmp_render_kitchen_portal() {
                                 <div class="logistics-box" style="margin-top:0; margin-bottom:8px;">
                                     <span style="color: #475569;"><strong>Method:</strong> <?php echo esc_html($c['method']); ?></span><br>
                                     <span style="color: #475569;"><strong>Receive By:</strong> <?php echo esc_html($c['timing']); ?></span><br>
-                                    <span style="color: #0f766e; font-weight:bold;"><strong>Delivery:</strong> <?php echo date('D, M j', strtotime($c['delivery_date'])); ?></span><br>
                                     <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html($c['time_slot']); ?></span>
                                 </div>
                                 <div style="text-align: left;">
-                                    <span style="background: #ef4444; color: white; font-size: 0.85em; font-weight:bold; padding: 3px 8px; border-radius: 4px; display:inline-block;">
-                                        Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
+                                    <div style="background: #0284c7; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+                                        Delivery: <?php echo date('D, M j', strtotime($c['delivery_date'])); ?>
+                                    </div>
+                                    <br>
+                                    <span style="color: #64748b; font-size: 0.85em; font-weight: 600;">
+                                        Eating: <?php echo date('D, M j', strtotime($c['target_date'])); ?>
                                     </span>
                                 </div>
                             </td>
