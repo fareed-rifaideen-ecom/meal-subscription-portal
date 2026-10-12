@@ -201,52 +201,40 @@ function cmp_export_kitchen_csv() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id);
+        $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+        $pending_tag = "[Pending Chef]";
 
-        if ($log->is_chefs_choice && !$is_assigned) {
-            $meals_list[] = "Chef's Choice (Pending Assignment)";
-        } elseif ($log->juice_1_id) {
-            $meals_list[] = "Juice 1: " . ($food_map[$log->juice_1_id] ?? 'Unknown');
-            $meals_list[] = "Juice 2: " . ($food_map[$log->juice_2_id] ?? 'Unknown');
-            $meals_list[] = "Juice 3: " . ($food_map[$log->juice_3_id] ?? 'Unknown');
-        } else {
-            if ($log->breakfast_id) $meals_list[] = "Breakfast: " . ($food_map[$log->breakfast_id] ?? 'Unknown');
-            if ($log->lunch_id)     $meals_list[] = "Lunch: " . ($food_map[$log->lunch_id] ?? 'Unknown');
-            if ($log->dinner_id)    $meals_list[] = "Dinner: " . ($food_map[$log->dinner_id] ?? 'Unknown');
-            if ($log->snack_1_id)   $meals_list[] = "Snack 1: " . ($food_map[$log->snack_1_id] ?? 'Unknown');
-            if ($log->snack_2_id)   $meals_list[] = "Snack 2: " . ($food_map[$log->snack_2_id] ?? 'Unknown');
-        }
+        // Expiry verification for exports
+        $target_ymd = date('Y-m-d', strtotime($log->target_date));
+        $expiry_ymd = date('Y-m-d', strtotime($log->expiry_date));
+        $is_expired = ($target_ymd > $expiry_ymd);
 
-        // Fetch Fulfillment Day Number
+        $prepared = $log->is_prepared ? 'Yes' : 'No';
+        $dispatched = $log->dispatch_status ? 'Yes' : 'No';
+        $delivery = $log->delivery_result ?: 'Pending';
+        $pos_check = $log->pos_updated ? 'Yes' : 'No';
+        
+        // Fulfillment Tracker
         $day_number = $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
              WHERE subscription_id = %d AND target_date <= %s 
              AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
             $log->subscription_id, $log->target_date
         ));
-
-        // EXPIRY LOGIC (Target Date vs Expiry Date)
-        $target_ymd = date('Y-m-d', strtotime($log->target_date));
-        $expiry_ymd = date('Y-m-d', strtotime($log->expiry_date));
-        $is_expired = ($target_ymd > $expiry_ymd);
-
-        // Recipient Extraction
-        $plan_parts = explode(' - ', $log->plan_name);
-        $potential_recipient = end($plan_parts);
-        $recipient_badge = '';
         
-        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
-            array_pop($plan_parts);
-            $core_plan_name = implode(' - ', $plan_parts);
+        $plan_parts = explode(' - ', $log->plan_name);
+        $plan_string = $plan_parts[0] . " ({$day_number}/{$log->total_days})";
+        if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
+        
+        $order_id_display = 'Manual';
+        if ($log->wc_order_id < 0) { 
+            $order_id_display = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); 
+        } elseif ($log->wc_order_id > 0) { 
+            $order_id_display = '#' . $log->wc_order_id; 
         } else {
-            $core_plan_name = $log->plan_name;
+            $order_id_display = 'M-' . str_pad($log->subscription_id, 4, '0', STR_PAD_LEFT); 
         }
-
-        $display_order_id = 'Manual';
-        if ($log->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-        elseif ($log->wc_order_id > 0) { $display_order_id = '#' . $log->wc_order_id; }
 
         $row_data = array();
 
@@ -448,8 +436,13 @@ function cmp_render_kitchen_portal() {
         }
 
         $display_order_id = 'Manual';
-        if ($log->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-        elseif ($log->wc_order_id > 0) { $display_order_id = '#' . $log->wc_order_id; }
+        if ($log->wc_order_id < 0) { 
+            $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); 
+        } elseif ($log->wc_order_id > 0) { 
+            $display_order_id = '#' . $log->wc_order_id; 
+        } else {
+            $display_order_id = 'M-' . str_pad($log->subscription_id, 4, '0', STR_PAD_LEFT); 
+        }
 
         $customers[] = array(
             'log_id' => $log->id, 
@@ -549,7 +542,7 @@ function cmp_render_kitchen_portal() {
             </form>
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/chef-dashboard/'); ?>" target="_blank" style="background: #0073aa; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
+                <a href="<?php echo site_url('/chef-dashboard/'); ?>" style="background: #0073aa; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Chef's Choice Assignment ⇗</a>
                 
                 <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
                 <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date)); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
@@ -572,7 +565,7 @@ function cmp_render_kitchen_portal() {
                 <button class="k-tab-btn" data-filter="assigned">Completed Assignments (<?php echo $count_assigned; ?>)</button>
             </div>
             <div style="flex-grow:1; min-width:200px; max-width:350px;">
-                <input type="text" id="k-search" placeholder="🔍 Search customers by ID, name, email, or phone..." style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; font-size:1em;">
+                <input type="text" id="k-search" placeholder="🔍 Search customers..." style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; font-size:1em;">
             </div>
         </div>
 
@@ -617,7 +610,7 @@ function cmp_render_kitchen_portal() {
                         ?>
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
-                                <div>
+                                <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 6px;">
                                     <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                     <?php echo $c['recipient_badge']; ?>
                                 </div>
