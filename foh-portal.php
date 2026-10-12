@@ -266,6 +266,9 @@ function cmp_render_foh_portal() {
         .remark-edit-box { transition: all 0.3s ease; overflow: hidden; }
         .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
         .metric-progress-fill { background-color: #16a34a; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+        
+        /* Inline Button Hover States */
+        .edit-financials-btn:hover { color: #0284c7 !important; transform: scale(1.1); }
     </style>
 
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
@@ -428,22 +431,25 @@ function cmp_render_foh_portal() {
                             <td>
                                 <strong style="color: #222;"><?php echo esc_html($core_plan_name); ?></strong><br>
                                 
-                                <div style="margin-top:3px; display:inline-block;">
+                                <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
                                     <span style="color: #2271b1; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
                                     
                                     <?php if (current_user_can('manage_options')): ?>
-                                        <div style="margin-top: 5px;">
-                                            <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; font-size:0.8em; font-weight:bold; padding:0; text-decoration:underline;">Edit Pricing</button>
-                                            <div id="fin-edit-<?php echo $sub->id; ?>" class="fin-edit-box" style="display:none; margin-top:8px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
-                                                <label style="font-size:0.8em; font-weight:bold;">Base Price (AED)</label>
-                                                <input type="number" step="0.01" id="fin-price-<?php echo $sub->id; ?>" value="<?php echo esc_attr($base_price); ?>" style="width:100%; padding:4px; margin-bottom:5px; font-size:0.9em;">
-                                                <label style="font-size:0.8em; font-weight:bold;">Discount (AED)</label>
-                                                <input type="number" step="0.01" id="fin-discount-<?php echo $sub->id; ?>" value="<?php echo esc_attr($discount); ?>" style="width:100%; padding:4px; margin-bottom:8px; font-size:0.9em;">
-                                                <button class="save-financials-btn" data-sub-id="<?php echo $sub->id; ?>" style="background:#0284c7; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Financials</button>
-                                            </div>
-                                        </div>
+                                        <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#94a3b8; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Pricing">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                        </button>
                                     <?php endif; ?>
                                 </div>
+
+                                <?php if (current_user_can('manage_options')): ?>
+                                    <div id="fin-edit-<?php echo $sub->id; ?>" class="fin-edit-box" style="display:none; margin-top:8px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
+                                        <label style="font-size:0.8em; font-weight:bold;">Base Price (AED)</label>
+                                        <input type="number" step="0.01" id="fin-price-<?php echo $sub->id; ?>" value="<?php echo esc_attr($base_price); ?>" style="width:100%; padding:4px; margin-bottom:5px; font-size:0.9em;">
+                                        <label style="font-size:0.8em; font-weight:bold;">Discount (AED)</label>
+                                        <input type="number" step="0.01" id="fin-discount-<?php echo $sub->id; ?>" value="<?php echo esc_attr($discount); ?>" style="width:100%; padding:4px; margin-bottom:8px; font-size:0.9em;">
+                                        <button class="save-financials-btn" data-sub-id="<?php echo $sub->id; ?>" style="background:#0284c7; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Financials</button>
+                                    </div>
+                                <?php endif; ?>
                                 
                                 <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -478,21 +484,21 @@ function cmp_render_foh_portal() {
                                     <button type="submit" class="expiry-btn" style="width: 100%; background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
                                 </form>
                             </td>
-                            <td style="text-align: center; vertical-align: middle;">
-                                <div style="display: flex; flex-direction: column; gap: 8px; align-items: center;">
+                            <td style="vertical-align: middle;">
+                                <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%;">
                                     
-                                    <!-- UI CLEANUP: SIDE-BY-SIDE BUTTONS -->
+                                    <!-- UI CLEANUP: SIDE-BY-SIDE BUTTONS EXACT ALIGNMENT -->
                                     <div style="display: flex; gap: 5px; width: 100%;">
                                         <?php if($tab_key !== 'inactive'): ?>
-                                        <form class="ajax-status-form" style="margin: 0; flex: 1;">
+                                        <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                             <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                            <button type="submit" class="status-btn" style="width: 100%; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;">
+                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;">
                                                 <?php echo $is_paused ? 'Resume' : 'Pause'; ?>
                                             </button>
                                         </form>
                                         <?php endif; ?>
-                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; display: block; background: #46b450; color: white; text-decoration: none; padding: 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
+                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
                                     </div>
                                     
                                     <!-- UI CLEANUP: BAG PILL ONLY (NO LABEL) -->
@@ -617,7 +623,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // New Interactive Bag Status Pill
+        // Interactive Bag Status Pill
         document.querySelectorAll('.deposit-status-pill').forEach(pill => {
             pill.addEventListener('click', function(e) {
                 let wrapper = this.closest('.deposit-pill-wrapper');
@@ -689,7 +695,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Edit Financials Logic (Super Admin)
+        // Edit Financials Logic (Super Admin) - Updated to Pencil SVG Toggle
         document.querySelectorAll('.edit-financials-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -697,10 +703,10 @@ function cmp_render_foh_portal() {
                 const box = document.getElementById(targetId);
                 if (box.style.display === 'none') {
                     box.style.display = 'block';
-                    this.innerText = 'Close Edit';
+                    this.innerHTML = '<span style="font-size:0.85em; text-decoration:underline;">Close</span>';
                 } else {
                     box.style.display = 'none';
-                    this.innerText = 'Edit Pricing';
+                    this.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
                 }
             });
         });
@@ -746,7 +752,8 @@ function cmp_render_foh_portal() {
                             this.style.background = '#0284c7';
                             this.disabled = false;
                             document.getElementById('fin-edit-' + subId).style.display = 'none';
-                            document.querySelector('.edit-financials-btn[data-target="fin-edit-' + subId + '"]').innerText = 'Edit Pricing';
+                            // Restore Pencil Icon
+                            document.querySelector('.edit-financials-btn[data-target="fin-edit-' + subId + '"]').innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
                         }, 1000);
                     } else {
                         alert('Error saving financials.');
