@@ -41,7 +41,7 @@ function cmp_ajax_foh_save_remark() {
     wp_send_json_success();
 }
 
-// 4. AJAX HANDLER: Update Super Admin Financials
+// 4. AJAX HANDLER: Update Super Admin & Menu Manager Financials
 add_action('wp_ajax_cmp_foh_update_financials', 'cmp_ajax_foh_update_financials');
 function cmp_ajax_foh_update_financials() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -57,7 +57,118 @@ function cmp_ajax_foh_update_financials() {
     wp_send_json_success(array('price' => $price, 'discount' => $discount));
 }
 
-// 5. AJAX HANDLER: Export CSV
+// 5. AJAX HANDLER: Update Account Details & Plan Mode (FOH, Menu Manager, Admin)
+add_action('wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details');
+function cmp_ajax_foh_update_account_details() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied.');
+    }
+
+    $user_id   = intval($_POST['user_id']);
+    $order_id  = intval($_POST['order_id']);
+    $sub_id    = isset($_POST['sub_id']) ? intval($_POST['sub_id']) : 0;
+    
+    $first_name     = sanitize_text_field($_POST['first_name']);
+    $last_name      = sanitize_text_field($_POST['last_name']);
+    $recipient_name = sanitize_text_field($_POST['recipient_name']);
+    
+    $plan_mode    = sanitize_text_field($_POST['plan_mode'] ?? 'standard');
+    $is_flexible  = ($plan_mode === 'flexible') ? 1 : 0;
+    $allow_custom = ($plan_mode === 'custom') ? 1 : 0;
+
+    if ($user_id > 0) {
+        wp_update_user(['ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name]);
+        update_user_meta($user_id, 'billing_first_name', $first_name);
+        update_user_meta($user_id, 'billing_last_name', $last_name);
+    }
+
+    if ($order_id > 0) {
+        $order = wc_get_order($order_id);
+        if ($order) {
+            $order->set_billing_first_name($first_name);
+            $order->set_billing_last_name($last_name);
+            $order->set_shipping_first_name($first_name);
+            $order->set_shipping_last_name($last_name);
+            $order->save();
+        }
+    }
+
+    $new_plan_name = '';
+    if ($sub_id > 0) {
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        
+        $wpdb->update(
+            $table_subs, 
+            array(
+                'is_flexible'  => $is_flexible,
+                'allow_custom' => $allow_custom
+            ), 
+            array('id' => $sub_id)
+        );
+
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id));
+        if ($sub) {
+            $plan_parts = explode(' - ', $sub->plan_name);
+            $potential_recipient = end($plan_parts);
+            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+                array_pop($plan_parts);
+                $core_plan_name = implode(' - ', $plan_parts);
+            } else {
+                $core_plan_name = $sub->plan_name;
+            }
+
+            $new_plan_name = $core_plan_name;
+            if (!empty($recipient_name)) {
+                $new_plan_name .= ' - ' . $recipient_name;
+            }
+            
+            $wpdb->update($table_subs, array('plan_name' => $new_plan_name), array('id' => $sub_id));
+        }
+    }
+
+    wp_send_json_success(array(
+        'name'      => trim($first_name . ' ' . $last_name),
+        'recipient' => $recipient_name,
+        'plan_name' => $new_plan_name,
+        'plan_mode' => $plan_mode
+    ));
+}
+
+// 6. AJAX HANDLER: Delete Subscription Plan (Strictly Super Admin)
+add_action('wp_ajax_cmp_foh_delete_subscription', 'cmp_ajax_foh_delete_subscription');
+function cmp_ajax_foh_delete_subscription() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    
+    if ( ! current_user_can('manage_options') ) {
+        wp_send_json_error('Permission Denied. Only Super Administrators can delete plans.');
+    }
+
+    global $wpdb;
+    $sub_id = intval($_POST['sub_id']);
+    if ($sub_id <= 0) {
+        wp_send_json_error('Invalid Subscription ID.');
+    }
+
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    // Delete associated daily meal logs
+    $wpdb->delete($table_logs, array('subscription_id' => $sub_id), array('%d'));
+
+    // Delete the subscription record
+    $deleted = $wpdb->delete($table_subs, array('id' => $sub_id), array('%d'));
+
+    if ($deleted) {
+        wp_send_json_success();
+    } else {
+        wp_send_json_error('Failed to delete subscription from database.');
+    }
+}
+
+// 7. AJAX HANDLER: Export CSV
 add_action('wp_ajax_cmp_foh_export_csv', 'cmp_foh_export_csv');
 function cmp_foh_export_csv() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { 
@@ -76,7 +187,7 @@ function cmp_foh_export_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Used Days', 'Balance Days', 'Start Date', 'Expiry Date', 'FOH Remarks'));
+    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Used Days', 'Balance Days', 'Start Date', 'Expiry Date', 'FOH Remarks'));
 
     foreach ($all_subs as $sub) {
         $order = wc_get_order($sub->wc_order_id);
@@ -116,7 +227,10 @@ function cmp_foh_export_csv() {
             $core_plan_name = $sub->plan_name;
         }
 
-        // Pricing
+        $mode_label = 'Standard';
+        if (!empty($sub->is_flexible)) $mode_label = 'Flexible';
+        if (!empty($sub->allow_custom)) $mode_label = 'Custom';
+
         $base_price = isset($sub->plan_price) ? (float) $sub->plan_price : 0;
         $discount   = isset($sub->discount_amount) ? (float) $sub->discount_amount : 0;
         if ($base_price == 0 && $order) {
@@ -125,7 +239,6 @@ function cmp_foh_export_csv() {
         }
         $final_price = max(0, $base_price - $discount);
 
-        // Bag Status
         $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
         if ($deposit_held === '') {
             $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
@@ -135,7 +248,6 @@ function cmp_foh_export_csv() {
         if ($deposit_held === 'yes') { $bag_status_text = 'Bag Deposit Held'; }
         if ($deposit_held === 'own_bag') { $bag_status_text = "Customer's Own Bag"; }
 
-        // Dynamic Sequence Handling (Retroactive Manual)
         $display_order_id = 'Manual';
         if ($sub->wc_order_id < 0) { 
             $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); 
@@ -152,6 +264,7 @@ function cmp_foh_export_csv() {
             $sub->user_email,
             $phone,
             $core_plan_name,
+            $mode_label,
             $base_price,
             $discount,
             $final_price,
@@ -170,7 +283,7 @@ function cmp_foh_export_csv() {
     exit;
 }
 
-// 6. AJAX HANDLER: Toggle Deposit Status
+// 8. AJAX HANDLER: Toggle Deposit Status
 add_action('wp_ajax_cmp_foh_toggle_deposit', 'cmp_ajax_foh_toggle_deposit');
 function cmp_ajax_foh_toggle_deposit() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -181,91 +294,6 @@ function cmp_ajax_foh_toggle_deposit() {
     
     update_user_meta($user_id, '_cmp_deposit_held', $new_status);
     wp_send_json_success();
-}
-
-// 1.6 AJAX HANDLER: ADMIN ACCOUNT DETAILS EDITING (WITH PHASE 5 TOGGLES)
-add_action('wp_ajax_cmp_admin_update_account_details', 'cmp_ajax_admin_update_account_details');
-function cmp_ajax_admin_update_account_details() {
-    check_ajax_referer('cmp_foh_nonce', 'nonce');
-    
-    if ( ! current_user_can('manage_options') ) {
-        wp_send_json_error('Permission Denied. Admins only.');
-    }
-
-    $user_id = intval($_POST['user_id']);
-    $order_id = intval($_POST['order_id']);
-    $sub_id = isset($_POST['sub_id']) ? intval($_POST['sub_id']) : 0;
-    
-    $first_name = sanitize_text_field($_POST['first_name']);
-    $last_name = sanitize_text_field($_POST['last_name']);
-    $address = sanitize_text_field($_POST['address']);
-    $recipient_name = sanitize_text_field($_POST['recipient_name']);
-    
-    $is_flexible  = isset($_POST['is_flexible']) ? intval($_POST['is_flexible']) : 0;
-    $allow_custom = isset($_POST['allow_custom']) ? intval($_POST['allow_custom']) : 0;
-
-    if ($user_id > 0) {
-        wp_update_user(['ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name]);
-        update_user_meta($user_id, 'billing_first_name', $first_name);
-        update_user_meta($user_id, 'billing_last_name', $last_name);
-        update_user_meta($user_id, 'billing_address_1', $address);
-        update_user_meta($user_id, 'billing_address_2', '');
-        update_user_meta($user_id, 'billing_city', '');
-    }
-
-    if ($order_id > 0) {
-        $order = wc_get_order($order_id);
-        if ($order) {
-            $order->set_billing_first_name($first_name);
-            $order->set_billing_last_name($last_name);
-            $order->set_shipping_first_name($first_name);
-            $order->set_shipping_last_name($last_name);
-            $order->set_billing_address_1($address);
-            $order->set_shipping_address_1($address);
-            $order->save();
-        }
-    }
-
-    $new_plan_name = '';
-    if ($sub_id > 0) {
-        global $wpdb;
-        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-        
-        $wpdb->update(
-            $table_subs, 
-            array(
-                'is_flexible' => $is_flexible,
-                'allow_custom' => $allow_custom
-            ), 
-            array('id' => $sub_id)
-        );
-
-        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id));
-        if ($sub) {
-            $plan_parts = explode(' - ', $sub->plan_name);
-            $potential_recipient = end($plan_parts);
-            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-                array_pop($plan_parts);
-                $core_plan_name = implode(' - ', $plan_parts);
-            } else {
-                $core_plan_name = $sub->plan_name;
-            }
-
-            $new_plan_name = $core_plan_name;
-            if (!empty($recipient_name)) {
-                $new_plan_name .= ' - ' . $recipient_name;
-            }
-            
-            $wpdb->update($table_subs, array('plan_name' => $new_plan_name), array('id' => $sub_id));
-        }
-    }
-
-    wp_send_json_success(array(
-        'name' => trim($first_name . ' ' . $last_name),
-        'address' => $address ?: 'Address not provided',
-        'recipient' => $recipient_name,
-        'plan_name' => $new_plan_name
-    ));
 }
 
 
@@ -281,11 +309,7 @@ function cmp_render_foh_portal() {
             #cmp-foh-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; }
             #cmp-foh-login .login-remember { text-align: left; margin-bottom: 15px; }
         </style>';
-        return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-                    <h2 style="text-align: center; margin-top: 0; color: #222;">FOH Command Center</h2>
-                    <p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with an authorized staff account.</p>' 
-                    . wp_login_form( $login_args ) . 
-                '</div>';
+        return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">FOH Command Center</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with an authorized staff account.</p>' . wp_login_form( $login_args ) . '</div>';
     }
 
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -299,7 +323,6 @@ function cmp_render_foh_portal() {
     $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'foh_remarks'");
     if (empty($col_check)) { $wpdb->query("ALTER TABLE {$table_subs} ADD foh_remarks TEXT NULL AFTER status"); }
 
-    // Phase 5 DB Pull
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
     
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
@@ -325,7 +348,6 @@ function cmp_render_foh_portal() {
     ob_start();
     ?>
     <style>
-        /* INTERACTIVE FILTER TILES */
         .foh-tile-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -351,7 +373,6 @@ function cmp_render_foh_portal() {
         .foh-tile.tile-paused   { border-left: 5px solid #f59e0b; }
         .foh-tile.tile-inactive { border-left: 5px solid #dc2626; }
         
-        /* ACTIVE SELECTION STATE */
         .foh-tile.active {
             box-shadow: 0 0 0 2px #0f172a, 0 6px 16px rgba(15, 23, 42, 0.08);
             border-color: #0f172a;
@@ -379,18 +400,14 @@ function cmp_render_foh_portal() {
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
-        .foh-tile.active .foh-tile-indicator {
-            display: inline-block;
-        }
+        .foh-tile.active .foh-tile-indicator { display: inline-block; }
         .foh-tile.tile-active.active .foh-tile-indicator   { background: #dcfce7; color: #166534; }
         .foh-tile.tile-paused.active .foh-tile-indicator   { background: #fef3c7; color: #92400e; }
         .foh-tile.tile-inactive.active .foh-tile-indicator { background: #fee2e2; color: #991b1b; }
 
-        /* TAB CONTENT VISIBILITY */
         .foh-tab-content { display: none; }
         .foh-tab-content.active { display: block; }
         
-        /* TABLE STYLING */
         .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.95em; }
         .sub-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
         .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
@@ -418,7 +435,7 @@ function cmp_render_foh_portal() {
             </div>
         </div>
 
-        <!-- INTERACTIVE KPI FILTER TILES (NOW ACTING AS PRIMARY TABS) -->
+        <!-- INTERACTIVE KPI FILTER TILES -->
         <div class="foh-tile-grid">
             <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -483,7 +500,7 @@ function cmp_render_foh_portal() {
                             $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
                             $is_paused = ($sub->status === 'paused');
                             
-                            // RECIPIENT NAME EXTRACTION
+                            // Recipient Extraction
                             $plan_parts = explode(' - ', $sub->plan_name);
                             $potential_recipient = end($plan_parts);
                             $recipient_badge = '';
@@ -498,7 +515,7 @@ function cmp_render_foh_portal() {
                                 $core_plan_name = $sub->plan_name;
                             }
 
-                            // DYNAMIC RETROACTIVE SEQUENCE M-0000 LOGIC
+                            // Dynamic Sequence M-0000
                             $display_order_id = '';
                             if ($sub->wc_order_id < 0) {
                                 $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
@@ -508,11 +525,9 @@ function cmp_render_foh_portal() {
                                 $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
                             }
 
-                            // Injecting all identifying fields into the invisible search index
                             $search_data = esc_attr(strtolower($display_order_id . ' ' . $full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $raw_recipient . ' ' . $core_plan_name));
                             $plan_data = esc_attr($core_plan_name);
 
-                            // PRICE AND DISCOUNT LOGIC 
                             $base_price = isset($sub->plan_price) ? (float) $sub->plan_price : 0;
                             $discount   = isset($sub->discount_amount) ? (float) $sub->discount_amount : 0;
                             
@@ -531,15 +546,12 @@ function cmp_render_foh_portal() {
                                 $price_display = $currency . ' ' . number_format($final_price, 2);
                             }
 
-                            // REMARKS PREVIEW LOGIC
                             $remark_text = !empty($sub->foh_remarks) ? $sub->foh_remarks : '';
                             $short_remark = mb_strimwidth($remark_text, 0, 32, '...');
                             $preview_html = empty($remark_text) ? '<span style="color:#94a3b8; font-style:italic; font-weight:normal;">No remarks</span>' : esc_html($short_remark);
                             
-                            // PROGRESS BAR CALCULATION
                             $usage_percent = ($sub->total_days > 0) ? round(($sub->usage / $sub->total_days) * 100) : 0;
                             
-                            // DEPOSIT WALLET STATUS
                             $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
                             if ($deposit_held === '') { $deposit_held = 'yes'; } 
                             
@@ -547,12 +559,16 @@ function cmp_render_foh_portal() {
                             if ($deposit_held === 'yes') { $status_color = '#10b981'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held'; }
                             if ($deposit_held === 'own_bag') { $status_color = '#8b5cf6'; $status_bg = '#ede9fe'; $status_text = "Customer's Own Bag"; }
 
-                            // Check Advanced Features (Phase 5)
+                            // Mutually Exclusive Modes
                             $is_flexible = isset($sub->is_flexible) ? intval($sub->is_flexible) : 0;
                             $allow_custom = isset($sub->allow_custom) ? intval($sub->allow_custom) : 0;
+                            $current_mode = 'standard';
+                            if ($is_flexible) $current_mode = 'flexible';
+                            if ($allow_custom) $current_mode = 'custom';
 
+                            $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
                         ?>
-                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
+                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" id="sub-row-<?php echo $sub->id; ?>">
                             
                             <td style="font-size: 1.1em; font-weight: bold; color: #334155;">
                                 <?php echo $display_order_id; ?>
@@ -562,8 +578,8 @@ function cmp_render_foh_portal() {
                                 <div style="display: flex; flex-direction: column;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <div><strong style="font-size: 1.1em; color: #0073aa;" id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($full_name ?: 'Customer'); ?></strong></div>
-                                        <?php if (current_user_can('manage_options')): ?>
-                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account">
+                                        <?php if ($can_edit_details): ?>
+                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account & Mode">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                             </button>
                                         <?php endif; ?>
@@ -578,28 +594,24 @@ function cmp_render_foh_portal() {
                                     </span>
                                 </div>
                                 
-                                <!-- ACCOUNT EDIT BOX -->
-                                <?php if (current_user_can('manage_options')): ?>
+                                <!-- ACCOUNT & MUTUALLY EXCLUSIVE PLAN MODE EDIT BOX -->
+                                <?php if ($can_edit_details): ?>
                                 <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
-                                    <div style="display:flex; gap:10px; margin-bottom:8px;">
-                                        <div style="flex:1;">
-                                            <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" placeholder="First Name" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
-                                        </div>
-                                        <div style="flex:1;">
-                                            <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" placeholder="Last Name" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
-                                        </div>
+                                    <div style="display:flex; gap:6px; margin-bottom:8px;">
+                                        <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" placeholder="First Name" style="width:50%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" placeholder="Last Name" style="width:50%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
                                     </div>
                                     <div style="margin-bottom:8px;">
                                         <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($raw_recipient); ?>" placeholder="Recipient Name (Optional)" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
                                     </div>
                                     
-                                    <div style="margin-bottom:10px; border-top: 1px dashed #ccc; padding-top: 10px;">
-                                        <label style="font-size:0.8em; font-weight:bold; display:flex; align-items:center; gap:5px; margin-bottom: 5px;">
-                                            <input type="checkbox" id="edit-flex-<?php echo $sub->id; ?>" <?php checked($is_flexible, 1); ?> style="margin:0;"> Enable Flexible Menu
-                                        </label>
-                                        <label style="font-size:0.8em; font-weight:bold; display:flex; align-items:center; gap:5px;">
-                                            <input type="checkbox" id="edit-custom-<?php echo $sub->id; ?>" <?php checked($allow_custom, 1); ?> style="margin:0;"> Enable Custom Meals
-                                        </label>
+                                    <div style="margin-bottom:10px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+                                        <label style="font-size:0.8em; font-weight:bold; display:block; margin-bottom: 4px; color:#334155;">Plan Mode (Menu Type):</label>
+                                        <select id="edit-plan-mode-<?php echo $sub->id; ?>" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                            <option value="standard" <?php selected($current_mode, 'standard'); ?>>Standard Menu (Strict Quotas)</option>
+                                            <option value="flexible" <?php selected($current_mode, 'flexible'); ?>>Flexible Menu (Universal Dropdowns)</option>
+                                            <option value="custom" <?php selected($current_mode, 'custom'); ?>>Bespoke Custom (Text Inputs)</option>
+                                        </select>
                                     </div>
 
                                     <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
@@ -666,7 +678,6 @@ function cmp_render_foh_portal() {
                             <td style="vertical-align: middle;">
                                 <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%;">
                                     
-                                    <!-- UI CLEANUP: SIDE-BY-SIDE BUTTONS EXACT ALIGNMENT -->
                                     <div style="display: flex; gap: 5px; width: 100%;">
                                         <?php if($tab_key !== 'inactive'): ?>
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
@@ -680,7 +691,6 @@ function cmp_render_foh_portal() {
                                         <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
                                     </div>
                                     
-                                    <!-- UI CLEANUP: BAG PILL ONLY (NO LABEL) -->
                                     <div style="width: 100%; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
                                         <div class="deposit-pill-wrapper" data-user-id="<?php echo $sub->user_id; ?>">
                                             <span class="deposit-status-pill" style="color: <?php echo $status_color; ?>; font-weight: bold; background: <?php echo $status_bg; ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; display: inline-block; text-align: center; cursor: pointer; border: 1px solid <?php echo $status_color; ?>; transition: 0.2s; width: 100%; box-sizing: border-box;" title="Click to Change Status">
@@ -693,6 +703,15 @@ function cmp_render_foh_portal() {
                                             </select>
                                         </div>
                                     </div>
+
+                                    <!-- SUPER ADMIN ONLY: PERMANENT SUBSCRIPTION DELETE KILL-SWITCH -->
+                                    <?php if (current_user_can('manage_options')): ?>
+                                    <div style="width: 100%;">
+                                        <button class="delete-sub-btn" data-sub-id="<?php echo $sub->id; ?>" data-order-id="<?php echo esc_attr($display_order_id); ?>" style="width: 100%; height: 26px; display: flex; align-items: center; justify-content: center; background: #fff; color: #dc2626; border: 1px solid #fca5a5; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.78em; transition: 0.2s;" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background='#fff'">
+                                            🗑 Delete Plan
+                                        </button>
+                                    </div>
+                                    <?php endif; ?>
 
                                 </div>
                             </td>
@@ -846,7 +865,6 @@ function cmp_render_foh_portal() {
                             pill.style.background = '#fee2e2'; pill.style.color = '#dc2626'; pill.style.borderColor = '#dc2626';
                         }
                         
-                        // Sync multiple rows dynamically
                         document.querySelectorAll(`.deposit-pill-wrapper[data-user-id="${userId}"]`).forEach(otherWrap => {
                             otherWrap.querySelector('.deposit-status-select').value = newStatus;
                             let otherPill = otherWrap.querySelector('.deposit-status-pill');
@@ -874,7 +892,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Edit Financials Logic (Super Admin) - Pencil SVG Toggle
+        // Edit Financials Logic
         document.querySelectorAll('.edit-financials-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -931,7 +949,6 @@ function cmp_render_foh_portal() {
                             this.style.background = '#0284c7';
                             this.disabled = false;
                             document.getElementById('fin-edit-' + subId).style.display = 'none';
-                            // Restore Pencil Icon
                             document.querySelector('.edit-financials-btn[data-target="fin-edit-' + subId + '"]').innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
                         }, 1000);
                     } else {
@@ -962,7 +979,6 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Remarks Saving Logic
         document.querySelectorAll('.save-remark-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -1013,12 +1029,11 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Account Details Edit Toggle Logic
+        // Account Details Edit Toggle
         document.querySelectorAll('.toggle-account-edit').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
                 const subId = this.getAttribute('data-sub-id');
-                const viewDiv = document.getElementById('account-view-' + subId);
                 const editDiv = document.getElementById('account-edit-' + subId);
                 
                 if (editDiv.style.display === 'none') {
@@ -1031,7 +1046,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Account Details Save Logic
+        // Save Account Details with Mutually Exclusive Plan Mode
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -1039,21 +1054,15 @@ function cmp_render_foh_portal() {
                 const userId = this.getAttribute('data-user-id');
                 const orderId = this.getAttribute('data-order-id');
                 
-                const fName = document.getElementById('edit-fname-' + subId).value;
-                const lName = document.getElementById('edit-lname-' + subId).value;
-                const recipient = document.getElementById('edit-recipient-' + subId).value;
-                const addr = document.getElementById('edit-address-' + subId).value;
-                
-                const flexEl = document.getElementById('edit-flex-' + subId);
-                const customEl = document.getElementById('edit-custom-' + subId);
-                
-                const isFlex = flexEl && flexEl.checked ? 1 : 0;
-                const isCustom = customEl && customEl.checked ? 1 : 0;
+                const fName = document.getElementById('edit-fname-' + subId).value.trim();
+                const lName = document.getElementById('edit-lname-' + subId).value.trim();
+                const recipient = document.getElementById('edit-recipient-' + subId).value.trim();
+                const planMode = document.getElementById('edit-plan-mode-' + subId).value;
 
                 const originalText = this.innerText;
 
-                if (!fName || !addr) {
-                    alert("First Name and Address are required.");
+                if (!fName) {
+                    alert("First Name is required.");
                     return;
                 }
 
@@ -1061,7 +1070,7 @@ function cmp_render_foh_portal() {
                 this.disabled = true;
 
                 const formData = new URLSearchParams();
-                formData.append('action', 'cmp_admin_update_account_details');
+                formData.append('action', 'cmp_foh_update_account_details');
                 formData.append('nonce', fohNonce);
                 formData.append('user_id', userId);
                 formData.append('order_id', orderId);
@@ -1069,16 +1078,13 @@ function cmp_render_foh_portal() {
                 formData.append('first_name', fName);
                 formData.append('last_name', lName);
                 formData.append('recipient_name', recipient);
-                formData.append('address', addr);
-                formData.append('is_flexible', isFlex);
-                formData.append('allow_custom', isCustom);
+                formData.append('plan_mode', planMode);
 
                 fetch(fohAjaxUrl, { method: 'POST', body: formData })
                 .then(res => res.json())
                 .then(response => {
                     if (response.success) {
                         document.getElementById('name-val-' + subId).innerText = response.data.name;
-                        document.getElementById('address-val-' + subId).innerText = response.data.address;
                         
                         let badgeContainer = document.getElementById('recipient-row-' + subId);
                         let badgeVal = document.getElementById('recipient-val-' + subId);
@@ -1117,6 +1123,50 @@ function cmp_render_foh_portal() {
             });
         });
 
+        // SUPER ADMIN PERMANENT SUBSCRIPTION DELETE KILL-SWITCH
+        document.querySelectorAll('.delete-sub-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const subId = this.getAttribute('data-sub-id');
+                const orderId = this.getAttribute('data-order-id');
+                
+                const confirmDelete = confirm('⚠️ WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
+                if (!confirmDelete) return;
+
+                btn.innerText = 'Deleting...';
+                btn.disabled = true;
+
+                const formData = new URLSearchParams();
+                formData.append('action', 'cmp_foh_delete_subscription');
+                formData.append('nonce', fohNonce);
+                formData.append('sub_id', subId);
+
+                fetch(fohAjaxUrl, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(response => {
+                    if (response.success) {
+                        alert('Plan ' + orderId + ' has been permanently deleted.');
+                        const row = document.getElementById('sub-row-' + subId);
+                        if (row) {
+                            row.style.transition = 'opacity 0.3s';
+                            row.style.opacity = '0';
+                            setTimeout(() => row.remove(), 300);
+                        } else {
+                            location.reload();
+                        }
+                    } else {
+                        alert('Error: ' + (response.data || 'Could not delete subscription.'));
+                        btn.innerText = '🗑 Delete Plan';
+                        btn.disabled = false;
+                    }
+                }).catch(() => {
+                    alert('Network or server error.');
+                    btn.innerText = '🗑 Delete Plan';
+                    btn.disabled = false;
+                });
+            });
+        });
+
         // Search Engine
         document.getElementById('fohSearch').addEventListener('keyup', function() {
             currentPage = 1;
@@ -1129,7 +1179,6 @@ function cmp_render_foh_portal() {
     let currentPage = 1;
     let currentTab = 'active-tab';
 
-    // INTERACTIVE TILE TAB SWITCHER
     function switchTab(evt, tabId) {
         var contents = document.getElementsByClassName("foh-tab-content");
         for (var i = 0; i < contents.length; i++) contents[i].classList.remove("active");
