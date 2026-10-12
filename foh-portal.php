@@ -142,7 +142,6 @@ function cmp_foh_export_csv() {
         } elseif ($sub->wc_order_id > 0) { 
             $display_order_id = '#' . $sub->wc_order_id; 
         } else {
-            // Retroactive fallback for old plans where order id is exactly 0
             $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
         }
 
@@ -217,9 +216,6 @@ function cmp_render_foh_portal() {
 
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
     
-    // Dynamic Filter Extractor
-    $unique_plans = array();
-
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
     $today = date('Y-m-d H:i:s');
 
@@ -238,27 +234,79 @@ function cmp_render_foh_portal() {
         } else {
             $tabs['active'][] = $sub;
         }
-        
-        // Extract raw plan name for filter
-        $plan_parts = explode(' - ', $sub->plan_name);
-        $core = (count($plan_parts) > 1 && !preg_match('/(Meal|Day|Cleanse|Plans)/i', end($plan_parts))) ? implode(' - ', array_slice($plan_parts, 0, -1)) : $sub->plan_name;
-        if (!in_array($core, $unique_plans)) { $unique_plans[] = $core; }
     }
-    
-    sort($unique_plans);
 
     ob_start();
     ?>
     <style>
-        .foh-tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; overflow-x: auto; }
-        .foh-tab-btn { background: none; border: none; padding: 15px 30px; font-size: 1.1em; font-weight: bold; color: #666; cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; }
-        .foh-tab-btn.active { color: #0073aa; border-bottom: 3px solid #0073aa; }
+        /* INTERACTIVE FILTER TILES */
+        .foh-tile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .foh-tile {
+            background: #fff;
+            padding: 18px 22px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+            position: relative;
+            user-select: none;
+        }
+        .foh-tile:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 14px rgba(0,0,0,0.07);
+        }
+        .foh-tile.tile-active   { border-left: 5px solid #10b981; }
+        .foh-tile.tile-paused   { border-left: 5px solid #f59e0b; }
+        .foh-tile.tile-inactive { border-left: 5px solid #dc2626; }
+        
+        /* ACTIVE SELECTION STATE */
+        .foh-tile.active {
+            box-shadow: 0 0 0 2px #0f172a, 0 6px 16px rgba(15, 23, 42, 0.08);
+            border-color: #0f172a;
+            background: #ffffff;
+        }
+        .foh-tile.tile-active.active {
+            box-shadow: 0 0 0 2px #10b981, 0 6px 16px rgba(16, 185, 129, 0.15);
+            border-color: #10b981;
+        }
+        .foh-tile.tile-paused.active {
+            box-shadow: 0 0 0 2px #f59e0b, 0 6px 16px rgba(245, 158, 11, 0.15);
+            border-color: #f59e0b;
+        }
+        .foh-tile.tile-inactive.active {
+            box-shadow: 0 0 0 2px #dc2626, 0 6px 16px rgba(220, 38, 38, 0.15);
+            border-color: #dc2626;
+        }
+
+        .foh-tile-indicator {
+            display: none;
+            font-size: 0.75em;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .foh-tile.active .foh-tile-indicator {
+            display: inline-block;
+        }
+        .foh-tile.tile-active.active .foh-tile-indicator   { background: #dcfce7; color: #166534; }
+        .foh-tile.tile-paused.active .foh-tile-indicator   { background: #fef3c7; color: #92400e; }
+        .foh-tile.tile-inactive.active .foh-tile-indicator { background: #fee2e2; color: #991b1b; }
+
+        /* TAB CONTENT VISIBILITY */
         .foh-tab-content { display: none; }
         .foh-tab-content.active { display: block; }
+        
+        /* TABLE STYLING */
         .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.95em; }
         .sub-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
-        
-        /* ALIGNMENT & HOVER UX FIXES */
         .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
         .foh-row { transition: background-color 0.2s ease; }
         .foh-row:hover { background-color: #f8fafc !important; }
@@ -266,13 +314,12 @@ function cmp_render_foh_portal() {
         .remark-edit-box { transition: all 0.3s ease; overflow: hidden; }
         .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
         .metric-progress-fill { background-color: #16a34a; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
-        
-        /* Inline Button Hover States */
         .edit-financials-btn:hover { color: #0284c7 !important; transform: scale(1.1); }
     </style>
 
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
         
+        <!-- HEADER -->
         <div style="background: #222; color: #fff; padding: 20px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px;">
             <div>
                 <h2 style="margin: 0; color: #fff;">FOH Command Center</h2>
@@ -285,39 +332,38 @@ function cmp_render_foh_portal() {
             </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
-            <div style="background:#fff; border-left:4px solid #10b981; padding:20px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-                <div style="color:#64748b; font-size:0.9em; font-weight:bold; text-transform:uppercase;">Active Customers</div>
-                <div style="font-size:2em; font-weight:bold; color:#0f172a;"><?php echo count($tabs['active']); ?></div>
+        <!-- INTERACTIVE KPI FILTER TILES (NOW ACTING AS PRIMARY TABS) -->
+        <div class="foh-tile-grid">
+            <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab')">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
+                    <span class="foh-tile-indicator">Viewing</span>
+                </div>
+                <div style="font-size:2.2em; font-weight:900; color:#0f172a; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
             </div>
-            <div style="background:#fff; border-left:4px solid #f59e0b; padding:20px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-                <div style="color:#64748b; font-size:0.9em; font-weight:bold; text-transform:uppercase;">Paused Customers</div>
-                <div style="font-size:2em; font-weight:bold; color:#0f172a;"><?php echo count($tabs['paused']); ?></div>
+
+            <div class="foh-tile tile-paused" onclick="switchTab(event, 'paused-tab')">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
+                    <span class="foh-tile-indicator">Viewing</span>
+                </div>
+                <div style="font-size:2.2em; font-weight:900; color:#0f172a; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
             </div>
-            <div style="background:#fff; border-left:4px solid #dc2626; padding:20px; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-                <div style="color:#64748b; font-size:0.9em; font-weight:bold; text-transform:uppercase;">Inactive / Expired</div>
-                <div style="font-size:2em; font-weight:bold; color:#0f172a;"><?php echo count($tabs['inactive']); ?></div>
+
+            <div class="foh-tile tile-inactive" onclick="switchTab(event, 'inactive-tab')">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
+                    <span class="foh-tile-indicator">Viewing</span>
+                </div>
+                <div style="font-size:2.2em; font-weight:900; color:#0f172a; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
             </div>
         </div>
 
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-            <div style="flex: 2; min-width: 250px;">
-                <input type="text" id="fohSearch" placeholder="🔍 Search customers by name, email, or phone..." style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em;">
+        <!-- SEARCH BAR (UPDATED TO BE FULL WIDTH) -->
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center;">
+            <div style="flex: 1; width: 100%;">
+                <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
             </div>
-            <div style="flex: 1; min-width: 200px;">
-                <select id="fohPlanFilter" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em;">
-                    <option value="">All Plans</option>
-                    <?php foreach($unique_plans as $up): ?>
-                        <option value="<?php echo esc_attr($up); ?>"><?php echo esc_html($up); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-        </div>
-
-        <div class="foh-tabs" style="background: #fff; padding: 0 20px;">
-            <button class="foh-tab-btn active" onclick="switchTab(event, 'active-tab')">Active Subscriptions</button>
-            <button class="foh-tab-btn" onclick="switchTab(event, 'paused-tab')">Paused</button>
-            <button class="foh-tab-btn" onclick="switchTab(event, 'inactive-tab')">Inactive / Expired</button>
         </div>
 
         <?php foreach(array('active', 'paused', 'inactive') as $tab_key): ?>
@@ -364,7 +410,18 @@ function cmp_render_foh_portal() {
                                 $core_plan_name = $sub->plan_name;
                             }
 
-                            $search_data = esc_attr(strtolower($full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $potential_recipient));
+                            // DYNAMIC RETROACTIVE SEQUENCE M-0000 LOGIC
+                            $display_order_id = '';
+                            if ($sub->wc_order_id < 0) {
+                                $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
+                            } elseif ($sub->wc_order_id > 0) {
+                                $display_order_id = '#' . esc_html($sub->wc_order_id);
+                            } else {
+                                $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
+                            }
+
+                            // Injecting all identifying fields into the invisible search index
+                            $search_data = esc_attr(strtolower($display_order_id . ' ' . $full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $potential_recipient . ' ' . $core_plan_name));
                             $plan_data = esc_attr($core_plan_name);
 
                             // PRICE AND DISCOUNT LOGIC 
@@ -402,15 +459,6 @@ function cmp_render_foh_portal() {
                             if ($deposit_held === 'yes') { $status_color = '#10b981'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held'; }
                             if ($deposit_held === 'own_bag') { $status_color = '#8b5cf6'; $status_bg = '#ede9fe'; $status_text = "Customer's Own Bag"; }
 
-                            // DYNAMIC RETROACTIVE SEQUENCE M-0000 LOGIC
-                            $display_order_id = '';
-                            if ($sub->wc_order_id < 0) {
-                                $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
-                            } elseif ($sub->wc_order_id > 0) {
-                                $display_order_id = '#' . esc_html($sub->wc_order_id);
-                            } else {
-                                $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
-                            }
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
@@ -695,7 +743,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Edit Financials Logic (Super Admin) - Updated to Pencil SVG Toggle
+        // Edit Financials Logic (Super Admin) - Pencil SVG Toggle
         document.querySelectorAll('.edit-financials-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -834,12 +882,8 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Filters
+        // Search Engine
         document.getElementById('fohSearch').addEventListener('keyup', function() {
-            currentPage = 1;
-            renderTable();
-        });
-        document.getElementById('fohPlanFilter').addEventListener('change', function() {
             currentPage = 1;
             renderTable();
         });
@@ -850,13 +894,20 @@ function cmp_render_foh_portal() {
     let currentPage = 1;
     let currentTab = 'active-tab';
 
+    // INTERACTIVE TILE TAB SWITCHER
     function switchTab(evt, tabId) {
         var contents = document.getElementsByClassName("foh-tab-content");
         for (var i = 0; i < contents.length; i++) contents[i].classList.remove("active");
-        var btns = document.getElementsByClassName("foh-tab-btn");
-        for (var i = 0; i < btns.length; i++) btns[i].classList.remove("active");
-        document.getElementById(tabId).classList.add("active");
-        evt.currentTarget.classList.add("active");
+        
+        var tiles = document.getElementsByClassName("foh-tile");
+        for (var i = 0; i < tiles.length; i++) tiles[i].classList.remove("active");
+        
+        var targetContent = document.getElementById(tabId);
+        if (targetContent) targetContent.classList.add("active");
+        
+        if (evt && evt.currentTarget) {
+            evt.currentTarget.classList.add("active");
+        }
         
         currentTab = tabId;
         currentPage = 1;
@@ -865,16 +916,12 @@ function cmp_render_foh_portal() {
 
     function renderTable() {
         const query = document.getElementById('fohSearch').value.toLowerCase();
-        const plan = document.getElementById('fohPlanFilter').value;
         
         const allRows = Array.from(document.querySelectorAll('#' + currentTab + ' .foh-row'));
         
         const filtered = allRows.filter(row => {
             const searchData = row.getAttribute('data-search');
-            const planData = row.getAttribute('data-plan');
-            const matchesSearch = query === '' || searchData.includes(query);
-            const matchesPlan = plan === '' || planData === plan;
-            return matchesSearch && matchesPlan;
+            return query === '' || searchData.includes(query);
         });
 
         allRows.forEach(row => row.style.display = 'none');
