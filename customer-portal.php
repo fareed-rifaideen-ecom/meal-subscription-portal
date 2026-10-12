@@ -3,7 +3,7 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 // ==========================================
-// 1. AJAX HANDLER: SAVE MEALS
+// 1. AJAX HANDLERS
 // ==========================================
 add_action('wp_ajax_cmp_save_daily_log', 'cmp_ajax_save_daily_log');
 function cmp_ajax_save_daily_log() {
@@ -78,17 +78,14 @@ function cmp_ajax_save_daily_log() {
     $snack_quota = 0;
 
     if (!$is_juice) {
-        // 1. Try regex for standard "2 Meal" naming
         preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
         if (isset($m[1])) {
             $allowed_quota = intval($m[1]);
         } else {
-            // 2. Try text numbers
             if (preg_match('/\b(one|1)\b/i', $sub->plan_name)) $allowed_quota = 1;
             elseif (preg_match('/\b(two|2)\b/i', $sub->plan_name)) $allowed_quota = 2;
             elseif (preg_match('/\b(three|3)\b/i', $sub->plan_name)) $allowed_quota = 3;
             else {
-                // 3. Fallback based on categories
                 $cats = explode(',', $sub->allowed_categories);
                 foreach($cats as $c) {
                     if (in_array(trim($c), ['Breakfast', 'Lunch', 'Dinner'])) $allowed_quota++;
@@ -112,7 +109,6 @@ function cmp_ajax_save_daily_log() {
                 }
             }
         } else {
-            // Main meals
             $submitted_count = 0;
             if ($allow_custom) {
                 if (!empty($_POST['custom_breakfast'])) $submitted_count++;
@@ -128,7 +124,6 @@ function cmp_ajax_save_daily_log() {
                 wp_send_json_error("Please select exactly {$allowed_quota} main meal(s).");
             }
 
-            // Snacks
             $submitted_snacks = 0;
             if ($allow_custom) {
                 if (!empty($_POST['custom_snack_1'])) $submitted_snacks++;
@@ -209,7 +204,7 @@ function cmp_ajax_save_daily_log() {
     wp_send_json_success($response_data);
 }
 
-// 1.5 AJAX HANDLER: CUSTOMER PORTAL INLINE LOGISTICS EDITING
+// 1.5 AJAX HANDLER: FOH INLINE LOGISTICS EDITING
 add_action('wp_ajax_cmp_cp_update_customer_logistics', 'cmp_ajax_cp_update_customer_logistics');
 function cmp_ajax_cp_update_customer_logistics() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
@@ -246,7 +241,7 @@ function cmp_ajax_cp_update_customer_logistics() {
     wp_send_json_success(array('timing' => $timing, 'time_slot' => $time_slot, 'allergies' => $allergies ?: 'No Allergies Recorded'));
 }
 
-// 1.6 AJAX HANDLER: CUSTOMER PORTAL ADMIN ACCOUNT DETAILS EDITING
+// 1.6 AJAX HANDLER: ADMIN ACCOUNT DETAILS EDITING
 add_action('wp_ajax_cmp_cp_admin_update_account_details', 'cmp_ajax_cp_admin_update_account_details');
 function cmp_ajax_cp_admin_update_account_details() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
@@ -330,6 +325,48 @@ function cmp_ajax_cp_admin_update_account_details() {
         'plan_name' => $new_plan_name
     ));
 }
+
+// 1.7 AJAX HANDLER: ADMIN ADD/REMOVE PLAN DAYS
+add_action('wp_ajax_cmp_cp_admin_adjust_days', 'cmp_ajax_cp_admin_adjust_days');
+function cmp_ajax_cp_admin_adjust_days() {
+    check_ajax_referer('cmp_portal_nonce', 'nonce');
+    if ( ! current_user_can('manage_options') && ! current_user_can('menu_manager') && ! current_user_can('foh_manager') ) {
+        wp_send_json_error('Permission Denied.');
+    }
+
+    $sub_id = intval($_POST['sub_id']);
+    $operation = sanitize_text_field($_POST['operation']);
+
+    global $wpdb;
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT total_days, expiry_date FROM $table_subs WHERE id = %d", $sub_id));
+
+    if (!$sub) wp_send_json_error('Subscription not found.');
+
+    $new_days = intval($sub->total_days);
+    $current_expiry = new DateTime($sub->expiry_date);
+
+    if ($operation === 'add') {
+        $new_days++;
+        $current_expiry->modify('+1 day');
+    } elseif ($operation === 'remove') {
+        if ($new_days <= 1) {
+            wp_send_json_error('Cannot reduce plan below 1 day.');
+        }
+        $new_days--;
+        $current_expiry->modify('-1 day');
+    } else {
+        wp_send_json_error('Invalid operation.');
+    }
+
+    $wpdb->update($table_subs, array(
+        'total_days' => $new_days,
+        'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
+    ), array('id' => $sub_id));
+
+    wp_send_json_success(array('new_days' => $new_days));
+}
+
 
 // ==========================================
 // 2. DASHBOARD RENDERER
@@ -423,7 +460,7 @@ function cmp_render_customer_portal() {
 
     // --- UNLOCK BACK-DATES FOR ADMINS ---
     if ($is_admin_override || $is_chef_override) {
-        $global_min_date = ''; // Allows selecting ANY past date
+        $global_min_date = ''; 
         $note_text = "Admin/Chef Mode: Date restrictions are disabled. You may assign back-dates.";
         $note_color = "#16a34a"; 
     } elseif ( $current_hour >= $dynamic_cutoff_hour ) {
@@ -438,7 +475,6 @@ function cmp_render_customer_portal() {
 
     ob_start();
     ?>
-    <!-- PASS PHP FOOD DATA TO JS FOR DYNAMIC RENDERING -->
     <script>
         var cmpGlobalFoodData = <?php echo json_encode($foods); ?>;
     </script>
@@ -661,17 +697,14 @@ function cmp_render_customer_portal() {
             $snack_quota = 0;
 
             if (!$is_juice) {
-                // 1. Try regex
                 preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
                 if (isset($m[1])) {
                     $allowed_quota = intval($m[1]);
                 } else {
-                    // 2. Try text
                     if (preg_match('/\b(one|1)\b/i', $sub->plan_name)) $allowed_quota = 1;
                     elseif (preg_match('/\b(two|2)\b/i', $sub->plan_name)) $allowed_quota = 2;
                     elseif (preg_match('/\b(three|3)\b/i', $sub->plan_name)) $allowed_quota = 3;
                     else {
-                        // 3. Try Categories
                         $cats = explode(',', $sub->allowed_categories);
                         foreach($cats as $c) {
                             if (in_array(trim($c), ['Breakfast', 'Lunch', 'Dinner'])) $allowed_quota++;
@@ -780,6 +813,20 @@ function cmp_render_customer_portal() {
                     <p style="color: <?php echo $note_color; ?>; font-size: 0.9em; font-weight: bold; margin: 0; text-align:center;"><em><?php echo $note_text; ?></em></p>
                 </div>
             </div>
+
+            <!-- PHASE 6: ADMIN PLAN MANAGER CONTROLS -->
+            <?php if ($is_admin_override): ?>
+            <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <strong style="color:#b45309; font-size:1.1em;">Admin Plan Manager</strong><br>
+                    <span style="color:#92400e; font-size:0.9em;">Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong></span>
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="add" style="background:#16a34a; color:#fff; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">+ Add Extra Day</button>
+                    <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="remove" style="background:#dc2626; color:#fff; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">- Remove Last Day</button>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <div class="cmp-table-responsive">
                 <table class="cmp-table">
@@ -1162,6 +1209,37 @@ function cmp_render_customer_portal() {
                     alert('Error: ' + res.data);
                     btn.text(origText).prop('disabled', false);
                 }
+            });
+        });
+
+        // ADMIN PLAN MANAGER: ADD / REMOVE DAYS LOGIC
+        $('.admin-adjust-days-btn').on('click', function(e) {
+            e.preventDefault();
+            var btn = $(this);
+            var subId = btn.data('sub-id');
+            var op = btn.data('operation');
+            
+            var confirmMsg = op === 'add' ? "Are you sure you want to ADD an extra day to this plan?" : "Are you sure you want to REMOVE a day from this plan?";
+            if(!confirm(confirmMsg)) return;
+
+            var origText = btn.text();
+            btn.text('Updating...').prop('disabled', true);
+
+            $.post('<?php echo admin_url("admin-ajax.php"); ?>', {
+                action: 'cmp_cp_admin_adjust_days',
+                nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
+                sub_id: subId,
+                operation: op
+            }, function(res) {
+                if(res.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + res.data);
+                    btn.text(origText).prop('disabled', false);
+                }
+            }).fail(function() {
+                alert('Connection error.');
+                btn.text(origText).prop('disabled', false);
             });
         });
 
