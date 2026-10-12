@@ -164,7 +164,7 @@ function cmp_render_chef_assignment_desk() {
             </div>
             
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Report ⇗</a>
+                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Preparation Report ⇗</a>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
