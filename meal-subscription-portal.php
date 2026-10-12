@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.7
+ * Version: 2.8
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -50,6 +50,9 @@ function cmp_activate_plugin() {
         start_date datetime DEFAULT CURRENT_TIMESTAMP,
         expiry_date datetime NOT NULL,
         status varchar(50) DEFAULT 'active',
+        foh_remarks text NULL,
+        is_flexible tinyint(1) DEFAULT 0,
+        allow_custom tinyint(1) DEFAULT 0,
         PRIMARY KEY  (id)
     ) $charset_collate;";
     dbDelta( $sql_subs );
@@ -63,13 +66,21 @@ function cmp_activate_plugin() {
         is_chefs_choice tinyint(1) DEFAULT 0,
         is_prepared tinyint(1) DEFAULT 0,
         breakfast_id mediumint(9),
+        custom_breakfast varchar(255) NULL,
         lunch_id mediumint(9),
+        custom_lunch varchar(255) NULL,
         dinner_id mediumint(9),
+        custom_dinner varchar(255) NULL,
         snack_1_id mediumint(9),
+        custom_snack_1 varchar(255) NULL,
         snack_2_id mediumint(9),
+        custom_snack_2 varchar(255) NULL,
         juice_1_id mediumint(9),
+        custom_juice_1 varchar(255) NULL,
         juice_2_id mediumint(9),
+        custom_juice_2 varchar(255) NULL,
         juice_3_id mediumint(9),
+        custom_juice_3 varchar(255) NULL,
         dispatch_status tinyint(1) DEFAULT 0,
         delivery_result varchar(50) DEFAULT 'Pending',
         pos_updated tinyint(1) DEFAULT 0,
@@ -88,12 +99,33 @@ add_action('admin_init', 'cmp_auto_patch_database');
 function cmp_auto_patch_database() {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     
-    // Check if the new pricing columns exist. If not, inject them safely.
-    $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'plan_price'");
-    if (empty($col_check)) {
+    // Patch 1: Pricing Columns
+    $col_check_price = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'plan_price'");
+    if (empty($col_check_price)) {
         $wpdb->query("ALTER TABLE {$table_subs} ADD plan_price DECIMAL(10,2) DEFAULT '0.00' AFTER allowed_categories");
         $wpdb->query("ALTER TABLE {$table_subs} ADD discount_amount DECIMAL(10,2) DEFAULT '0.00' AFTER plan_price");
+    }
+
+    // Patch 2: Phase 5 Advanced Personalization Flags (Subscriptions)
+    $col_check_flex = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'is_flexible'");
+    if (empty($col_check_flex)) {
+        $wpdb->query("ALTER TABLE {$table_subs} ADD is_flexible TINYINT(1) DEFAULT 0 AFTER status");
+        $wpdb->query("ALTER TABLE {$table_subs} ADD allow_custom TINYINT(1) DEFAULT 0 AFTER is_flexible");
+    }
+
+    // Patch 3: Phase 5 Custom Text Input Fields (Daily Logs)
+    $col_check_custom = $wpdb->get_results("SHOW COLUMNS FROM {$table_logs} LIKE 'custom_breakfast'");
+    if (empty($col_check_custom)) {
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_breakfast VARCHAR(255) NULL AFTER breakfast_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_lunch VARCHAR(255) NULL AFTER lunch_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_dinner VARCHAR(255) NULL AFTER dinner_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_snack_1 VARCHAR(255) NULL AFTER snack_1_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_snack_2 VARCHAR(255) NULL AFTER snack_2_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_juice_1 VARCHAR(255) NULL AFTER juice_1_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_juice_2 VARCHAR(255) NULL AFTER juice_2_id");
+        $wpdb->query("ALTER TABLE {$table_logs} ADD custom_juice_3 VARCHAR(255) NULL AFTER juice_3_id");
     }
 }
 
