@@ -166,7 +166,9 @@ function cmp_export_kitchen_csv() {
         if ($order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
         if (empty($timing)) $timing = get_user_meta($log->user_id, 'delivery_timing', true) ?: 'N/A';
 
+        // --- NEW VISUAL CLEANUP ---
         $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
+
         $is_day_before = (stripos($timing, 'Day Before') !== false);
         $delivery_date = $is_day_before ? $prep_date : $log->target_date;
 
@@ -213,6 +215,7 @@ function cmp_export_kitchen_csv() {
         $delivery = $log->delivery_result ?: 'Pending';
         $pos_check = $log->pos_updated ? 'Yes' : 'No';
         
+        // Fulfillment Tracker
         $day_number = $wpdb->get_var($wpdb->prepare(
             "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
              WHERE subscription_id = %d AND target_date <= %s 
@@ -220,17 +223,9 @@ function cmp_export_kitchen_csv() {
             $log->subscription_id, $log->target_date
         ));
         
-        // Recipient Extraction
         $plan_parts = explode(' - ', $log->plan_name);
-        $potential_recipient = end($plan_parts);
-        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            array_pop($plan_parts);
-            $core_plan_name = implode(' - ', $plan_parts);
-        } else {
-            $core_plan_name = $log->plan_name;
-        }
-
-        $plan_string = $core_plan_name . " ({$day_number}/{$log->total_days})";
+        $plan_string = $plan_parts[0] . " ({$day_number}/{$log->total_days})";
+        if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
         
         $order_id_display = 'Manual';
         if ($log->wc_order_id < 0) { $order_id_display = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
@@ -428,7 +423,7 @@ function cmp_render_kitchen_portal() {
         $recipient_badge = '';
         
         if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
+            $recipient_badge = ' <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span>';
             array_pop($plan_parts);
             $core_plan_name = implode(' - ', $plan_parts);
         } else {
@@ -605,15 +600,9 @@ function cmp_render_kitchen_portal() {
                         ?>
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
-                                <div>
+                                <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 6px;">
                                     <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                     <?php echo $c['recipient_badge']; ?>
-                                </div>
-                                
-                                <div style="margin-top:6px;">
-                                    <span style="background: #ef4444; color: white; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; vertical-align: middle; white-space:nowrap;">
-                                        Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
-                                    </span>
                                 </div>
                                 
                                 <div style="margin-top:6px; font-size:0.95em; line-height:1.4;">
@@ -638,25 +627,19 @@ function cmp_render_kitchen_portal() {
                                 </div>
 
                                 <div style="<?php echo $allergy_style; ?>"><?php echo esc_html($c['allergies']); ?></div>
-
-                                <?php if (!empty($c['foh_remarks'])): ?>
-                                    <div style="background:#e0f2fe; color:#0369a1; padding:6px 8px; border-radius:4px; font-size:0.85em; margin-top:5px; border-left:3px solid #0284c7; line-height:1.3;">
-                                        <strong>FOH Note:</strong> <?php echo esc_html($c['foh_remarks']); ?>
-                                    </div>
-                                <?php endif; ?>
-
-                                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
-                                    <strong><?php echo esc_html($plan_duration); ?> (<?php echo $c['day_number']; ?>/<?php echo $c['total_days']; ?>)</strong><br>
-                                    <span style="color:#64748b; font-size:0.9em;"><?php echo esc_html($plan_meals); ?></span>
-                                </div>
                             </td>
                             
                             <td>
-                                <div class="logistics-box" style="margin-top:0;">
+                                <div class="logistics-box" style="margin-top:0; margin-bottom:8px;">
                                     <span style="color: #475569;"><strong>Method:</strong> <?php echo esc_html($c['method']); ?></span><br>
                                     <span style="color: #475569;"><strong>Receive By:</strong> <?php echo esc_html($c['timing']); ?></span><br>
                                     <span style="color: #0f766e; font-weight:bold;"><strong>Delivery:</strong> <?php echo date('D, M j', strtotime($c['delivery_date'])); ?></span><br>
                                     <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html($c['time_slot']); ?></span>
+                                </div>
+                                <div style="text-align: left;">
+                                    <span style="background: #ef4444; color: white; font-size: 0.85em; font-weight:bold; padding: 3px 8px; border-radius: 4px; display:inline-block;">
+                                        Eating: <?php echo date('M j', strtotime($c['target_date'])); ?>
+                                    </span>
                                 </div>
                             </td>
 
@@ -732,6 +715,18 @@ function cmp_render_kitchen_portal() {
                                         <?php foreach($c['meals'] as $meal) echo "<li>$meal</li>"; ?>
                                     </ul>
                                 <?php endif; ?>
+
+                                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #ccc;">
+                                    <div style="margin-bottom: 5px;">
+                                        <strong><?php echo esc_html($plan_duration); ?> (<?php echo $c['day_number']; ?>/<?php echo $c['total_days']; ?>)</strong><br>
+                                        <span style="color:#64748b; font-size:0.9em;"><?php echo esc_html($plan_meals); ?></span>
+                                    </div>
+                                    <?php if (!empty($c['foh_remarks'])): ?>
+                                        <div style="background:#e0f2fe; color:#0369a1; padding:6px 8px; border-radius:4px; font-size:0.85em; margin-top:8px; border-left:3px solid #0284c7; line-height:1.3;">
+                                            <strong>FOH Note:</strong> <?php echo esc_html($c['foh_remarks']); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                             
                             <td style="text-align:center; background:#f0fdf4; border-left:1px solid #ddd;">
