@@ -82,9 +82,18 @@ function cmp_render_chef_assignment_desk() {
             if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
         }
 
+        $display_order_id = 'Manual';
+        if ($sub->wc_order_id < 0) {
+            $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
+        } elseif ($sub->wc_order_id > 0) {
+            $display_order_id = '#' . $sub->wc_order_id;
+        } else {
+            $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
+        }
+
         $customer_data = array(
             'id'        => $sub->id,
-            'order_id'  => $sub->wc_order_id,
+            'order_id'  => $display_order_id,
             'name'      => $full_name,
             'email'     => $email,
             'phone'     => $phone,
@@ -169,7 +178,7 @@ function cmp_render_chef_assignment_desk() {
 
         <!-- TAB 1: PENDING -->
         <div id="tab-pending" class="chef-tab-content active">
-            <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by name, email, or phone...">
+            <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by order ID, name, email, or phone...">
             <div style="overflow-x: auto;">
                 <table class="chef-table" id="table-pending">
                     <thead>
@@ -185,10 +194,10 @@ function cmp_render_chef_assignment_desk() {
                         <?php if(empty($pending_customers)): ?>
                             <tr><td colspan="5" style="text-align:center; padding:30px; color:#666;">No pending assignments. The kitchen is fully prepped!</td></tr>
                         <?php else: foreach($pending_customers as $c): 
-                            $search_str = strtolower($c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
+                            $search_str = strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
                         ?>
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id'] > 0 ? '#'.esc_html($c['order_id']) : '<span style="color:#d63638;">Manual</span>'; ?></strong></td>
+                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
                                 <td>
                                     <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
                                     <span style="color: #666;"><?php echo esc_html($c['email']); ?></span><br>
@@ -233,10 +242,10 @@ function cmp_render_chef_assignment_desk() {
                         <?php if(empty($all_customers)): ?>
                             <tr><td colspan="5" style="text-align:center; padding:30px; color:#666;">No active customers found.</td></tr>
                         <?php else: foreach($all_customers as $c): 
-                            $search_str = strtolower($c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
+                            $search_str = strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
                         ?>
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id'] > 0 ? '#'.esc_html($c['order_id']) : '<span style="color:#d63638;">Manual</span>'; ?></strong></td>
+                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
                                 <td>
                                     <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
                                     <span style="color: #666;"><?php echo esc_html($c['email']); ?></span><br>
