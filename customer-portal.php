@@ -204,9 +204,12 @@ function cmp_ajax_admin_update_account_details() {
 
     $user_id = intval($_POST['user_id']);
     $order_id = intval($_POST['order_id']);
+    $sub_id = isset($_POST['sub_id']) ? intval($_POST['sub_id']) : 0;
+    
     $first_name = sanitize_text_field($_POST['first_name']);
     $last_name = sanitize_text_field($_POST['last_name']);
     $address = sanitize_text_field($_POST['address']);
+    $recipient_name = sanitize_text_field($_POST['recipient_name']);
 
     if ($user_id > 0) {
         wp_update_user(['ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name]);
@@ -235,9 +238,35 @@ function cmp_ajax_admin_update_account_details() {
         }
     }
 
+    $new_plan_name = '';
+    if ($sub_id > 0) {
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id));
+        if ($sub) {
+            $plan_parts = explode(' - ', $sub->plan_name);
+            $potential_recipient = end($plan_parts);
+            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+                array_pop($plan_parts);
+                $core_plan_name = implode(' - ', $plan_parts);
+            } else {
+                $core_plan_name = $sub->plan_name;
+            }
+
+            $new_plan_name = $core_plan_name;
+            if (!empty($recipient_name)) {
+                $new_plan_name .= ' - ' . $recipient_name;
+            }
+            
+            $wpdb->update($table_subs, array('plan_name' => $new_plan_name), array('id' => $sub_id));
+        }
+    }
+
     wp_send_json_success(array(
         'name' => trim($first_name . ' ' . $last_name),
-        'address' => $address ?: 'Address not provided'
+        'address' => $address ?: 'Address not provided',
+        'recipient' => $recipient_name,
+        'plan_name' => $new_plan_name
     ));
 }
 
@@ -474,7 +503,7 @@ function cmp_render_customer_portal() {
                 $start_date_formatted = !empty($sub->start_date) ? date('M d, Y', strtotime($sub->start_date)) : 'N/A';
                 
                 echo '<button class="cmp-tab-btn ' . $active_class . '" onclick="switchTab(event, \'plan-tab-' . esc_attr($sub->id) . '\')">';
-                echo esc_html($sub->plan_name) . '<br><span style="font-size: 0.85em; font-weight: normal; opacity: 0.8;">' . esc_html($start_date_formatted) . '</span>';
+                echo '<span id="tab-title-' . esc_attr($sub->id) . '">' . esc_html($sub->plan_name) . '</span><br><span style="font-size: 0.85em; font-weight: normal; opacity: 0.8;">' . esc_html($start_date_formatted) . '</span>';
                 echo '</button>';
                 
                 $first_tab = false;
@@ -502,6 +531,19 @@ function cmp_render_customer_portal() {
             $fallback_name = trim($fname . ' ' . $lname);
             if (empty($fallback_name)) $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
             $display_name = $fallback_name;
+
+            // Recipient Extraction
+            $plan_parts = explode(' - ', $sub->plan_name);
+            $potential_recipient = end($plan_parts);
+            $recipient_name = '';
+            
+            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+                $recipient_name = $potential_recipient;
+                array_pop($plan_parts);
+                $core_plan_name = implode(' - ', $plan_parts);
+            } else {
+                $core_plan_name = $sub->plan_name;
+            }
 
             $timing = !empty($sub->delivery_timing) ? $sub->delivery_timing : '';
             if (empty($timing) && $order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
@@ -588,6 +630,9 @@ function cmp_render_customer_portal() {
                     <div id="account-view-<?php echo $sub->id; ?>">
                         <p style="margin:0 0 8px 0; color:#334155;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
                         <p style="margin:0 0 8px 0; color:#334155;"><strong>Name:</strong> <span id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($display_name); ?></span></p>
+                        
+                        <p id="recipient-row-<?php echo $sub->id; ?>" style="margin:0 0 8px 0; color:#334155; display:<?php echo !empty($recipient_name) ? 'block' : 'none'; ?>"><strong>Recipient:</strong> <span id="recipient-val-<?php echo $sub->id; ?>"><?php echo esc_html($recipient_name); ?></span></p>
+
                         <p style="margin:0 0 8px 0; color:#334155;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
                         <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
                         <p style="margin:0; color:#334155;"><strong>Address:</strong> <span id="address-val-<?php echo $sub->id; ?>"><?php echo esc_html($address); ?></span></p>
@@ -604,6 +649,10 @@ function cmp_render_customer_portal() {
                                 <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
                                 <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
                             </div>
+                        </div>
+                        <div style="margin-bottom:8px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Recipient Name (Optional):</label>
+                            <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
                         </div>
                         <div style="margin-bottom:10px;">
                             <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
@@ -970,6 +1019,7 @@ function cmp_render_customer_portal() {
             var orderId = btn.data('order-id');
             var fName = $('#edit-fname-' + subId).val();
             var lName = $('#edit-lname-' + subId).val();
+            var recipient = $('#edit-recipient-' + subId).val();
             var addr = $('#edit-address-' + subId).val();
             var origText = btn.text();
 
@@ -985,8 +1035,10 @@ function cmp_render_customer_portal() {
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 user_id: userId,
                 order_id: orderId,
+                sub_id: subId,
                 first_name: fName,
                 last_name: lName,
+                recipient_name: recipient,
                 address: addr
             };
 
@@ -994,6 +1046,17 @@ function cmp_render_customer_portal() {
                 if (res.success) {
                     $('#name-val-' + subId).text(res.data.name);
                     $('#address-val-' + subId).text(res.data.address);
+                    
+                    if (res.data.recipient) {
+                        $('#recipient-val-' + subId).text(res.data.recipient);
+                        $('#recipient-row-' + subId).show();
+                    } else {
+                        $('#recipient-row-' + subId).hide();
+                    }
+
+                    if (res.data.plan_name) {
+                        $('#tab-title-' + subId).text(res.data.plan_name);
+                    }
                     
                     btn.text('✓ Saved').css('background', '#0f766e');
                     
