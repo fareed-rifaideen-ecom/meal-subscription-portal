@@ -41,7 +41,7 @@ function cmp_ajax_foh_save_remark() {
     wp_send_json_success();
 }
 
-// 4. AJAX HANDLER: Update Super Admin & Menu Manager Financials
+// 4. AJAX HANDLER: Update Super Admin Financials
 add_action('wp_ajax_cmp_foh_update_financials', 'cmp_ajax_foh_update_financials');
 function cmp_ajax_foh_update_financials() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -183,6 +183,91 @@ function cmp_ajax_foh_toggle_deposit() {
     wp_send_json_success();
 }
 
+// 1.6 AJAX HANDLER: ADMIN ACCOUNT DETAILS EDITING (WITH PHASE 5 TOGGLES)
+add_action('wp_ajax_cmp_admin_update_account_details', 'cmp_ajax_admin_update_account_details');
+function cmp_ajax_admin_update_account_details() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    
+    if ( ! current_user_can('manage_options') ) {
+        wp_send_json_error('Permission Denied. Admins only.');
+    }
+
+    $user_id = intval($_POST['user_id']);
+    $order_id = intval($_POST['order_id']);
+    $sub_id = isset($_POST['sub_id']) ? intval($_POST['sub_id']) : 0;
+    
+    $first_name = sanitize_text_field($_POST['first_name']);
+    $last_name = sanitize_text_field($_POST['last_name']);
+    $address = sanitize_text_field($_POST['address']);
+    $recipient_name = sanitize_text_field($_POST['recipient_name']);
+    
+    $is_flexible  = isset($_POST['is_flexible']) ? intval($_POST['is_flexible']) : 0;
+    $allow_custom = isset($_POST['allow_custom']) ? intval($_POST['allow_custom']) : 0;
+
+    if ($user_id > 0) {
+        wp_update_user(['ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name]);
+        update_user_meta($user_id, 'billing_first_name', $first_name);
+        update_user_meta($user_id, 'billing_last_name', $last_name);
+        update_user_meta($user_id, 'billing_address_1', $address);
+        update_user_meta($user_id, 'billing_address_2', '');
+        update_user_meta($user_id, 'billing_city', '');
+    }
+
+    if ($order_id > 0) {
+        $order = wc_get_order($order_id);
+        if ($order) {
+            $order->set_billing_first_name($first_name);
+            $order->set_billing_last_name($last_name);
+            $order->set_shipping_first_name($first_name);
+            $order->set_shipping_last_name($last_name);
+            $order->set_billing_address_1($address);
+            $order->set_shipping_address_1($address);
+            $order->save();
+        }
+    }
+
+    $new_plan_name = '';
+    if ($sub_id > 0) {
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        
+        $wpdb->update(
+            $table_subs, 
+            array(
+                'is_flexible' => $is_flexible,
+                'allow_custom' => $allow_custom
+            ), 
+            array('id' => $sub_id)
+        );
+
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id));
+        if ($sub) {
+            $plan_parts = explode(' - ', $sub->plan_name);
+            $potential_recipient = end($plan_parts);
+            if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+                array_pop($plan_parts);
+                $core_plan_name = implode(' - ', $plan_parts);
+            } else {
+                $core_plan_name = $sub->plan_name;
+            }
+
+            $new_plan_name = $core_plan_name;
+            if (!empty($recipient_name)) {
+                $new_plan_name .= ' - ' . $recipient_name;
+            }
+            
+            $wpdb->update($table_subs, array('plan_name' => $new_plan_name), array('id' => $sub_id));
+        }
+    }
+
+    wp_send_json_success(array(
+        'name' => trim($first_name . ' ' . $last_name),
+        'address' => $address ?: 'Address not provided',
+        'recipient' => $recipient_name,
+        'plan_name' => $new_plan_name
+    ));
+}
+
 
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
@@ -214,6 +299,7 @@ function cmp_render_foh_portal() {
     $col_check = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'foh_remarks'");
     if (empty($col_check)) { $wpdb->query("ALTER TABLE {$table_subs} ADD foh_remarks TEXT NULL AFTER status"); }
 
+    // Phase 5 DB Pull
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
     
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
@@ -359,7 +445,7 @@ function cmp_render_foh_portal() {
             </div>
         </div>
 
-        <!-- SEARCH BAR (UPDATED TO BE FULL WIDTH) -->
+        <!-- SEARCH BAR -->
         <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center;">
             <div style="flex: 1; width: 100%;">
                 <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
@@ -401,8 +487,10 @@ function cmp_render_foh_portal() {
                             $plan_parts = explode(' - ', $sub->plan_name);
                             $potential_recipient = end($plan_parts);
                             $recipient_badge = '';
+                            $raw_recipient = '';
                             
                             if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+                                $raw_recipient = $potential_recipient;
                                 $recipient_badge = ' <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; margin-left:8px; display:inline-block; margin-bottom: 5px;">For: <strong>' . esc_html($potential_recipient) . '</strong></span>';
                                 array_pop($plan_parts);
                                 $core_plan_name = implode(' - ', $plan_parts);
@@ -421,7 +509,7 @@ function cmp_render_foh_portal() {
                             }
 
                             // Injecting all identifying fields into the invisible search index
-                            $search_data = esc_attr(strtolower($display_order_id . ' ' . $full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $potential_recipient . ' ' . $core_plan_name));
+                            $search_data = esc_attr(strtolower($display_order_id . ' ' . $full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $raw_recipient . ' ' . $core_plan_name));
                             $plan_data = esc_attr($core_plan_name);
 
                             // PRICE AND DISCOUNT LOGIC 
@@ -459,6 +547,10 @@ function cmp_render_foh_portal() {
                             if ($deposit_held === 'yes') { $status_color = '#10b981'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held'; }
                             if ($deposit_held === 'own_bag') { $status_color = '#8b5cf6'; $status_bg = '#ede9fe'; $status_text = "Customer's Own Bag"; }
 
+                            // Check Advanced Features (Phase 5)
+                            $is_flexible = isset($sub->is_flexible) ? intval($sub->is_flexible) : 0;
+                            $allow_custom = isset($sub->allow_custom) ? intval($sub->allow_custom) : 0;
+
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>">
                             
@@ -468,16 +560,55 @@ function cmp_render_foh_portal() {
                             
                             <td>
                                 <div style="display: flex; flex-direction: column;">
-                                    <div><strong style="font-size: 1.1em; color: #0073aa;"><?php echo esc_html($full_name ?: 'Customer'); ?></strong><?php echo $recipient_badge; ?></div>
+                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <div><strong style="font-size: 1.1em; color: #0073aa;" id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($full_name ?: 'Customer'); ?></strong></div>
+                                        <?php if (current_user_can('manage_options')): ?>
+                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div id="recipient-row-<?php echo $sub->id; ?>" style="display:<?php echo !empty($recipient_badge) ? 'block' : 'none'; ?>">
+                                        <span id="recipient-val-<?php echo $sub->id; ?>"><?php echo $recipient_badge; ?></span>
+                                    </div>
                                     <span style="color: #555;"><?php echo esc_html($sub->user_email); ?></span>
                                     <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 3px;">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                                         <?php echo esc_html($phone); ?>
                                     </span>
                                 </div>
+                                
+                                <!-- ACCOUNT EDIT BOX -->
+                                <?php if (current_user_can('manage_options')): ?>
+                                <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
+                                    <div style="display:flex; gap:10px; margin-bottom:8px;">
+                                        <div style="flex:1;">
+                                            <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" placeholder="First Name" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        </div>
+                                        <div style="flex:1;">
+                                            <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" placeholder="Last Name" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        </div>
+                                    </div>
+                                    <div style="margin-bottom:8px;">
+                                        <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($raw_recipient); ?>" placeholder="Recipient Name (Optional)" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                    </div>
+                                    
+                                    <div style="margin-bottom:10px; border-top: 1px dashed #ccc; padding-top: 10px;">
+                                        <label style="font-size:0.8em; font-weight:bold; display:flex; align-items:center; gap:5px; margin-bottom: 5px;">
+                                            <input type="checkbox" id="edit-flex-<?php echo $sub->id; ?>" <?php checked($is_flexible, 1); ?> style="margin:0;"> Enable Flexible Menu
+                                        </label>
+                                        <label style="font-size:0.8em; font-weight:bold; display:flex; align-items:center; gap:5px;">
+                                            <input type="checkbox" id="edit-custom-<?php echo $sub->id; ?>" <?php checked($allow_custom, 1); ?> style="margin:0;"> Enable Custom Meals
+                                        </label>
+                                    </div>
+
+                                    <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
+                                </div>
+                                <?php endif; ?>
+
                             </td>
                             <td>
-                                <strong style="color: #222;"><?php echo esc_html($core_plan_name); ?></strong><br>
+                                <strong style="color: #222;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
                                 
                                 <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
                                     <span style="color: #2271b1; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
@@ -872,6 +1003,110 @@ function cmp_render_foh_portal() {
                         }, 1000);
                     } else {
                         alert('Error saving note.');
+                        this.innerText = originalText;
+                        this.disabled = false;
+                    }
+                }).catch(() => {
+                    this.innerText = originalText;
+                    this.disabled = false;
+                });
+            });
+        });
+
+        // Account Details Edit Toggle Logic
+        document.querySelectorAll('.toggle-account-edit').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const subId = this.getAttribute('data-sub-id');
+                const viewDiv = document.getElementById('account-view-' + subId);
+                const editDiv = document.getElementById('account-edit-' + subId);
+                
+                if (editDiv.style.display === 'none') {
+                    editDiv.style.display = 'block';
+                    this.innerHTML = '<span style="font-size:0.85em; text-decoration:underline;">Close</span>';
+                } else {
+                    editDiv.style.display = 'none';
+                    this.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+                }
+            });
+        });
+
+        // Account Details Save Logic
+        document.querySelectorAll('.save-account-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const subId = this.getAttribute('data-sub-id');
+                const userId = this.getAttribute('data-user-id');
+                const orderId = this.getAttribute('data-order-id');
+                
+                const fName = document.getElementById('edit-fname-' + subId).value;
+                const lName = document.getElementById('edit-lname-' + subId).value;
+                const recipient = document.getElementById('edit-recipient-' + subId).value;
+                const addr = document.getElementById('edit-address-' + subId).value;
+                
+                const flexEl = document.getElementById('edit-flex-' + subId);
+                const customEl = document.getElementById('edit-custom-' + subId);
+                
+                const isFlex = flexEl && flexEl.checked ? 1 : 0;
+                const isCustom = customEl && customEl.checked ? 1 : 0;
+
+                const originalText = this.innerText;
+
+                if (!fName || !addr) {
+                    alert("First Name and Address are required.");
+                    return;
+                }
+
+                this.innerText = 'Saving...';
+                this.disabled = true;
+
+                const formData = new URLSearchParams();
+                formData.append('action', 'cmp_admin_update_account_details');
+                formData.append('nonce', fohNonce);
+                formData.append('user_id', userId);
+                formData.append('order_id', orderId);
+                formData.append('sub_id', subId);
+                formData.append('first_name', fName);
+                formData.append('last_name', lName);
+                formData.append('recipient_name', recipient);
+                formData.append('address', addr);
+                formData.append('is_flexible', isFlex);
+                formData.append('allow_custom', isCustom);
+
+                fetch(fohAjaxUrl, { method: 'POST', body: formData })
+                .then(res => res.json())
+                .then(response => {
+                    if (response.success) {
+                        document.getElementById('name-val-' + subId).innerText = response.data.name;
+                        document.getElementById('address-val-' + subId).innerText = response.data.address;
+                        
+                        let badgeContainer = document.getElementById('recipient-row-' + subId);
+                        let badgeVal = document.getElementById('recipient-val-' + subId);
+                        
+                        if (response.data.recipient) {
+                            badgeVal.innerHTML = ' <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' + response.data.recipient + '</span>';
+                            badgeContainer.style.display = 'block';
+                        } else {
+                            badgeContainer.style.display = 'none';
+                        }
+
+                        if (response.data.plan_name) {
+                            document.getElementById('tab-title-' + subId).innerText = response.data.plan_name;
+                        }
+                        
+                        this.innerText = '✓ Saved';
+                        this.style.background = '#0f766e';
+                        
+                        setTimeout(() => {
+                            document.getElementById('account-edit-' + subId).style.display = 'none';
+                            let editBtn = document.querySelector('.toggle-account-edit[data-sub-id="' + subId + '"]');
+                            if(editBtn) editBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+                            this.innerText = originalText;
+                            this.style.background = '#46b450';
+                            this.disabled = false;
+                        }, 1000);
+                    } else {
+                        alert('Error: ' + response.data);
                         this.innerText = originalText;
                         this.disabled = false;
                     }
