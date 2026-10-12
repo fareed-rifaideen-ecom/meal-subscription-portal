@@ -228,8 +228,13 @@ function cmp_export_kitchen_csv() {
         if (isset($plan_parts[1])) $plan_string .= " - " . $plan_parts[1];
         
         $order_id_display = 'Manual';
-        if ($log->wc_order_id < 0) { $order_id_display = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-        elseif ($log->wc_order_id > 0) { $order_id_display = '#' . $log->wc_order_id; }
+        if ($log->wc_order_id < 0) { 
+            $order_id_display = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); 
+        } elseif ($log->wc_order_id > 0) { 
+            $order_id_display = '#' . $log->wc_order_id; 
+        } else {
+            $order_id_display = 'M-' . str_pad($log->subscription_id, 4, '0', STR_PAD_LEFT); 
+        }
 
         $row_data = array();
 
@@ -431,8 +436,13 @@ function cmp_render_kitchen_portal() {
         }
 
         $display_order_id = 'Manual';
-        if ($log->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-        elseif ($log->wc_order_id > 0) { $display_order_id = '#' . $log->wc_order_id; }
+        if ($log->wc_order_id < 0) { 
+            $display_order_id = 'M-' . str_pad(abs($log->wc_order_id), 4, '0', STR_PAD_LEFT); 
+        } elseif ($log->wc_order_id > 0) { 
+            $display_order_id = '#' . $log->wc_order_id; 
+        } else {
+            $display_order_id = 'M-' . str_pad($log->subscription_id, 4, '0', STR_PAD_LEFT); 
+        }
 
         $customers[] = array(
             'log_id' => $log->id, 
@@ -589,7 +599,7 @@ function cmp_render_kitchen_portal() {
                             if ($c['is_chefs_choice'] && !$c['is_expired']) {
                                 $row_filter_class = $c['is_assigned'] ? 'filter-assigned' : 'filter-pending';
                             }
-                            $search_name = esc_attr(strtolower($c['name']));
+                            $search_name = esc_attr(strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']));
                             
                             $plan_duration = $c['core_plan_name'];
                             $plan_parts = explode(' - ', $c['plan']);
