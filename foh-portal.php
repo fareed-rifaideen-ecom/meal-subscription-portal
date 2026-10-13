@@ -689,6 +689,13 @@ function cmp_render_foh_portal() {
                                         </form>
                                         <?php endif; ?>
                                         <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
+                                        
+                                        <!-- SUPER ADMIN ONLY: PERMANENT SUBSCRIPTION DELETE KILL-SWITCH -->
+                                        <?php if (current_user_can('manage_options')): ?>
+                                        <button class="delete-sub-btn" data-sub-id="<?php echo $sub->id; ?>" data-order-id="<?php echo esc_attr($display_order_id); ?>" style="flex: 0 0 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: #fff; color: #dc2626; border: 1px solid #fca5a5; border-radius: 4px; cursor: pointer; transition: 0.2s; padding: 0;" title="Delete Plan" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background='#fff'">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                        </button>
+                                        <?php endif; ?>
                                     </div>
                                     
                                     <div style="width: 100%; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
@@ -703,15 +710,6 @@ function cmp_render_foh_portal() {
                                             </select>
                                         </div>
                                     </div>
-
-                                    <!-- SUPER ADMIN ONLY: PERMANENT SUBSCRIPTION DELETE KILL-SWITCH -->
-                                    <?php if (current_user_can('manage_options')): ?>
-                                    <div style="width: 100%;">
-                                        <button class="delete-sub-btn" data-sub-id="<?php echo $sub->id; ?>" data-order-id="<?php echo esc_attr($display_order_id); ?>" style="width: 100%; height: 26px; display: flex; align-items: center; justify-content: center; background: #fff; color: #dc2626; border: 1px solid #fca5a5; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.78em; transition: 0.2s;" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background='#fff'">
-                                            🗑 Delete Plan
-                                        </button>
-                                    </div>
-                                    <?php endif; ?>
 
                                 </div>
                             </td>
@@ -1133,7 +1131,8 @@ function cmp_render_foh_portal() {
                 const confirmDelete = confirm('⚠️ WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
                 if (!confirmDelete) return;
 
-                btn.innerText = 'Deleting...';
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = '...';
                 btn.disabled = true;
 
                 const formData = new URLSearchParams();
@@ -1156,12 +1155,12 @@ function cmp_render_foh_portal() {
                         }
                     } else {
                         alert('Error: ' + (response.data || 'Could not delete subscription.'));
-                        btn.innerText = '🗑 Delete Plan';
+                        btn.innerHTML = originalHTML;
                         btn.disabled = false;
                     }
                 }).catch(() => {
                     alert('Network or server error.');
-                    btn.innerText = '🗑 Delete Plan';
+                    btn.innerHTML = originalHTML;
                     btn.disabled = false;
                 });
             });
