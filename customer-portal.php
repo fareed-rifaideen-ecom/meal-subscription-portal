@@ -49,20 +49,32 @@ function cmp_ajax_save_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    $is_flexible  = isset($sub->is_flexible) ? intval($sub->is_flexible) : 0;
-    $allow_custom = isset($sub->allow_custom) ? intval($sub->allow_custom) : 0;
+    // --- LOG-LEVEL SNAPSHOT LOGIC (Phase 7) ---
+    if ($log_id > 0) {
+        // It's an update: Preserve historical plan mode
+        $existing_log = $wpdb->get_row($wpdb->prepare("SELECT plan_mode FROM $table_logs WHERE id = %d", $log_id));
+        $plan_mode = ($existing_log && !empty($existing_log->plan_mode)) ? $existing_log->plan_mode : 'standard';
+    } else {
+        // It's new: Capture current subscription mode
+        $plan_mode = 'standard';
+        if (!empty($sub->is_flexible)) $plan_mode = 'flexible';
+        if (!empty($sub->allow_custom)) $plan_mode = 'custom';
+    }
+
+    $row_is_flexible  = ($plan_mode === 'flexible') ? 1 : 0;
+    $row_allow_custom = ($plan_mode === 'custom') ? 1 : 0;
     $is_chefs_choice = isset($_POST['chefs_choice']) ? intval($_POST['chefs_choice']) : 0;
 
     // --- STRICT MENU AVAILABILITY CHECK ---
     $has_meals = false;
-    if ($allow_custom) {
+    if ($row_allow_custom) {
         $has_meals = !empty($_POST['custom_breakfast']) || !empty($_POST['custom_lunch']) || !empty($_POST['custom_dinner']) || !empty($_POST['custom_snack_1']) || !empty($_POST['custom_snack_2']) || !empty($_POST['custom_juice_1']) || !empty($_POST['custom_juice_2']) || !empty($_POST['custom_juice_3']);
     } else {
         $has_meals = !empty($_POST['breakfast']) || !empty($_POST['lunch']) || !empty($_POST['dinner']) || !empty($_POST['snack_1']) || !empty($_POST['snack_2']) || !empty($_POST['juice_1']) || !empty($_POST['juice_2']) || !empty($_POST['juice_3']);
     }
 
     $is_menu_pending = false;
-    if (!$allow_custom) {
+    if (!$row_allow_custom) {
         $food_exists_count = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_foods WHERE is_active = 1 AND (valid_from IS NULL OR (valid_from <= %s AND valid_until >= %s))", $target_date, $target_date));
         $is_menu_pending = (intval($food_exists_count) === 0);
 
@@ -99,7 +111,7 @@ function cmp_ajax_save_daily_log() {
     // --- STRICT SELECTION QUOTA ENFORCEMENT ---
     if (!$is_admin && !$is_chefs_choice && !$is_menu_pending) {
         if ($is_juice) {
-            if ($allow_custom) {
+            if ($row_allow_custom) {
                 if (empty($_POST['custom_juice_1']) || empty($_POST['custom_juice_2']) || empty($_POST['custom_juice_3'])) {
                     wp_send_json_error("Please provide exactly 3 juices to complete this day.");
                 }
@@ -110,7 +122,7 @@ function cmp_ajax_save_daily_log() {
             }
         } else {
             $submitted_count = 0;
-            if ($allow_custom) {
+            if ($row_allow_custom) {
                 if (!empty($_POST['custom_breakfast'])) $submitted_count++;
                 if (!empty($_POST['custom_lunch'])) $submitted_count++;
                 if (!empty($_POST['custom_dinner'])) $submitted_count++;
@@ -125,7 +137,7 @@ function cmp_ajax_save_daily_log() {
             }
 
             $submitted_snacks = 0;
-            if ($allow_custom) {
+            if ($row_allow_custom) {
                 if (!empty($_POST['custom_snack_1'])) $submitted_snacks++;
                 if (!empty($_POST['custom_snack_2'])) $submitted_snacks++;
             } else {
@@ -144,10 +156,11 @@ function cmp_ajax_save_daily_log() {
         'subscription_id' => $sub_id,
         'target_date'     => $target_date,
         'is_chefs_choice' => $is_chefs_choice,
-        'is_locked'       => 1 
+        'is_locked'       => 1,
+        'plan_mode'       => $plan_mode
     );
 
-    if ($allow_custom) {
+    if ($row_allow_custom) {
         $data['custom_breakfast'] = !empty($_POST['custom_breakfast']) ? sanitize_text_field($_POST['custom_breakfast']) : null;
         $data['custom_lunch']     = !empty($_POST['custom_lunch']) ? sanitize_text_field($_POST['custom_lunch']) : null;
         $data['custom_dinner']    = !empty($_POST['custom_dinner']) ? sanitize_text_field($_POST['custom_dinner']) : null;
@@ -204,7 +217,7 @@ function cmp_ajax_save_daily_log() {
     wp_send_json_success($response_data);
 }
 
-// 1.5 AJAX HANDLER: FOH INLINE LOGISTICS EDITING
+// 1.5 AJAX HANDLER: CUSTOMER PORTAL INLINE LOGISTICS EDITING
 add_action('wp_ajax_cmp_cp_update_customer_logistics', 'cmp_ajax_cp_update_customer_logistics');
 function cmp_ajax_cp_update_customer_logistics() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
@@ -241,7 +254,7 @@ function cmp_ajax_cp_update_customer_logistics() {
     wp_send_json_success(array('timing' => $timing, 'time_slot' => $time_slot, 'allergies' => $allergies ?: 'No Allergies Recorded'));
 }
 
-// 1.6 AJAX HANDLER: ADMIN ACCOUNT DETAILS EDITING
+// 1.6 AJAX HANDLER: CUSTOMER PORTAL ADMIN ACCOUNT DETAILS EDITING
 add_action('wp_ajax_cmp_cp_admin_update_account_details', 'cmp_ajax_cp_admin_update_account_details');
 function cmp_ajax_cp_admin_update_account_details() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
@@ -258,9 +271,6 @@ function cmp_ajax_cp_admin_update_account_details() {
     $last_name = sanitize_text_field($_POST['last_name']);
     $address = sanitize_text_field($_POST['address']);
     $recipient_name = sanitize_text_field($_POST['recipient_name']);
-
-    $is_flexible  = isset($_POST['is_flexible']) ? intval($_POST['is_flexible']) : 0;
-    $allow_custom = isset($_POST['allow_custom']) ? intval($_POST['allow_custom']) : 0;
 
     if ($user_id > 0) {
         wp_update_user(['ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name]);
@@ -289,15 +299,6 @@ function cmp_ajax_cp_admin_update_account_details() {
         global $wpdb;
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
         
-        $wpdb->update(
-            $table_subs, 
-            array(
-                'is_flexible' => $is_flexible,
-                'allow_custom' => $allow_custom
-            ), 
-            array('id' => $sub_id)
-        );
-
         $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id));
         if ($sub) {
             $plan_parts = explode(' - ', $sub->plan_name);
@@ -687,7 +688,7 @@ function cmp_render_customer_portal() {
             $time_slot_display = $time_slot ?: 'N/A';
             $is_paused = ($sub->status === 'paused');
 
-            // --- PHASE 5: ROBUST QUOTA ENGINE & TOGGLES ---
+            // --- QUOTA ENGINE ---
             $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
             
             $is_flexible  = isset($sub->is_flexible) ? intval($sub->is_flexible) : 0;
@@ -715,15 +716,12 @@ function cmp_render_customer_portal() {
                 $snack_quota = ($allowed_quota >= 2) ? 2 : 1; 
             }
         ?>
-        <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>" data-allow-custom="<?php echo $allow_custom; ?>">
+        <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
 
             <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:25px; margin-bottom:20px; box-shadow:0 2px 4px rgba(0,0,0,0.02); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
                 <div style="flex:1; min-width:250px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <h3 style="margin:0; color:#0073aa; font-size:1.3em;">Account Details</h3>
-                        <?php if (current_user_can('manage_options')): ?>
-                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
-                        <?php endif; ?>
                     </div>
 
                     <div id="account-view-<?php echo $sub->id; ?>">
@@ -736,30 +734,6 @@ function cmp_render_customer_portal() {
                         <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
                         <p style="margin:0; color:#334155;"><strong>Address:</strong> <span id="address-val-<?php echo $sub->id; ?>"><?php echo esc_html($address); ?></span></p>
                     </div>
-
-                    <?php if (current_user_can('manage_options')): ?>
-                    <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
-                        <div style="display:flex; gap:10px; margin-bottom:8px;">
-                            <div style="flex:1;">
-                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">First Name:</label>
-                                <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                            </div>
-                            <div style="flex:1;">
-                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
-                                <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                            </div>
-                        </div>
-                        <div style="margin-bottom:8px;">
-                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Recipient Name (Optional):</label>
-                            <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                        </div>
-                        <div style="margin-bottom:10px;">
-                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
-                            <input type="text" id="edit-address-<?php echo $sub->id; ?>" value="<?php echo esc_attr($address !== 'Address not provided' ? $address : ''); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                        </div>
-                        <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
-                    </div>
-                    <?php endif; ?>
 
                 </div>
 
@@ -870,11 +844,21 @@ function cmp_render_customer_portal() {
                             $log_id = $log ? $log->id : 0;
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
+
+                            // --- PHASE 7 LOGIC: Evaluate Plan Mode at the Log Level ---
+                            $log_mode = ($log && !empty($log->plan_mode)) ? $log->plan_mode : null;
+                            if ($log_mode) {
+                                // If the log was saved, strictly respect its historical mode
+                                $row_is_flexible  = ($log_mode === 'flexible') ? 1 : 0;
+                                $row_allow_custom = ($log_mode === 'custom') ? 1 : 0;
+                            } else {
+                                // If the log is pending, use the subscription's current active mode
+                                $row_is_flexible  = $is_flexible;
+                                $row_allow_custom = $allow_custom;
+                            }
                             
-                            // Check assignment (Supports Legacy IDs or New Phase 5 Custom Text)
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1));
                             
-                            // --- ROLLING TIME LOCK LOGIC ---
                             $is_time_locked = false;
                             if ($log && !empty($log->target_date)) {
                                 if ($log->target_date < $global_min_date) {
@@ -927,7 +911,7 @@ function cmp_render_customer_portal() {
                             $min_attr = (!empty($active_min_date) && !$is_admin_override && !$is_chef_override) ? 'min="' . esc_attr($active_min_date) . '"' : '';
 
                         ?>
-                            <tr class="cmp-day-row <?php echo $row_status_class; ?>">
+                            <tr class="cmp-day-row <?php echo $row_status_class; ?>" data-is-flexible="<?php echo $row_is_flexible; ?>" data-allow-custom="<?php echo $row_allow_custom; ?>">
                                 <td>
                                     <strong>Day <?php echo $i; ?></strong>
                                     <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
@@ -941,17 +925,17 @@ function cmp_render_customer_portal() {
                                 
                                 <?php if(!$is_juice): 
                                     $main_cats = [
-                                        'Breakfast' => ['slot' => 'breakfast', 'label' => $is_flexible ? 'Meal 1' : 'Breakfast'],
-                                        'Lunch'     => ['slot' => 'lunch',     'label' => $is_flexible ? 'Meal 2' : 'Lunch'],
-                                        'Dinner'    => ['slot' => 'dinner',    'label' => $is_flexible ? 'Meal 3' : 'Dinner']
+                                        'Breakfast' => ['slot' => 'breakfast', 'label' => $row_is_flexible ? 'Meal 1' : 'Breakfast'],
+                                        'Lunch'     => ['slot' => 'lunch',     'label' => $row_is_flexible ? 'Meal 2' : 'Lunch'],
+                                        'Dinner'    => ['slot' => 'dinner',    'label' => $row_is_flexible ? 'Meal 3' : 'Dinner']
                                     ];
                                 ?>
                                     <?php foreach($main_cats as $cat => $data): ?>
                                         <td>
-                                            <?php if($allow_custom): ?>
+                                            <?php if($row_allow_custom): ?>
                                                 <input type="text" class="cmp-meal-custom cmp-main-meal" data-slot="<?php echo $data['slot']; ?>" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->{'custom_'.$data['slot']} : ''); ?>" placeholder="Type <?php echo esc_attr($data['label']); ?>..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px;">
                                             <?php else: ?>
-                                                <select class="cmp-meal-select cmp-main-meal" data-cat="<?php echo $is_flexible ? 'Any' : $cat; ?>" data-slot="<?php echo $data['slot']; ?>" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->{$data['slot'].'_id'} : ''; ?>" <?php echo $meal_select_disabled; ?>>
+                                                <select class="cmp-meal-select cmp-main-meal" data-cat="<?php echo $row_is_flexible ? 'Any' : $cat; ?>" data-slot="<?php echo $data['slot']; ?>" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->{$data['slot'].'_id'} : ''; ?>" <?php echo $meal_select_disabled; ?>>
                                                     <option value="">- Select <?php echo esc_html($data['label']); ?> -</option>
                                                 </select>
                                             <?php endif; ?>
@@ -960,7 +944,7 @@ function cmp_render_customer_portal() {
                                     
                                     <?php if($snack_quota > 0): ?>
                                     <td>
-                                        <?php if($allow_custom): ?>
+                                        <?php if($row_allow_custom): ?>
                                             <input type="text" class="cmp-meal-custom cmp-snack-1 <?php echo ($snack_quota == 2) ? 'cmp-stacked-snack' : ''; ?>" data-slot="snack_1" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->custom_snack_1 : ''); ?>" placeholder="Type Snack 1..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px;">
                                             <?php if($snack_quota == 2): ?>
                                                 <input type="text" class="cmp-meal-custom cmp-snack-2" data-slot="snack_2" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->custom_snack_2 : ''); ?>" placeholder="Type Snack 2..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px; margin-top:4px;">
@@ -988,7 +972,7 @@ function cmp_render_customer_portal() {
                                 <?php else: ?>
                                     <?php for($j=1; $j<=3; $j++): ?>
                                         <td>
-                                            <?php if($allow_custom): ?>
+                                            <?php if($row_allow_custom): ?>
                                                 <input type="text" class="cmp-meal-custom cmp-juice-<?php echo $j; ?>" data-slot="juice_<?php echo $j; ?>" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->{'custom_juice_'.$j} : ''); ?>" placeholder="Type Juice <?php echo $j; ?>..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px;">
                                             <?php else: ?>
                                                 <select class="cmp-meal-select cmp-juice-<?php echo $j; ?>" data-cat="Juices" data-slot="juice_<?php echo $j; ?>" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->{'juice_'.$j.'_id'} : ''; ?>" <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box;">
@@ -1244,8 +1228,7 @@ function cmp_render_customer_portal() {
         });
 
         function populateDynamicDropdowns(rowElement) {
-            var container = rowElement.closest('.cmp-portal-container');
-            var isCustom = container.data('allow-custom') == 1;
+            var isCustom = rowElement.data('allow-custom') == 1;
             
             var dateVal = rowElement.find('.cmp-date-picker').val();
             var selects = rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"]');
@@ -1369,6 +1352,7 @@ function cmp_render_customer_portal() {
         function calculateMacros(rowElement) {
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var macroDisplay = rowElement.find('.cmp-macro-display');
+            var isCustom = rowElement.data('allow-custom') == 1;
             
             var selects = rowElement.find('select');
             var inputs = rowElement.find('input.cmp-meal-custom');
@@ -1396,7 +1380,7 @@ function cmp_render_customer_portal() {
             var deskHtml = '<strong>Cal:</strong> ' + cal + '<br><strong>Fat:</strong> ' + fat + 'g<br><strong>Carb:</strong> ' + carbs + 'g<br><strong>Pro:</strong> ' + pro + 'g';
             var mobHtml = '<div class="mob-grid"><div><strong>Cal:</strong> '+cal+'</div><div><strong>Fat:</strong> '+fat+'g</div><div><strong>Carb:</strong> '+carbs+'g</div><div><strong>Pro:</strong> '+pro+'g</div></div>';
 
-            if (inputs.length > 0) {
+            if (isCustom) {
                  deskHtml = '<strong style="color:#0369a1;">Custom Macros N/A</strong>';
                  mobHtml = '<div style="color:#0369a1; font-weight:bold;">Custom Macros N/A</div>';
             }
@@ -1413,6 +1397,7 @@ function cmp_render_customer_portal() {
             var container = rowElement.closest('.cmp-portal-container');
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
             var isJuice = container.data('is-juice') === 1;
+            var isCustom = rowElement.data('allow-custom') == 1;
 
             if (isJuice || allowedMeals <= 0) return; 
 
@@ -1526,7 +1511,7 @@ function cmp_render_customer_portal() {
             var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
             var snackQuota = parseInt(container.data('snack-quota')) || 0;
             var isJuice = container.data('is-juice') === 1;
-            var isCustom = container.data('allow-custom') == 1;
+            var isCustom = rowElement.data('allow-custom') == 1;
 
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
 
