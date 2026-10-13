@@ -33,7 +33,7 @@ function cmp_render_chef_assignment_desk() {
     // 3. Fetch Subs 
     $raw_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status = 'active' ORDER BY s.id DESC");
 
-    // NEW: Fetch all active food date ranges to prevent showing "Pending" for future locked quarters
+    // Fetch all active food date ranges to prevent showing "Pending" for future locked quarters
     $active_food_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1");
 
     $pending_customers = array();
@@ -82,6 +82,20 @@ function cmp_render_chef_assignment_desk() {
             if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
         }
 
+        // Recipient Extraction
+        $plan_parts = explode(' - ', $sub->plan_name);
+        $potential_recipient = end($plan_parts);
+        $recipient_badge = '';
+        
+        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
+            $recipient_badge = '<span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span>';
+            array_pop($plan_parts);
+            $core_plan_name = implode(' - ', $plan_parts);
+        } else {
+            $core_plan_name = $sub->plan_name;
+        }
+
+        // Dynamic Sequence Handling (Retroactive Manual)
         $display_order_id = 'Manual';
         if ($sub->wc_order_id < 0) {
             $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
@@ -92,17 +106,21 @@ function cmp_render_chef_assignment_desk() {
         }
 
         $customer_data = array(
-            'id'        => $sub->id,
-            'order_id'  => $display_order_id,
-            'name'      => $full_name,
-            'email'     => $email,
-            'phone'     => $phone,
-            'address'   => $address,
-            'method'    => $method,
-            'timing'    => $timing,
-            'allergies' => $allergies,
-            'plan_name' => $sub->plan_name,
-            'status'    => $sub->status
+            'id'              => $sub->id,
+            'order_id'        => $display_order_id,
+            'name'            => $full_name,
+            'email'           => $email,
+            'phone'           => $phone,
+            'address'         => $address,
+            'method'          => $method,
+            'timing'          => $timing,
+            'allergies'       => $allergies,
+            'plan_name'       => $sub->plan_name,
+            'core_plan_name'  => $core_plan_name,
+            'recipient_badge' => $recipient_badge,
+            'status'          => $sub->status,
+            'is_flexible'     => isset($sub->is_flexible) ? intval($sub->is_flexible) : 0,
+            'allow_custom'    => isset($sub->allow_custom) ? intval($sub->allow_custom) : 0
         );
 
         $all_customers[] = $customer_data;
@@ -111,17 +129,30 @@ function cmp_render_chef_assignment_desk() {
         $is_pending = false;
         
         foreach($chef_logs as $log) {
-            if (!$log->breakfast_id && !$log->lunch_id && !$log->dinner_id && !$log->juice_1_id) {
-                
-                // NEW: Only mark as pending if there is actually a menu available for this date
+            // Phase 7: Evaluate mode at the log level
+            $log_mode = ($log && !empty($log->plan_mode)) ? $log->plan_mode : null;
+            if ($log_mode) {
+                $row_allow_custom = ($log_mode === 'custom') ? 1 : 0;
+            } else {
+                $row_allow_custom = $customer_data['allow_custom'];
+            }
+            
+            $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || !empty($log->custom_breakfast) || !empty($log->custom_lunch) || !empty($log->custom_dinner) || !empty($log->custom_juice_1));
+
+            if (!$is_assigned) {
                 $menu_exists = false;
-                foreach($active_food_ranges as $range) {
-                    if (empty($range->valid_from) || empty($range->valid_until)) {
-                        $menu_exists = true; break; // Fallback if dates aren't set
-                    }
-                    if ($log->target_date >= $range->valid_from && $log->target_date <= $range->valid_until) {
-                        $menu_exists = true;
-                        break;
+                
+                if ($row_allow_custom) {
+                    $menu_exists = true; // Custom meals do not wait for menu releases!
+                } else {
+                    foreach($active_food_ranges as $range) {
+                        if (empty($range->valid_from) || empty($range->valid_until)) {
+                            $menu_exists = true; break; 
+                        }
+                        if ($log->target_date >= $range->valid_from && $log->target_date <= $range->valid_until) {
+                            $menu_exists = true;
+                            break;
+                        }
                     }
                 }
                 
@@ -164,7 +195,7 @@ function cmp_render_chef_assignment_desk() {
             </div>
             
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Preparation Report ⇗</a>
+                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Preparation Report ⇗</a>
                 <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
@@ -199,17 +230,20 @@ function cmp_render_chef_assignment_desk() {
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
                                 <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
                                 <td>
-                                    <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
-                                    <span style="color: #666;"><?php echo esc_html($c['email']); ?></span><br>
-                                    <span style="color: #666;"><?php echo esc_html($c['phone']); ?></span>
+                                    <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 4px;">
+                                        <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                        <?php echo $c['recipient_badge']; ?>
+                                    </div>
+                                    <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html($c['email']); ?></span>
+                                    <span style="color: #666; display: block;"><?php echo esc_html($c['phone']); ?></span>
                                 </td>
                                 <td>
                                     <strong><?php echo esc_html($c['method']); ?></strong><br>
                                     <span style="color: #666;"><?php echo esc_html($c['timing']); ?></span><br>
-                                    <span style="font-size:0.85em; color:#999;"><?php echo esc_html($c['address']); ?></span>
+                                    <span style="font-size:0.85em; color:#999; display: block; margin-top: 4px;"><?php echo esc_html($c['address']); ?></span>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($c['plan_name']); ?></strong><br>
+                                    <strong><?php echo esc_html($c['core_plan_name']); ?></strong><br>
                                     <span style="display:inline-block; margin-top:5px; background:<?php echo $c['allergies'] !== 'None' ? '#fff3cd' : '#f1f5f9'; ?>; color:<?php echo $c['allergies'] !== 'None' ? '#856404' : '#64748b'; ?>; padding:3px 8px; border-radius:4px; font-size:0.85em; font-weight:bold;">
                                         Allergies: <?php echo esc_html($c['allergies']); ?>
                                     </span>
@@ -226,7 +260,7 @@ function cmp_render_chef_assignment_desk() {
 
         <!-- TAB 2: ALL CUSTOMERS -->
         <div id="tab-all" class="chef-tab-content">
-            <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers...">
+            <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers by order ID, name, email, or phone...">
             <div style="overflow-x: auto;">
                 <table class="chef-table" id="table-all">
                     <thead>
@@ -247,17 +281,20 @@ function cmp_render_chef_assignment_desk() {
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
                                 <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
                                 <td>
-                                    <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong><br>
-                                    <span style="color: #666;"><?php echo esc_html($c['email']); ?></span><br>
-                                    <span style="color: #666;"><?php echo esc_html($c['phone']); ?></span>
+                                    <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 4px;">
+                                        <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                        <?php echo $c['recipient_badge']; ?>
+                                    </div>
+                                    <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html($c['email']); ?></span>
+                                    <span style="color: #666; display: block;"><?php echo esc_html($c['phone']); ?></span>
                                 </td>
                                 <td>
                                     <strong><?php echo esc_html($c['method']); ?></strong><br>
                                     <span style="color: #666;"><?php echo esc_html($c['timing']); ?></span><br>
-                                    <span style="font-size:0.85em; color:#999;"><?php echo esc_html($c['address']); ?></span>
+                                    <span style="font-size:0.85em; color:#999; display: block; margin-top: 4px;"><?php echo esc_html($c['address']); ?></span>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($c['plan_name']); ?></strong><br>
+                                    <strong><?php echo esc_html($c['core_plan_name']); ?></strong><br>
                                     <span style="display:inline-block; margin-top:5px; background:<?php echo $c['allergies'] !== 'None' ? '#fff3cd' : '#f1f5f9'; ?>; color:<?php echo $c['allergies'] !== 'None' ? '#856404' : '#64748b'; ?>; padding:3px 8px; border-radius:4px; font-size:0.85em; font-weight:bold;">
                                         Allergies: <?php echo esc_html($c['allergies']); ?>
                                     </span>
