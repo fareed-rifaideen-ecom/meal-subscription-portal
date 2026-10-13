@@ -105,9 +105,6 @@ function cmp_render_chef_assignment_desk() {
             $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
         }
 
-        $is_flexible  = isset($sub->is_flexible) ? intval($sub->is_flexible) : 0;
-        $allow_custom = isset($sub->allow_custom) ? intval($sub->allow_custom) : 0;
-
         $customer_data = array(
             'id'              => $sub->id,
             'order_id'        => $display_order_id,
@@ -121,7 +118,9 @@ function cmp_render_chef_assignment_desk() {
             'plan_name'       => $sub->plan_name,
             'core_plan_name'  => $core_plan_name,
             'recipient_badge' => $recipient_badge,
-            'status'          => $sub->status
+            'status'          => $sub->status,
+            'is_flexible'     => isset($sub->is_flexible) ? intval($sub->is_flexible) : 0,
+            'allow_custom'    => isset($sub->allow_custom) ? intval($sub->allow_custom) : 0
         );
 
         $all_customers[] = $customer_data;
@@ -130,13 +129,20 @@ function cmp_render_chef_assignment_desk() {
         $is_pending = false;
         
         foreach($chef_logs as $log) {
-            // Phase 5 Check: Look at both Standard IDs and Custom Text Fields
+            // Phase 7: Evaluate mode at the log level
+            $log_mode = ($log && !empty($log->plan_mode)) ? $log->plan_mode : null;
+            if ($log_mode) {
+                $row_allow_custom = ($log_mode === 'custom') ? 1 : 0;
+            } else {
+                $row_allow_custom = $customer_data['allow_custom'];
+            }
+            
             $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || !empty($log->custom_breakfast) || !empty($log->custom_lunch) || !empty($log->custom_dinner) || !empty($log->custom_juice_1));
 
             if (!$is_assigned) {
                 $menu_exists = false;
                 
-                if ($allow_custom) {
+                if ($row_allow_custom) {
                     $menu_exists = true; // Custom meals do not wait for menu releases!
                 } else {
                     foreach($active_food_ranges as $range) {
