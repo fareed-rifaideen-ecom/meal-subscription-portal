@@ -722,6 +722,9 @@ function cmp_render_customer_portal() {
                 <div style="flex:1; min-width:250px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <h3 style="margin:0; color:#0073aa; font-size:1.3em;">Account Details</h3>
+                        <?php if (current_user_can('manage_options')): ?>
+                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
+                        <?php endif; ?>
                     </div>
 
                     <div id="account-view-<?php echo $sub->id; ?>">
@@ -734,6 +737,30 @@ function cmp_render_customer_portal() {
                         <p style="margin:0 0 8px 0; color:#334155;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
                         <p style="margin:0; color:#334155;"><strong>Address:</strong> <span id="address-val-<?php echo $sub->id; ?>"><?php echo esc_html($address); ?></span></p>
                     </div>
+
+                    <?php if (current_user_can('manage_options')): ?>
+                    <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
+                        <div style="display:flex; gap:10px; margin-bottom:8px;">
+                            <div style="flex:1;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">First Name:</label>
+                                <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                            <div style="flex:1;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
+                                <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                        </div>
+                        <div style="margin-bottom:8px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Recipient Name (Optional):</label>
+                            <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
+                            <input type="text" id="edit-address-<?php echo $sub->id; ?>" value="<?php echo esc_attr($address !== 'Address not provided' ? $address : ''); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                        </div>
+                        <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
+                    </div>
+                    <?php endif; ?>
 
                 </div>
 
@@ -1305,16 +1332,35 @@ function cmp_render_customer_portal() {
 
                 select.empty().append('<option value="">' + placeholder + '</option>');
 
-                availableFoods.forEach(function(food) {
-                    if (category === 'Any' && (food.category_name === 'Breakfast' || food.category_name === 'Lunch' || food.category_name === 'Dinner')) {
-                        var isSelected = (savedVal == food.id) ? 'selected' : '';
-                        var label = '[' + food.category_name + '] ' + food.food_name;
-                        select.append('<option value="'+food.id+'" data-cal="'+food.calories+'" data-fat="'+food.total_fat+'" data-carbs="'+food.carbohydrates+'" data-pro="'+food.protein+'" '+isSelected+'>'+label+'</option>');
-                    } else if (food.category_name === category) {
-                        var isSelected = (savedVal == food.id) ? 'selected' : '';
-                        select.append('<option value="'+food.id+'" data-cal="'+food.calories+'" data-fat="'+food.total_fat+'" data-carbs="'+food.carbohydrates+'" data-pro="'+food.protein+'" '+isSelected+'>'+food.food_name+'</option>');
-                    }
-                });
+                // --- PHASE 8: OPTGROUP FIX FOR NATIVE SEARCHING ---
+                if (category === 'Any') {
+                    var optBreakfast = $('<optgroup label="— Breakfast —"></optgroup>');
+                    var optLunch = $('<optgroup label="— Lunch —"></optgroup>');
+                    var optDinner = $('<optgroup label="— Dinner —"></optgroup>');
+
+                    availableFoods.forEach(function(food) {
+                        if (food.category_name === 'Breakfast' || food.category_name === 'Lunch' || food.category_name === 'Dinner') {
+                            var isSelected = (savedVal == food.id) ? 'selected' : '';
+                            var optionHtml = '<option value="'+food.id+'" data-cal="'+food.calories+'" data-fat="'+food.total_fat+'" data-carbs="'+food.carbohydrates+'" data-pro="'+food.protein+'" '+isSelected+'>'+food.food_name+'</option>';
+                            
+                            if (food.category_name === 'Breakfast') optBreakfast.append(optionHtml);
+                            if (food.category_name === 'Lunch') optLunch.append(optionHtml);
+                            if (food.category_name === 'Dinner') optDinner.append(optionHtml);
+                        }
+                    });
+
+                    if (optBreakfast.children().length > 0) select.append(optBreakfast);
+                    if (optLunch.children().length > 0) select.append(optLunch);
+                    if (optDinner.children().length > 0) select.append(optDinner);
+
+                } else {
+                    availableFoods.forEach(function(food) {
+                        if (food.category_name === category) {
+                            var isSelected = (savedVal == food.id) ? 'selected' : '';
+                            select.append('<option value="'+food.id+'" data-cal="'+food.calories+'" data-fat="'+food.total_fat+'" data-carbs="'+food.carbohydrates+'" data-pro="'+food.protein+'" '+isSelected+'>'+food.food_name+'</option>');
+                        }
+                    });
+                }
             });
 
             return true;
