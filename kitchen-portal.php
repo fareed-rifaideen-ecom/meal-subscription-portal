@@ -48,9 +48,20 @@ function cmp_ajax_assign_chef_meals() {
     $log_id = intval($_POST['log_id']);
     $table_foods = $wpdb->prefix . 'cmp_foods';
 
-    $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id, target_date FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
-    
+    $log_row = $wpdb->get_row($wpdb->prepare("SELECT subscription_id, target_date, plan_mode FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id));
+    $log_mode = null;
+
     if ($log_row) {
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name, allowed_categories, is_flexible, allow_custom FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id));
+        
+        // Phase 7: Evaluate mode
+        $log_mode = !empty($log_row->plan_mode) ? $log_row->plan_mode : null;
+        if (!$log_mode && $sub) {
+            if (!empty($sub->allow_custom)) $log_mode = 'custom';
+            elseif (!empty($sub->is_flexible)) $log_mode = 'flexible';
+            else $log_mode = 'standard';
+        }
+
         $has_custom = !empty($_POST['custom_breakfast']) || !empty($_POST['custom_lunch']) || !empty($_POST['custom_dinner']) || !empty($_POST['custom_snack_1']) || !empty($_POST['custom_snack_2']) || !empty($_POST['custom_juice_1']);
         $has_meals = !empty($_POST['breakfast']) || !empty($_POST['lunch']) || !empty($_POST['dinner']) || !empty($_POST['snack_1']) || !empty($_POST['snack_2']) || !empty($_POST['juice_1']);
         
@@ -61,7 +72,6 @@ function cmp_ajax_assign_chef_meals() {
             }
         }
 
-        $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name, allowed_categories FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id));
         if ($sub) {
             $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
             preg_match('/(\d+)\s*Meal/i', $sub->plan_name, $m);
@@ -81,6 +91,7 @@ function cmp_ajax_assign_chef_meals() {
     }
 
     $data = array(
+        'plan_mode'    => $log_mode ?: 'standard',
         'breakfast_id' => !empty($_POST['breakfast']) ? intval($_POST['breakfast']) : null,
         'lunch_id'     => !empty($_POST['lunch']) ? intval($_POST['lunch']) : null,
         'dinner_id'    => !empty($_POST['dinner']) ? intval($_POST['dinner']) : null,
@@ -198,7 +209,7 @@ function cmp_export_kitchen_csv() {
         }
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || !empty($log->custom_breakfast) || !empty($log->custom_lunch) || !empty($log->custom_dinner) || !empty($log->custom_juice_1));
+        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1);
         $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
         $pending_tag = "[Pending Chef]";
 
@@ -265,11 +276,20 @@ function cmp_export_kitchen_csv() {
             } elseif ($log->is_chefs_choice && !$is_assigned) {
                 $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
             } else {
-                $b  = !empty($log->custom_breakfast) ? $log->custom_breakfast : ($log->breakfast_id ? ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag : '-');
-                $l  = !empty($log->custom_lunch)     ? $log->custom_lunch     : ($log->lunch_id     ? ($food_map[$log->lunch_id]     ?? 'Unknown') . $chef_tag : '-');
-                $d  = !empty($log->custom_dinner)    ? $log->custom_dinner    : ($log->dinner_id    ? ($food_map[$log->dinner_id]    ?? 'Unknown') . $chef_tag : '-');
-                $s1 = !empty($log->custom_snack_1)   ? $log->custom_snack_1   : ($log->snack_1_id   ? ($food_map[$log->snack_1_id]   ?? 'Unknown') . $chef_tag : '-');
-                $s2 = !empty($log->custom_snack_2)   ? $log->custom_snack_2   : ($log->snack_2_id   ? ($food_map[$log->snack_2_id]   ?? 'Unknown') . $chef_tag : '-');
+                if ($log->custom_breakfast) $b = $log->custom_breakfast . $chef_tag;
+                elseif ($log->breakfast_id) $b = ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
+                
+                if ($log->custom_lunch) $l = $log->custom_lunch . $chef_tag;
+                elseif ($log->lunch_id) $l = ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
+                
+                if ($log->custom_dinner) $d = $log->custom_dinner . $chef_tag;
+                elseif ($log->dinner_id) $d = ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
+                
+                if ($log->custom_snack_1) $s1 = $log->custom_snack_1 . $chef_tag;
+                elseif ($log->snack_1_id) $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
+                
+                if ($log->custom_snack_2) $s2 = $log->custom_snack_2 . $chef_tag;
+                elseif ($log->snack_2_id) $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
             }
             $row_data = array($order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $pos_check);
         }
@@ -381,8 +401,15 @@ function cmp_render_kitchen_portal() {
 
         if ($method === 'Pickup' && !empty($pickup)) $method .= ' (' . $pickup . ')';
 
-        $is_flexible  = isset($log->is_flexible) ? intval($log->is_flexible) : 0;
-        $allow_custom = isset($log->allow_custom) ? intval($log->allow_custom) : 0;
+        // Phase 7: Evaluate Log-Level Snapshot
+        $log_mode = !empty($log->plan_mode) ? $log->plan_mode : null;
+        if ($log_mode) {
+            $is_flexible  = ($log_mode === 'flexible') ? 1 : 0;
+            $allow_custom = ($log_mode === 'custom') ? 1 : 0;
+        } else {
+            $is_flexible  = isset($log->is_flexible) ? intval($log->is_flexible) : 0;
+            $allow_custom = isset($log->allow_custom) ? intval($log->allow_custom) : 0;
+        }
         
         $meals_list = array();
         $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1);
@@ -850,10 +877,12 @@ function cmp_render_kitchen_portal() {
             return true;
         }
 
+        // Init all chef assignment forms dynamically
         $('.chef-assign-form').each(function() {
             populateDynamicDropdowns($(this));
         });
 
+        // --- Tab Memory & Search Logic ---
         var urlParams = new URLSearchParams(window.location.search);
         var initialTab = urlParams.get('k_tab') || 'all';
         
@@ -916,7 +945,7 @@ function cmp_render_kitchen_portal() {
             
             if (allowedMeals <= 0 || isJuice) return; 
 
-            var mainSelects = container.find('.cmp-main-meal');
+            var mainSelects = container.find('select.chef-main-meal, input.cmp-main-meal');
             var selectedCount = 0;
             
             mainSelects.each(function() {
@@ -942,7 +971,7 @@ function cmp_render_kitchen_portal() {
             enforceChefMealQuota($(this));
         });
 
-        $(document).on('change keyup', '.cmp-main-meal', function() {
+        $(document).on('change keyup', '.chef-main-meal, .cmp-meal-custom', function() {
             enforceChefMealQuota($(this).closest('.chef-assign-form'));
         });
 
@@ -998,10 +1027,10 @@ function cmp_render_kitchen_portal() {
             } else {
                 if (!isJuice && allowedMeals > 0) {
                     var selectedMainCount = 0;
-                    container.find('.cmp-main-meal').each(function() {
+                    container.find('.chef-main-meal').each(function() {
                         if ($(this).val() !== "") selectedMainCount++;
                     });
-                    if (selectedMainCount !== allowedMeals) {
+                    if (selectedMainCount < allowedMeals) {
                         alert("Please select exactly " + allowedMeals + " main meal(s) to complete the assignment."); 
                         return; 
                     }
