@@ -276,20 +276,11 @@ function cmp_export_kitchen_csv() {
             } elseif ($log->is_chefs_choice && !$is_assigned) {
                 $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
             } else {
-                if ($log->custom_breakfast) $b = $log->custom_breakfast . $chef_tag;
-                elseif ($log->breakfast_id) $b = ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag;
-                
-                if ($log->custom_lunch) $l = $log->custom_lunch . $chef_tag;
-                elseif ($log->lunch_id) $l = ($food_map[$log->lunch_id] ?? 'Unknown') . $chef_tag;
-                
-                if ($log->custom_dinner) $d = $log->custom_dinner . $chef_tag;
-                elseif ($log->dinner_id) $d = ($food_map[$log->dinner_id] ?? 'Unknown') . $chef_tag;
-                
-                if ($log->custom_snack_1) $s1 = $log->custom_snack_1 . $chef_tag;
-                elseif ($log->snack_1_id) $s1 = ($food_map[$log->snack_1_id] ?? 'Unknown') . $chef_tag;
-                
-                if ($log->custom_snack_2) $s2 = $log->custom_snack_2 . $chef_tag;
-                elseif ($log->snack_2_id) $s2 = ($food_map[$log->snack_2_id] ?? 'Unknown') . $chef_tag;
+                $b  = !empty($log->custom_breakfast) ? $log->custom_breakfast : ($log->breakfast_id ? ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag : '-');
+                $l  = !empty($log->custom_lunch)     ? $log->custom_lunch     : ($log->lunch_id     ? ($food_map[$log->lunch_id]     ?? 'Unknown') . $chef_tag : '-');
+                $d  = !empty($log->custom_dinner)    ? $log->custom_dinner    : ($log->dinner_id    ? ($food_map[$log->dinner_id]    ?? 'Unknown') . $chef_tag : '-');
+                $s1 = !empty($log->custom_snack_1)   ? $log->custom_snack_1   : ($log->snack_1_id   ? ($food_map[$log->snack_1_id]   ?? 'Unknown') . $chef_tag : '-');
+                $s2 = !empty($log->custom_snack_2)   ? $log->custom_snack_2   : ($log->snack_2_id   ? ($food_map[$log->snack_2_id]   ?? 'Unknown') . $chef_tag : '-');
             }
             $row_data = array($order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $pos_check);
         }
@@ -945,7 +936,7 @@ function cmp_render_kitchen_portal() {
             
             if (allowedMeals <= 0 || isJuice) return; 
 
-            var mainSelects = container.find('select.chef-main-meal, input.cmp-main-meal');
+            var mainSelects = container.find('.cmp-main-meal');
             var selectedCount = 0;
             
             mainSelects.each(function() {
@@ -971,7 +962,7 @@ function cmp_render_kitchen_portal() {
             enforceChefMealQuota($(this));
         });
 
-        $(document).on('change keyup', '.chef-main-meal, .cmp-meal-custom', function() {
+        $(document).on('change keyup', '.cmp-main-meal', function() {
             enforceChefMealQuota($(this).closest('.chef-assign-form'));
         });
 
@@ -1027,7 +1018,7 @@ function cmp_render_kitchen_portal() {
             } else {
                 if (!isJuice && allowedMeals > 0) {
                     var selectedMainCount = 0;
-                    container.find('.chef-main-meal').each(function() {
+                    container.find('.cmp-main-meal').each(function() {
                         if ($(this).val() !== "") selectedMainCount++;
                     });
                     if (selectedMainCount < allowedMeals) {
