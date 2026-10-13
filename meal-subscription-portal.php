@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.8
+ * Version: 2.9
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -85,6 +85,7 @@ function cmp_activate_plugin() {
         delivery_result varchar(50) DEFAULT 'Pending',
         pos_updated tinyint(1) DEFAULT 0,
         is_locked tinyint(1) DEFAULT 0,
+        plan_mode varchar(20) DEFAULT 'standard',
         PRIMARY KEY  (id)
     ) $charset_collate;";
     dbDelta( $sql_logs );
@@ -126,6 +127,12 @@ function cmp_auto_patch_database() {
         $wpdb->query("ALTER TABLE {$table_logs} ADD custom_juice_1 VARCHAR(255) NULL AFTER juice_1_id");
         $wpdb->query("ALTER TABLE {$table_logs} ADD custom_juice_2 VARCHAR(255) NULL AFTER juice_2_id");
         $wpdb->query("ALTER TABLE {$table_logs} ADD custom_juice_3 VARCHAR(255) NULL AFTER juice_3_id");
+    }
+
+    // Patch 4: Phase 7 Log-Level Plan Mode Snapshot (Daily Logs)
+    $col_check_mode = $wpdb->get_results("SHOW COLUMNS FROM {$table_logs} LIKE 'plan_mode'");
+    if (empty($col_check_mode)) {
+        $wpdb->query("ALTER TABLE {$table_logs} ADD plan_mode VARCHAR(20) DEFAULT 'standard' AFTER is_locked");
     }
 }
 
