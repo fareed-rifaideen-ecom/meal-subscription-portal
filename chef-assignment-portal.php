@@ -190,7 +190,7 @@ function cmp_render_chef_assignment_desk() {
     <div class="chef-desk-wrap">
         <div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
             <div>
-                <h1 style="margin:0; color:#fff;">Assignment Desk</h1>
+                <h1 style="margin:0; color:#fff;">Assignment Desk - Chef's Selection</h1>
                 <p style="margin:5px 0 0 0; color:#ccc;">Select meals for "Chef's Choice" customers.</p>
             </div>
             
