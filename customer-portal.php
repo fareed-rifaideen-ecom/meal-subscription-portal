@@ -1042,7 +1042,7 @@ function cmp_render_customer_portal() {
                                 }
                             } elseif ($is_void && $log) {
                                 if ($log->delivery_result === 'Cancelled') {
-                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; border: 1px solid #fde68a; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Paused / Cancelled</span>';
+                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; border: 1px solid #fde68a; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Cancelled</span>';
                                 } else {
                                     $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                                 }
