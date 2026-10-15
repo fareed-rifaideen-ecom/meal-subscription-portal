@@ -296,7 +296,7 @@ function cmp_ajax_foh_toggle_deposit() {
     wp_send_json_success();
 }
 
-// 9. AJAX HANDLER: Fetch Upcoming Days for Modal
+// 9. AJAX HANDLER: Fetch Upcoming Days for Modal (Excludes Same Day)
 add_action('wp_ajax_cmp_foh_fetch_upcoming_meals', 'cmp_foh_fetch_upcoming_meals');
 function cmp_foh_fetch_upcoming_meals() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
@@ -309,10 +309,11 @@ function cmp_foh_fetch_upcoming_meals() {
     $sub_id = intval($_POST['sub_id']);
     $today = date('Y-m-d');
 
+    // ONLY fetch days STRICTLY GREATER than today. Same-day cancellations via FOH modal are blocked.
     $logs = $wpdb->get_results($wpdb->prepare("
         SELECT * FROM {$wpdb->prefix}cmp_daily_logs 
         WHERE subscription_id = %d 
-        AND target_date >= %s 
+        AND target_date > %s 
         AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))
         ORDER BY target_date ASC
     ", $sub_id, $today));
@@ -340,7 +341,7 @@ function cmp_foh_fetch_upcoming_meals() {
     wp_send_json_success($data);
 }
 
-// 10. AJAX HANDLER: Bulk Cancel Selected Days
+// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day)
 add_action('wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_foh_bulk_cancel_days');
 function cmp_foh_bulk_cancel_days() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
@@ -349,13 +350,18 @@ function cmp_foh_bulk_cancel_days() {
     }
     
     global $wpdb;
+    date_default_timezone_set('Asia/Dubai');
     $sub_id = intval($_POST['sub_id']);
     $log_ids = isset($_POST['log_ids']) ? array_map('intval', $_POST['log_ids']) : [];
 
     if (empty($log_ids)) wp_send_json_error('No days selected.');
 
+    $today = date('Y-m-d');
     $ids_placeholder = implode(',', array_fill(0, count($log_ids), '%d'));
-    $query = $wpdb->prepare("UPDATE {$wpdb->prefix}cmp_daily_logs SET delivery_result = 'Cancelled' WHERE subscription_id = %d AND id IN ($ids_placeholder)", array_merge([$sub_id], $log_ids));
+    
+    // Extra security check: enforce target_date > $today so same-day records cannot be affected.
+    $query_params = array_merge([$sub_id], $log_ids, [$today]);
+    $query = $wpdb->prepare("UPDATE {$wpdb->prefix}cmp_daily_logs SET delivery_result = 'Cancelled' WHERE subscription_id = %d AND id IN ($ids_placeholder) AND target_date > %s", $query_params);
     $wpdb->query($query);
 
     $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
@@ -810,7 +816,10 @@ function cmp_render_foh_portal() {
                 <p style="text-align:center; color:#64748b;">Loading...</p>
             </div>
             <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; border-radius:0 0 8px 8px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.85em; color:#64748b;">⚠️ = Past Kitchen Cut-off</span>
+                <div style="display:flex; align-items:center; gap:6px; font-size:0.85em; color:#64748b;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> 
+                    = Past Kitchen Cut-off
+                </div>
                 <div style="display:flex; gap:10px;">
                     <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Close</button>
                     <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Hold Selected Days</button>
@@ -1220,6 +1229,9 @@ function cmp_render_foh_portal() {
         const modalBody = document.getElementById('foh-modal-body');
         const confirmBtn = document.getElementById('foh-confirm-cancel-btn');
 
+        // Dynamic SVG to replace native emoji scaling issues
+        const warningSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom; margin-left: 5px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+
         jQuery('.manage-days-btn').on('click', function(e) {
             e.preventDefault();
             const subId = jQuery(this).data('sub-id');
@@ -1244,7 +1256,7 @@ function cmp_render_foh_portal() {
                         html += '<thead><tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
                         
                         res.data.forEach(function(day) {
-                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="color:#d97706; cursor:help;">⚠️</span>' : '';
+                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="cursor:help; display:inline-block;">' + warningSvg + '</span>' : '';
                             html += '<tr style="border-bottom:1px solid #e2e8f0;">';
                             html += '<td style="padding:10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'"></td>';
                             html += '<td style="padding:10px;">' + day.date + warning + '</td>';
