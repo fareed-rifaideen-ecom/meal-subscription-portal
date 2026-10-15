@@ -18,7 +18,7 @@ function cmp_ajax_foh_update_expiry() {
     wp_send_json_success();
 }
 
-// 2. AJAX HANDLER: Toggle Pause/Resume Status
+// 2. AJAX HANDLER: Toggle Freeze/Resume Status (Global Plan Level)
 add_action('wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status');
 function cmp_ajax_foh_toggle_status() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -293,6 +293,78 @@ function cmp_ajax_foh_toggle_deposit() {
     $new_status = sanitize_text_field($_POST['new_status']); 
     
     update_user_meta($user_id, '_cmp_deposit_held', $new_status);
+    wp_send_json_success();
+}
+
+// 9. AJAX HANDLER: Fetch Upcoming Days for Modal
+add_action('wp_ajax_cmp_foh_fetch_upcoming_meals', 'cmp_foh_fetch_upcoming_meals');
+function cmp_foh_fetch_upcoming_meals() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied');
+    }
+    
+    global $wpdb;
+    date_default_timezone_set('Asia/Dubai');
+    $sub_id = intval($_POST['sub_id']);
+    $today = date('Y-m-d');
+
+    $logs = $wpdb->get_results($wpdb->prepare("
+        SELECT * FROM {$wpdb->prefix}cmp_daily_logs 
+        WHERE subscription_id = %d 
+        AND target_date >= %s 
+        AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))
+        ORDER BY target_date ASC
+    ", $sub_id, $today));
+
+    // Determine cutoffs to flag warnings
+    $current_hour = (int) date('H');
+    $cutoff_hour = intval( get_option('cmp_cutoff_time', '11') );
+    $tomorrow = date('Y-m-d', strtotime('+1 day'));
+    $day_after = date('Y-m-d', strtotime('+2 days'));
+    $earliest_allowed = ($current_hour >= $cutoff_hour) ? $day_after : $tomorrow;
+
+    $data = [];
+    foreach($logs as $log) {
+        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 || $log->is_chefs_choice);
+        $status_text = $is_assigned ? 'Assigned' : 'Pending Selection';
+        $past_cutoff = ($log->target_date < $earliest_allowed);
+
+        $data[] = [
+            'id' => $log->id,
+            'date' => date('D, M j, Y', strtotime($log->target_date)),
+            'status' => $status_text,
+            'past_cutoff' => $past_cutoff
+        ];
+    }
+    wp_send_json_success($data);
+}
+
+// 10. AJAX HANDLER: Bulk Cancel Selected Days
+add_action('wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_foh_bulk_cancel_days');
+function cmp_foh_bulk_cancel_days() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied');
+    }
+    
+    global $wpdb;
+    $sub_id = intval($_POST['sub_id']);
+    $log_ids = isset($_POST['log_ids']) ? array_map('intval', $_POST['log_ids']) : [];
+
+    if (empty($log_ids)) wp_send_json_error('No days selected.');
+
+    $ids_placeholder = implode(',', array_fill(0, count($log_ids), '%d'));
+    $query = $wpdb->prepare("UPDATE {$wpdb->prefix}cmp_daily_logs SET delivery_result = 'Cancelled' WHERE subscription_id = %d AND id IN ($ids_placeholder)", array_merge([$sub_id], $log_ids));
+    $wpdb->query($query);
+
+    $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
+    if (!is_array($updated_subs_queue)) { $updated_subs_queue = array(); }
+    if (!in_array($sub_id, $updated_subs_queue)) {
+        $updated_subs_queue[] = $sub_id;
+        update_option('cmp_daily_updated_subs', $updated_subs_queue);
+    }
+
     wp_send_json_success();
 }
 
@@ -683,12 +755,15 @@ function cmp_render_foh_portal() {
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                             <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;">
-                                                <?php echo $is_paused ? 'Resume' : 'Pause'; ?>
+                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;" title="Freeze/Resume Entire Plan">
+                                                <?php echo $is_paused ? 'Resume' : 'Freeze'; ?>
                                             </button>
                                         </form>
+                                        <!-- NEW BULK MANAGE DAYS BUTTON -->
+                                        <button class="manage-days-btn" data-sub-id="<?php echo $sub->id; ?>" style="flex: 1; height: 32px; background: #64748b; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: 0.2s;" title="Cancel Specific Upcoming Days">Manage Days</button>
                                         <?php endif; ?>
-                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
+                                        
+                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">View</a>
                                         
                                         <!-- SUPER ADMIN ONLY: PERMANENT SUBSCRIPTION DELETE KILL-SWITCH -->
                                         <?php if (current_user_can('manage_options')): ?>
@@ -722,7 +797,26 @@ function cmp_render_foh_portal() {
         <?php endforeach; ?>
 
         <div id="fohPagination" style="margin-top: 20px; display: flex; gap: 5px; justify-content: center; flex-wrap: wrap;"></div>
+    </div>
 
+    <!-- MANAGE DAYS AJAX MODAL -->
+    <div id="foh-manage-days-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
+        <div style="background:#fff; width:90%; max-width:600px; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh;">
+            <div style="padding:20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0; color:#0f172a;">Bulk Cancel Upcoming Days</h3>
+                <button class="close-modal-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#64748b;">&times;</button>
+            </div>
+            <div style="padding:20px; overflow-y:auto; flex:1;" id="foh-modal-body">
+                <p style="text-align:center; color:#64748b;">Loading...</p>
+            </div>
+            <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; border-radius:0 0 8px 8px; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:0.85em; color:#64748b;">⚠️ = Past Kitchen Cut-off</span>
+                <div style="display:flex; gap:10px;">
+                    <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Close</button>
+                    <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Cancel Selected Days</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -774,7 +868,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Status Form
+        // Status Form (Freeze/Resume)
         document.querySelectorAll('.ajax-status-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -797,7 +891,7 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'active') {
-                            btn.innerText = 'Pause';
+                            btn.innerText = 'Freeze';
                             btn.style.background = '#dba617';
                             statusInput.value = 'paused';
                         } else {
@@ -1044,7 +1138,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Save Account Details with Mutually Exclusive Plan Mode
+        // Save Account Details
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -1118,6 +1212,108 @@ function cmp_render_foh_portal() {
                     this.innerText = originalText;
                     this.disabled = false;
                 });
+            });
+        });
+
+        // MANAGE DAYS AJAX MODAL LOGIC
+        const modal = document.getElementById('foh-manage-days-modal');
+        const modalBody = document.getElementById('foh-modal-body');
+        const confirmBtn = document.getElementById('foh-confirm-cancel-btn');
+
+        jQuery('.manage-days-btn').on('click', function(e) {
+            e.preventDefault();
+            const subId = jQuery(this).data('sub-id');
+            modal.style.display = 'flex';
+            modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">Fetching upcoming schedule...</p>';
+            confirmBtn.dataset.subId = subId;
+            confirmBtn.style.display = 'none';
+
+            var data = {
+                action: 'cmp_foh_fetch_upcoming_meals',
+                nonce: fohNonce,
+                sub_id: subId
+            };
+
+            jQuery.post(fohAjaxUrl, data, function(res) {
+                if(res.success) {
+                    if(res.data.length === 0) {
+                        modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">No upcoming scheduled days available to manage.</p>';
+                    } else {
+                        let html = '<div style="margin-bottom:10px;"><label style="font-weight:bold; cursor:pointer;"><input type="checkbox" id="modal-select-all"> Select All Dates</label></div>';
+                        html += '<table style="width:100%; border-collapse:collapse; font-size:0.95em;">';
+                        html += '<thead><tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
+                        
+                        res.data.forEach(function(day) {
+                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="color:#d97706; cursor:help;">⚠️</span>' : '';
+                            html += '<tr style="border-bottom:1px solid #e2e8f0;">';
+                            html += '<td style="padding:10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'"></td>';
+                            html += '<td style="padding:10px;">' + day.date + warning + '</td>';
+                            html += '<td style="padding:10px; color:#64748b;">' + day.status + '</td>';
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
+                        
+                        modalBody.innerHTML = html;
+                        confirmBtn.style.display = 'block';
+
+                        // Checkbox binding
+                        jQuery('#modal-select-all').on('change', function() {
+                            jQuery('.modal-day-checkbox').prop('checked', jQuery(this).is(':checked'));
+                        });
+                        jQuery('.modal-day-checkbox').on('change', function() {
+                            if (!jQuery(this).is(':checked')) {
+                                jQuery('#modal-select-all').prop('checked', false);
+                            } else if (jQuery('.modal-day-checkbox:not(:checked)').length === 0) {
+                                jQuery('#modal-select-all').prop('checked', true);
+                            }
+                        });
+                    }
+                } else {
+                    modalBody.innerHTML = '<p style="color:#dc2626; text-align:center;">Error loading data.</p>';
+                }
+            });
+        });
+
+        jQuery('.close-modal-btn').on('click', function() {
+            modal.style.display = 'none';
+        });
+
+        jQuery('#foh-confirm-cancel-btn').on('click', function() {
+            const subId = jQuery(this).data('sub-id');
+            const selectedIds = [];
+            jQuery('.modal-day-checkbox:checked').each(function() {
+                selectedIds.push(jQuery(this).val());
+            });
+
+            if(selectedIds.length === 0) {
+                alert('Please select at least one day to cancel.');
+                return;
+            }
+
+            if(!confirm('Are you sure you want to CANCEL these ' + selectedIds.length + ' day(s)?\n\nThey will be voided and the quota will be shifted to the end of the customer\'s plan.')) {
+                return;
+            }
+
+            const origText = jQuery(this).text();
+            jQuery(this).text('Processing...').prop('disabled', true);
+
+            var data = {
+                action: 'cmp_foh_bulk_cancel_days',
+                nonce: fohNonce,
+                sub_id: subId,
+                log_ids: selectedIds
+            };
+
+            jQuery.post(fohAjaxUrl, data, function(res) {
+                if(res.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + res.data);
+                    jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false);
+                }
+            }).fail(function() {
+                alert('Connection error.');
+                jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false);
             });
         });
 
