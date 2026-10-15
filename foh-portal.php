@@ -810,7 +810,7 @@ function cmp_render_foh_portal() {
                 <p style="text-align:center; color:#64748b;">Loading...</p>
             </div>
             <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; border-radius:0 0 8px 8px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.85em; color:#64748b;">⚠️ = Past Kitchen Cut-off</span>
+                <span style="font-size:0.85em; color:#64748b;">!!! = Past Kitchen Cut-off</span>
                 <div style="display:flex; gap:10px;">
                     <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Close</button>
                     <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Cancel Selected Days</button>
