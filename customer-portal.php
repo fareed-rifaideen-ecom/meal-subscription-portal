@@ -333,7 +333,7 @@ function cmp_ajax_cp_admin_adjust_days() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
     // Restricted to Admin and Menu Manager (FOH removed per request)
     if ( ! current_user_can('manage_options') && ! current_user_can('menu_manager') ) {
-        wp_send_json_error('Permission Denied.');
+        wp_send_json_error('Permission Denied. Only Admins and Menu Managers can adjust total plan days.');
     }
 
     $sub_id = intval($_POST['sub_id']);
@@ -380,14 +380,23 @@ function cmp_ajax_clear_daily_log() {
     $log_id = intval($_POST['log_id']);
     $sub_id = intval($_POST['sub_id']);
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
     $log = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_logs WHERE id = %d", $log_id));
     if (!$log) wp_send_json_error('Selection not found.');
+    
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
+    if (!$sub) wp_send_json_error('Subscription not found.');
 
     // Check privileges
     $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
     $is_chef       = current_user_can('kitchen_staff');
     $is_privileged = $is_admin || $is_chef;
+    
+    // Security check: If not privileged, ensure the user actually owns the subscription
+    if (!$is_privileged && $sub->user_id != get_current_user_id()) {
+        wp_send_json_error('Unauthorized access to this subscription.');
+    }
 
     // Cutoff Time Validation (Ironclad Server Rule) - Admins bypass this
     if ( ! $is_privileged ) {
@@ -421,14 +430,23 @@ function cmp_ajax_cancel_daily_log() {
     $log_id = intval($_POST['log_id']);
     $sub_id = intval($_POST['sub_id']);
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
     $log = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_logs WHERE id = %d", $log_id));
     if (!$log) wp_send_json_error('Selection not found.');
+    
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
+    if (!$sub) wp_send_json_error('Subscription not found.');
 
     // Check privileges
     $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
     $is_chef       = current_user_can('kitchen_staff');
     $is_privileged = $is_admin || $is_chef;
+    
+    // Security check: If not privileged, ensure the user actually owns the subscription
+    if (!$is_privileged && $sub->user_id != get_current_user_id()) {
+        wp_send_json_error('Unauthorized access to this subscription.');
+    }
 
     // Cutoff Time Validation - Admins bypass this
     if ( ! $is_privileged ) {
@@ -487,9 +505,9 @@ function cmp_render_customer_portal() {
     $raw_wa               = get_option('cmp_whatsapp_number', '');
     $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
 
-    // SVG Icons
-    $icon_reset = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
-    $icon_cancel = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>';
+    // Clean SVG Icons for Action Buttons
+    $icon_reset = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+    $icon_cancel = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
@@ -1019,13 +1037,15 @@ function cmp_render_customer_portal() {
                             if ($log && !$is_void) {
                                 if ($log->delivery_result === 'Successful') {
                                     $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
-                                } elseif (in_array($log->delivery_result, ['Cancelled', 'Returned'])) {
-                                    $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                                 } elseif ($log_id > 0) {
                                     $status_badge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                                 }
                             } elseif ($is_void && $log) {
-                                $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
+                                if ($log->delivery_result === 'Cancelled') {
+                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; border: 1px solid #fde68a; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Paused / Cancelled</span>';
+                                } else {
+                                    $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
+                                }
                             }
 
                             $macros_desk = '<strong>Cal:</strong> 0<br><strong>Fat:</strong> 0g<br><strong>Carb:</strong> 0g<br><strong>Pro:</strong> 0g';
