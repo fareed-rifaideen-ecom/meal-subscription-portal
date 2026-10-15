@@ -409,6 +409,38 @@ function cmp_ajax_clear_daily_log() {
     wp_send_json_success(array('msg' => 'Cleared'));
 }
 
+// 1.9 AJAX HANDLER: FOH CANCEL SPECIFIC DAY
+add_action('wp_ajax_cmp_cancel_daily_log', 'cmp_ajax_cancel_daily_log');
+function cmp_ajax_cancel_daily_log() {
+    check_ajax_referer('cmp_portal_nonce', 'nonce');
+    global $wpdb;
+
+    // Strict FOH/Admin restriction
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied. Only staff can cancel days.');
+    }
+
+    $log_id = intval($_POST['log_id']);
+    $sub_id = intval($_POST['sub_id']);
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    $log = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_logs WHERE id = %d", $log_id));
+    if (!$log) wp_send_json_error('Selection not found.');
+
+    // Update the result to 'Cancelled'
+    $wpdb->update($table_logs, array('delivery_result' => 'Cancelled'), array('id' => $log_id));
+
+    // Mark subscription as updated for cache busting
+    $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
+    if (!is_array($updated_subs_queue)) { $updated_subs_queue = array(); }
+    if (!in_array($sub_id, $updated_subs_queue)) {
+        $updated_subs_queue[] = $sub_id;
+        update_option('cmp_daily_updated_subs', $updated_subs_queue);
+    }
+
+    wp_send_json_success(array('msg' => 'Day Cancelled'));
+}
+
 
 // ==========================================
 // 2. DASHBOARD RENDERER
@@ -1082,7 +1114,10 @@ function cmp_render_customer_portal() {
                                                 echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">Update</button>';
                                                 
                                                 if ($log_id > 0) {
-                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; font-size:0.85em; padding:5px;">Clear</button>';
+                                                    echo '<div style="display:flex; gap:5px; margin-top:5px;">';
+                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; font-size:0.85em; padding:5px; border-radius:3px;">Reset</button>';
+                                                    echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; font-size:0.85em; padding:5px; border-radius:3px;">Cancel Day</button>';
+                                                    echo '</div>';
                                                 }
                                             } else {
                                                 $lock_reason = $is_paused ? 'Paused' : 'Cutoff Passed';
@@ -1763,6 +1798,38 @@ function cmp_render_customer_portal() {
             
             var data = {
                 action: 'cmp_clear_daily_log',
+                nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
+                log_id: btn.data('log-id'),
+                sub_id: btn.data('sub-id')
+            };
+            
+            $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
+                if (response.success) {
+                    location.reload(); 
+                } else {
+                    alert('Error: ' + response.data);
+                    btn.text(origText).prop('disabled', false);
+                }
+            }).fail(function() {
+                alert('Connection error.');
+                btn.text(origText).prop('disabled', false);
+            });
+        });
+
+        // FOH CANCEL DAY LOGIC
+        $('.cmp-cancel-day-row').on('click', function(e) {
+            e.preventDefault();
+            var btn = $(this);
+            
+            if (!confirm('Are you sure you want to CANCEL this specific day?\n\nThis will permanently void this date, display it as "Cancelled" to the customer, and push a replacement day to the bottom of their plan.')) {
+                return;
+            }
+            
+            var origText = btn.text();
+            btn.text('Cancelling...').prop('disabled', true);
+            
+            var data = {
+                action: 'cmp_cancel_daily_log',
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 log_id: btn.data('log-id'),
                 sub_id: btn.data('sub-id')
