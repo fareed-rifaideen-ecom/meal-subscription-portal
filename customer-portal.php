@@ -368,6 +368,47 @@ function cmp_ajax_cp_admin_adjust_days() {
     wp_send_json_success(array('new_days' => $new_days));
 }
 
+// 1.8 AJAX HANDLER: CLEAR/RESET DAILY SELECTION
+add_action('wp_ajax_cmp_clear_daily_log', 'cmp_ajax_clear_daily_log');
+function cmp_ajax_clear_daily_log() {
+    check_ajax_referer('cmp_portal_nonce', 'nonce');
+    global $wpdb;
+
+    if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
+
+    $log_id = intval($_POST['log_id']);
+    $sub_id = intval($_POST['sub_id']);
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    $log = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_logs WHERE id = %d", $log_id));
+    if (!$log) wp_send_json_error('Selection not found.');
+
+    // Check privileges
+    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
+    $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
+    $is_privileged = $is_admin || $is_chef;
+
+    // Cutoff Time Validation (Ironclad Server Rule) - Admins bypass this
+    if ( ! $is_privileged ) {
+        $tz           = new DateTimeZone('Asia/Dubai');
+        $now          = new DateTime('now', $tz);
+        $current_hour = (int) $now->format('H');
+        $cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
+        $tomorrow     = ( clone $now )->modify('+1 day')->format('Y-m-d');
+        $day_after    = ( clone $now )->modify('+2 days')->format('Y-m-d');
+
+        $earliest_allowed = ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
+
+        if ( $log->target_date < $earliest_allowed ) {
+            wp_send_json_error('Cut-off time has passed for this date. You cannot clear this selection.');
+        }
+    }
+
+    // Delete the log to free up the quota
+    $wpdb->delete($table_logs, array('id' => $log_id));
+    wp_send_json_success(array('msg' => 'Cleared'));
+}
+
 
 // ==========================================
 // 2. DASHBOARD RENDERER
@@ -1020,7 +1061,10 @@ function cmp_render_customer_portal() {
                                         if ($saved_chefs_choice) {
                                             $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
                                             $chef_btn_color = ($is_chef_assigned) ? '#46b450' : '#0073aa';
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">'.$chef_btn_text.'</button>';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">'.$chef_btn_text.'</button>';
+                                            if ($log_id > 0) {
+                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; font-size:0.85em; padding:5px;">Clear</button>';
+                                            }
                                         } else {
                                             echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
                                         }
@@ -1028,10 +1072,18 @@ function cmp_render_customer_portal() {
                                         if (!$is_time_locked && !$is_void && !$is_paused) {
                                             $btn_txt = ($log_id > 0) ? 'Update' : 'Save';
                                             $btn_color = ($log_id > 0) ? '#46b450' : '#0073aa';
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">'.$btn_txt.'</button>';
+                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">'.$btn_txt.'</button>';
+                                            
+                                            if ($log_id > 0) {
+                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; font-size:0.85em; padding:5px;">Clear</button>';
+                                            }
                                         } else {
                                             if ($is_admin_override) {
-                                                echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%;">Update</button>';
+                                                echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#46b450; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">Update</button>';
+                                                
+                                                if ($log_id > 0) {
+                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; font-size:0.85em; padding:5px;">Clear</button>';
+                                                }
                                             } else {
                                                 $lock_reason = $is_paused ? 'Paused' : 'Cutoff Passed';
                                                 $lock_reason = $is_void ? 'Void' : $lock_reason;
@@ -1696,6 +1748,39 @@ function cmp_render_customer_portal() {
                 }
             });
         });
+
+        // CLEAR SELECTION LOGIC
+        $('.cmp-clear-row').on('click', function(e) {
+            e.preventDefault();
+            var btn = $(this);
+            
+            if (!confirm('Are you sure you want to clear this day? This will reset the selection and return the quota so a new date can be picked.')) {
+                return;
+            }
+            
+            var origText = btn.text();
+            btn.text('Clearing...').prop('disabled', true);
+            
+            var data = {
+                action: 'cmp_clear_daily_log',
+                nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
+                log_id: btn.data('log-id'),
+                sub_id: btn.data('sub-id')
+            };
+            
+            $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
+                if (response.success) {
+                    location.reload(); 
+                } else {
+                    alert('Error: ' + response.data);
+                    btn.text(origText).prop('disabled', false);
+                }
+            }).fail(function() {
+                alert('Connection error.');
+                btn.text(origText).prop('disabled', false);
+            });
+        });
+
     });
     </script>
     <?php
