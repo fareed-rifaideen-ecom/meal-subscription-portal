@@ -18,7 +18,7 @@ function cmp_ajax_foh_update_expiry() {
     wp_send_json_success();
 }
 
-// 2. AJAX HANDLER: Toggle Freeze/Resume Status (Global Plan Level)
+// 2. AJAX HANDLER: Toggle Pause/Resume Status (Global Plan Level)
 add_action('wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status');
 function cmp_ajax_foh_toggle_status() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -755,12 +755,12 @@ function cmp_render_foh_portal() {
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                             <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;" title="Freeze/Resume Entire Plan">
-                                                <?php echo $is_paused ? 'Resume' : 'Freeze'; ?>
+                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;" title="Pause/Resume Entire Plan">
+                                                <?php echo $is_paused ? 'Resume' : 'Pause'; ?>
                                             </button>
                                         </form>
-                                        <!-- NEW BULK MANAGE DAYS BUTTON -->
-                                        <button class="manage-days-btn" data-sub-id="<?php echo $sub->id; ?>" style="flex: 1; height: 32px; background: #64748b; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: 0.2s;" title="Cancel Specific Upcoming Days">Manage Days</button>
+                                        <!-- BULK CANCEL DAYS BUTTON -->
+                                        <button class="manage-days-btn" data-sub-id="<?php echo $sub->id; ?>" style="flex: 1; height: 32px; background: #64748b; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: 0.2s;" title="Cancel Specific Upcoming Days">Hold</button>
                                         <?php endif; ?>
                                         
                                         <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">View</a>
@@ -803,17 +803,17 @@ function cmp_render_foh_portal() {
     <div id="foh-manage-days-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
         <div style="background:#fff; width:90%; max-width:600px; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh;">
             <div style="padding:20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0; color:#0f172a;">Bulk Cancel Upcoming Days</h3>
+                <h3 style="margin:0; color:#0f172a;">Hold Upcoming Days</h3>
                 <button class="close-modal-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#64748b;">&times;</button>
             </div>
             <div style="padding:20px; overflow-y:auto; flex:1;" id="foh-modal-body">
                 <p style="text-align:center; color:#64748b;">Loading...</p>
             </div>
             <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; border-radius:0 0 8px 8px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.85em; color:#64748b;">!!! = Past Kitchen Cut-off</span>
+                <span style="font-size:0.85em; color:#64748b;">⚠️ = Past Kitchen Cut-off</span>
                 <div style="display:flex; gap:10px;">
                     <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Close</button>
-                    <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Cancel Selected Days</button>
+                    <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Hold Selected Days</button>
                 </div>
             </div>
         </div>
@@ -891,7 +891,7 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'active') {
-                            btn.innerText = 'Freeze';
+                            btn.innerText = 'Pause';
                             btn.style.background = '#dba617';
                             statusInput.value = 'paused';
                         } else {
@@ -1204,7 +1204,7 @@ function cmp_render_foh_portal() {
                             this.disabled = false;
                         }, 1000);
                     } else {
-                        alert('Error: ' + response.data);
+                        alert('Error: ' + res.data);
                         this.innerText = originalText;
                         this.disabled = false;
                     }
@@ -1244,7 +1244,7 @@ function cmp_render_foh_portal() {
                         html += '<thead><tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
                         
                         res.data.forEach(function(day) {
-                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="color:#d97706; cursor:help;">!!!</span>' : '';
+                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="color:#d97706; cursor:help;">⚠️</span>' : '';
                             html += '<tr style="border-bottom:1px solid #e2e8f0;">';
                             html += '<td style="padding:10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'"></td>';
                             html += '<td style="padding:10px;">' + day.date + warning + '</td>';
@@ -1286,11 +1286,11 @@ function cmp_render_foh_portal() {
             });
 
             if(selectedIds.length === 0) {
-                alert('Please select at least one day to cancel.');
+                alert('Please select at least one day to hold.');
                 return;
             }
 
-            if(!confirm('Are you sure you want to CANCEL these ' + selectedIds.length + ' day(s)?\n\nThey will be voided and the quota will be shifted to the end of the customer\'s plan.')) {
+            if(!confirm('Are you sure you want to HOLD these ' + selectedIds.length + ' day(s)?\n\nThey will be voided and the quota will be shifted to the end of the customer\'s plan.')) {
                 return;
             }
 
@@ -1324,7 +1324,7 @@ function cmp_render_foh_portal() {
                 const subId = this.getAttribute('data-sub-id');
                 const orderId = this.getAttribute('data-order-id');
                 
-                const confirmDelete = confirm('WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
+                const confirmDelete = confirm('⚠️ WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
                 if (!confirmDelete) return;
 
                 const originalHTML = btn.innerHTML;
