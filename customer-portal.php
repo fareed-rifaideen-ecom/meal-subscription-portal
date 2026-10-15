@@ -331,7 +331,8 @@ function cmp_ajax_cp_admin_update_account_details() {
 add_action('wp_ajax_cmp_cp_admin_adjust_days', 'cmp_ajax_cp_admin_adjust_days');
 function cmp_ajax_cp_admin_adjust_days() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
-    if ( ! current_user_can('manage_options') && ! current_user_can('menu_manager') && ! current_user_can('foh_manager') ) {
+    // Restricted to Admin and Menu Manager (FOH removed per request)
+    if ( ! current_user_can('manage_options') && ! current_user_can('menu_manager') ) {
         wp_send_json_error('Permission Denied.');
     }
 
@@ -384,8 +385,8 @@ function cmp_ajax_clear_daily_log() {
     if (!$log) wp_send_json_error('Selection not found.');
 
     // Check privileges
-    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
-    $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
+    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
+    $is_chef       = current_user_can('kitchen_staff');
     $is_privileged = $is_admin || $is_chef;
 
     // Cutoff Time Validation (Ironclad Server Rule) - Admins bypass this
@@ -409,16 +410,13 @@ function cmp_ajax_clear_daily_log() {
     wp_send_json_success(array('msg' => 'Cleared'));
 }
 
-// 1.9 AJAX HANDLER: FOH CANCEL SPECIFIC DAY
+// 1.9 AJAX HANDLER: CUSTOMER/FOH CANCEL SPECIFIC DAY
 add_action('wp_ajax_cmp_cancel_daily_log', 'cmp_ajax_cancel_daily_log');
 function cmp_ajax_cancel_daily_log() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
     global $wpdb;
 
-    // Strict FOH/Admin restriction
-    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
-        wp_send_json_error('Permission Denied. Only staff can cancel days.');
-    }
+    if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
     $log_id = intval($_POST['log_id']);
     $sub_id = intval($_POST['sub_id']);
@@ -426,6 +424,27 @@ function cmp_ajax_cancel_daily_log() {
 
     $log = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_logs WHERE id = %d", $log_id));
     if (!$log) wp_send_json_error('Selection not found.');
+
+    // Check privileges
+    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
+    $is_chef       = current_user_can('kitchen_staff');
+    $is_privileged = $is_admin || $is_chef;
+
+    // Cutoff Time Validation - Admins bypass this
+    if ( ! $is_privileged ) {
+        $tz           = new DateTimeZone('Asia/Dubai');
+        $now          = new DateTime('now', $tz);
+        $current_hour = (int) $now->format('H');
+        $cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
+        $tomorrow     = ( clone $now )->modify('+1 day')->format('Y-m-d');
+        $day_after    = ( clone $now )->modify('+2 days')->format('Y-m-d');
+
+        $earliest_allowed = ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
+
+        if ( $log->target_date < $earliest_allowed ) {
+            wp_send_json_error('Cut-off time has passed for this date. You cannot cancel this day.');
+        }
+    }
 
     // Update the result to 'Cancelled'
     $wpdb->update($table_logs, array('delivery_result' => 'Cancelled'), array('id' => $log_id));
@@ -467,6 +486,10 @@ function cmp_render_customer_portal() {
     $blackout_dates_array = !empty($blackout_string) ? explode(',', str_replace(' ', '', $blackout_string)) : array();
     $raw_wa               = get_option('cmp_whatsapp_number', '');
     $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
+
+    // SVG Icons
+    $icon_reset = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+    $icon_cancel = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>';
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
@@ -889,7 +912,7 @@ function cmp_render_customer_portal() {
             </div>
 
             <!-- PHASE 6: ADMIN PLAN MANAGER CONTROLS -->
-            <?php if ($is_admin_override): ?>
+            <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
             <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <div>
                     <strong style="color:#b45309; font-size:1.1em;">Admin Plan Manager</strong><br>
@@ -1095,7 +1118,7 @@ function cmp_render_customer_portal() {
                                             $chef_btn_color = ($is_chef_assigned) ? '#46b450' : '#0073aa';
                                             echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">'.$chef_btn_text.'</button>';
                                             if ($log_id > 0) {
-                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; font-size:0.85em; padding:5px;">Clear</button>';
+                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; padding:6px; border-radius:3px; display:flex; justify-content:center; align-items:center;" title="Reset / Clear Selection">'.$icon_reset.'</button>';
                                             }
                                         } else {
                                             echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
@@ -1107,7 +1130,10 @@ function cmp_render_customer_portal() {
                                             echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">'.$btn_txt.'</button>';
                                             
                                             if ($log_id > 0) {
-                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; font-size:0.85em; padding:5px;">Clear</button>';
+                                                echo '<div style="display:flex; gap:5px; margin-top:5px;">';
+                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:3px; display:flex; justify-content:center; align-items:center;" title="Reset Selection">'.$icon_reset.'</button>';
+                                                echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:3px; display:flex; justify-content:center; align-items:center;" title="Cancel Day">'.$icon_cancel.'</button>';
+                                                echo '</div>';
                                             }
                                         } else {
                                             if ($is_admin_override) {
@@ -1115,8 +1141,8 @@ function cmp_render_customer_portal() {
                                                 
                                                 if ($log_id > 0) {
                                                     echo '<div style="display:flex; gap:5px; margin-top:5px;">';
-                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; font-size:0.85em; padding:5px; border-radius:3px;">Reset</button>';
-                                                    echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; font-size:0.85em; padding:5px; border-radius:3px;">Cancel Day</button>';
+                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:3px; display:flex; justify-content:center; align-items:center;" title="Reset Selection">'.$icon_reset.'</button>';
+                                                    echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:3px; display:flex; justify-content:center; align-items:center;" title="Cancel Day">'.$icon_cancel.'</button>';
                                                     echo '</div>';
                                                 }
                                             } else {
@@ -1793,8 +1819,8 @@ function cmp_render_customer_portal() {
                 return;
             }
             
-            var origText = btn.text();
-            btn.text('Clearing...').prop('disabled', true);
+            var origHTML = btn.html();
+            btn.html('...').prop('disabled', true);
             
             var data = {
                 action: 'cmp_clear_daily_log',
@@ -1808,15 +1834,15 @@ function cmp_render_customer_portal() {
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
-                    btn.text(origText).prop('disabled', false);
+                    btn.html(origHTML).prop('disabled', false);
                 }
             }).fail(function() {
                 alert('Connection error.');
-                btn.text(origText).prop('disabled', false);
+                btn.html(origHTML).prop('disabled', false);
             });
         });
 
-        // FOH CANCEL DAY LOGIC
+        // CUSTOMER/FOH CANCEL DAY LOGIC
         $('.cmp-cancel-day-row').on('click', function(e) {
             e.preventDefault();
             var btn = $(this);
@@ -1825,8 +1851,8 @@ function cmp_render_customer_portal() {
                 return;
             }
             
-            var origText = btn.text();
-            btn.text('Cancelling...').prop('disabled', true);
+            var origHTML = btn.html();
+            btn.html('...').prop('disabled', true);
             
             var data = {
                 action: 'cmp_cancel_daily_log',
@@ -1840,11 +1866,11 @@ function cmp_render_customer_portal() {
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
-                    btn.text(origText).prop('disabled', false);
+                    btn.html(origHTML).prop('disabled', false);
                 }
             }).fail(function() {
                 alert('Connection error.');
-                btn.text(origText).prop('disabled', false);
+                btn.html(origHTML).prop('disabled', false);
             });
         });
 
