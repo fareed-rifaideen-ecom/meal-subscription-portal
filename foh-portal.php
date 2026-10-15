@@ -1244,7 +1244,7 @@ function cmp_render_foh_portal() {
                         html += '<thead><tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
                         
                         res.data.forEach(function(day) {
-                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="color:#d97706; cursor:help;">⚠️</span>' : '';
+                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="color:#d97706; cursor:help;">!!!</span>' : '';
                             html += '<tr style="border-bottom:1px solid #e2e8f0;">';
                             html += '<td style="padding:10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'"></td>';
                             html += '<td style="padding:10px;">' + day.date + warning + '</td>';
@@ -1324,7 +1324,7 @@ function cmp_render_foh_portal() {
                 const subId = this.getAttribute('data-sub-id');
                 const orderId = this.getAttribute('data-order-id');
                 
-                const confirmDelete = confirm('⚠️ WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
+                const confirmDelete = confirm('WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
                 if (!confirmDelete) return;
 
                 const originalHTML = btn.innerHTML;
