@@ -125,7 +125,8 @@ function cmp_render_chef_assignment_desk() {
 
         $all_customers[] = $customer_data;
 
-        $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1 AND target_date >= %s", $sub->id, $today_date));
+        // Phase 2 Fix: Safely ignore days that have been Cancelled or Returned by FOH
+        $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1 AND target_date >= %s AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id, $today_date));
         $is_pending = false;
         
         foreach($chef_logs as $log) {
