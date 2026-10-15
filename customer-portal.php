@@ -1041,22 +1041,14 @@ function cmp_render_customer_portal() {
 
                             $status_badge = '<span style="color:#666; font-size:0.9em; background:#f1f5f9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Pending</span>';
                             
-                            if ($log && !$is_void) {
-                                if ($log->delivery_result === 'Successful') {
-                                    $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
-                                } elseif ($is_paused) {
-                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; border: 1px solid #fde68a; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Plan Paused</span>';
-                                } elseif ($log_id > 0) {
-                                    $status_badge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
-                                }
+                            if ($log && $log->delivery_result === 'Successful') {
+                                $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
                             } elseif ($is_void && $log) {
-                                if ($log->delivery_result === 'Cancelled') {
-                                    $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; border: 1px solid #fde68a; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">On Hold / Cancelled</span>';
-                                } else {
-                                    $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
-                                }
+                                $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
                             } elseif ($is_paused) {
-                                $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; border: 1px solid #fde68a; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Plan Paused</span>';
+                                $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Paused</span>';
+                            } elseif ($log_id > 0) {
+                                $status_badge = '<span style="color:#0f766e; font-size:0.9em; background:#ccfbf1; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
                             }
 
                             $macros_desk = '<strong>Cal:</strong> 0<br><strong>Fat:</strong> 0g<br><strong>Carb:</strong> 0g<br><strong>Pro:</strong> 0g';
