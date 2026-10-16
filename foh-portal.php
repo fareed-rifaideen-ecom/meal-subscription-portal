@@ -18,7 +18,7 @@ function cmp_ajax_foh_update_expiry() {
     wp_send_json_success();
 }
 
-// 2. AJAX HANDLER: Toggle Pause/Resume Status
+// 2. AJAX HANDLER: Toggle Pause/Resume Status (Global Plan Level)
 add_action('wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status');
 function cmp_ajax_foh_toggle_status() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -296,6 +296,84 @@ function cmp_ajax_foh_toggle_deposit() {
     wp_send_json_success();
 }
 
+// 9. AJAX HANDLER: Fetch Upcoming Days for Modal (Excludes Same Day)
+add_action('wp_ajax_cmp_foh_fetch_upcoming_meals', 'cmp_foh_fetch_upcoming_meals');
+function cmp_foh_fetch_upcoming_meals() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied');
+    }
+    
+    global $wpdb;
+    date_default_timezone_set('Asia/Dubai');
+    $sub_id = intval($_POST['sub_id']);
+    $today = date('Y-m-d');
+
+    // ONLY fetch days STRICTLY GREATER than today. Same-day cancellations via FOH modal are blocked.
+    $logs = $wpdb->get_results($wpdb->prepare("
+        SELECT * FROM {$wpdb->prefix}cmp_daily_logs 
+        WHERE subscription_id = %d 
+        AND target_date > %s 
+        AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))
+        ORDER BY target_date ASC
+    ", $sub_id, $today));
+
+    // Determine cutoffs to flag warnings
+    $current_hour = (int) date('H');
+    $cutoff_hour = intval( get_option('cmp_cutoff_time', '11') );
+    $tomorrow = date('Y-m-d', strtotime('+1 day'));
+    $day_after = date('Y-m-d', strtotime('+2 days'));
+    $earliest_allowed = ($current_hour >= $cutoff_hour) ? $day_after : $tomorrow;
+
+    $data = [];
+    foreach($logs as $log) {
+        $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 || $log->is_chefs_choice);
+        $status_text = $is_assigned ? 'Assigned' : 'Pending Selection';
+        $past_cutoff = ($log->target_date < $earliest_allowed);
+
+        $data[] = [
+            'id' => $log->id,
+            'date' => date('D, M j, Y', strtotime($log->target_date)),
+            'status' => $status_text,
+            'past_cutoff' => $past_cutoff
+        ];
+    }
+    wp_send_json_success($data);
+}
+
+// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day)
+add_action('wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_foh_bulk_cancel_days');
+function cmp_foh_bulk_cancel_days() {
+    check_ajax_referer('cmp_foh_nonce', 'nonce');
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+        wp_send_json_error('Permission Denied');
+    }
+    
+    global $wpdb;
+    date_default_timezone_set('Asia/Dubai');
+    $sub_id = intval($_POST['sub_id']);
+    $log_ids = isset($_POST['log_ids']) ? array_map('intval', $_POST['log_ids']) : [];
+
+    if (empty($log_ids)) wp_send_json_error('No days selected.');
+
+    $today = date('Y-m-d');
+    $ids_placeholder = implode(',', array_fill(0, count($log_ids), '%d'));
+    
+    // Extra security check: enforce target_date > $today so same-day records cannot be affected.
+    $query_params = array_merge([$sub_id], $log_ids, [$today]);
+    $query = $wpdb->prepare("UPDATE {$wpdb->prefix}cmp_daily_logs SET delivery_result = 'Cancelled' WHERE subscription_id = %d AND id IN ($ids_placeholder) AND target_date > %s", $query_params);
+    $wpdb->query($query);
+
+    $updated_subs_queue = get_option('cmp_daily_updated_subs', array());
+    if (!is_array($updated_subs_queue)) { $updated_subs_queue = array(); }
+    if (!in_array($sub_id, $updated_subs_queue)) {
+        $updated_subs_queue[] = $sub_id;
+        update_option('cmp_daily_updated_subs', $updated_subs_queue);
+    }
+
+    wp_send_json_success();
+}
+
 
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
@@ -344,6 +422,12 @@ function cmp_render_foh_portal() {
             $tabs['active'][] = $sub;
         }
     }
+
+    // Action SVG Icons
+    $icon_stop = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>';
+    $icon_play = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+    $icon_pause = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+    $icon_edit = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
 
     ob_start();
     ?>
@@ -462,10 +546,19 @@ function cmp_render_foh_portal() {
             </div>
         </div>
 
-        <!-- SEARCH BAR -->
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center;">
-            <div style="flex: 1; width: 100%;">
+        <!-- SEARCH AND SORT BAR -->
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 250px;">
                 <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
+            </div>
+            <div style="min-width: 200px;">
+                <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; background: #fff; cursor:pointer;">
+                    <option value="default">Sort By: Default (Newest)</option>
+                    <option value="balance_asc">Balance Days (Low to High)</option>
+                    <option value="balance_desc">Balance Days (High to Low)</option>
+                    <option value="filled_desc">Filled Days (High to Low)</option>
+                    <option value="used_desc">Used Days (High to Low)</option>
+                </select>
             </div>
         </div>
 
@@ -568,7 +661,7 @@ function cmp_render_foh_portal() {
 
                             $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
                         ?>
-                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" id="sub-row-<?php echo $sub->id; ?>">
+                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" data-balance="<?php echo esc_attr($sub->balance); ?>" data-filled="<?php echo esc_attr($sub->filled); ?>" data-used="<?php echo esc_attr($sub->usage); ?>" id="sub-row-<?php echo $sub->id; ?>">
                             
                             <td style="font-size: 1.1em; font-weight: bold; color: #334155;">
                                 <?php echo $display_order_id; ?>
@@ -577,7 +670,11 @@ function cmp_render_foh_portal() {
                             <td>
                                 <div style="display: flex; flex-direction: column;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div><strong style="font-size: 1.1em; color: #0073aa;" id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($full_name ?: 'Customer'); ?></strong></div>
+                                        <div>
+                                            <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="text-decoration: none;" title="Open Customer Portal in New Tab">
+                                                <strong style="font-size: 1.1em; color: #0073aa; border-bottom: 1px dotted #0073aa; transition: color 0.2s;" id="name-val-<?php echo $sub->id; ?>" onmouseover="this.style.color='#0284c7'" onmouseout="this.style.color='#0073aa'"><?php echo esc_html($full_name ?: 'Customer'); ?></strong>
+                                            </a>
+                                        </div>
                                         <?php if ($can_edit_details): ?>
                                             <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account & Mode">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
@@ -683,12 +780,19 @@ function cmp_render_foh_portal() {
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                             <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;">
-                                                <?php echo $is_paused ? 'Resume' : 'Pause'; ?>
+                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dc2626'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;" title="<?php echo $is_paused ? 'Resume Plan' : 'Stop Plan'; ?>">
+                                                <?php echo $is_paused ? $icon_play : $icon_stop; ?>
                                             </button>
                                         </form>
+                                        <!-- BULK CANCEL DAYS BUTTON -->
+                                        <button class="manage-days-btn" data-sub-id="<?php echo $sub->id; ?>" style="flex: 1; height: 32px; background: #f59e0b; color: white; border: none; padding: 0 6px; border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s;" title="Hold / Pause Specific Upcoming Days">
+                                            <?php echo $icon_pause; ?>
+                                        </button>
                                         <?php endif; ?>
-                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">Edit / View</a>
+                                        
+                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box;" title="Edit / View in Customer Portal">
+                                            <?php echo $icon_edit; ?>
+                                        </a>
                                         
                                         <!-- SUPER ADMIN ONLY: PERMANENT SUBSCRIPTION DELETE KILL-SWITCH -->
                                         <?php if (current_user_can('manage_options')): ?>
@@ -722,12 +826,38 @@ function cmp_render_foh_portal() {
         <?php endforeach; ?>
 
         <div id="fohPagination" style="margin-top: 20px; display: flex; gap: 5px; justify-content: center; flex-wrap: wrap;"></div>
+    </div>
 
+    <!-- MANAGE DAYS AJAX MODAL -->
+    <div id="foh-manage-days-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
+        <div style="background:#fff; width:90%; max-width:600px; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh;">
+            <div style="padding:20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0; color:#0f172a;">Hold Upcoming Days</h3>
+                <button class="close-modal-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#64748b;">&times;</button>
+            </div>
+            <div style="padding:20px; overflow-y:auto; flex:1;" id="foh-modal-body">
+                <p style="text-align:center; color:#64748b;">Loading...</p>
+            </div>
+            <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; border-radius:0 0 8px 8px; display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; align-items:center; gap:6px; font-size:0.85em; color:#64748b;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> 
+                    = Past Kitchen Cut-off
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Close</button>
+                    <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Hold Selected Days</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
     const fohAjaxUrl = '<?php echo admin_url("admin-ajax.php"); ?>';
     const fohNonce   = '<?php echo wp_create_nonce("cmp_foh_nonce"); ?>';
+
+    // Core FOH Action SVGs mapped for JavaScript toggles
+    const stopIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>';
+    const playIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
 
     document.addEventListener("DOMContentLoaded", function() {
         
@@ -774,7 +904,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Status Form
+        // Status Form (Stop/Resume)
         document.querySelectorAll('.ajax-status-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -797,12 +927,14 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'active') {
-                            btn.innerText = 'Pause';
-                            btn.style.background = '#dba617';
+                            btn.innerHTML = stopIcon;
+                            btn.style.background = '#dc2626';
+                            btn.title = 'Stop Plan';
                             statusInput.value = 'paused';
                         } else {
-                            btn.innerText = 'Resume';
+                            btn.innerHTML = playIcon;
                             btn.style.background = '#0073aa';
+                            btn.title = 'Resume Plan';
                             statusInput.value = 'active';
                         }
                         btn.style.opacity = '1';
@@ -1044,7 +1176,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Save Account Details with Mutually Exclusive Plan Mode
+        // Save Account Details
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -1110,7 +1242,7 @@ function cmp_render_foh_portal() {
                             this.disabled = false;
                         }, 1000);
                     } else {
-                        alert('Error: ' + response.data);
+                        alert('Error: ' + res.data);
                         this.innerText = originalText;
                         this.disabled = false;
                     }
@@ -1118,6 +1250,111 @@ function cmp_render_foh_portal() {
                     this.innerText = originalText;
                     this.disabled = false;
                 });
+            });
+        });
+
+        // MANAGE DAYS AJAX MODAL LOGIC
+        const modal = document.getElementById('foh-manage-days-modal');
+        const modalBody = document.getElementById('foh-modal-body');
+        const confirmBtn = document.getElementById('foh-confirm-cancel-btn');
+
+        // Dynamic SVG to replace native emoji scaling issues
+        const warningSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom; margin-left: 5px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+
+        jQuery('.manage-days-btn').on('click', function(e) {
+            e.preventDefault();
+            const subId = jQuery(this).data('sub-id');
+            modal.style.display = 'flex';
+            modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">Fetching upcoming schedule...</p>';
+            confirmBtn.dataset.subId = subId;
+            confirmBtn.style.display = 'none';
+
+            var data = {
+                action: 'cmp_foh_fetch_upcoming_meals',
+                nonce: fohNonce,
+                sub_id: subId
+            };
+
+            jQuery.post(fohAjaxUrl, data, function(res) {
+                if(res.success) {
+                    if(res.data.length === 0) {
+                        modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">No upcoming scheduled days available to manage.</p>';
+                    } else {
+                        let html = '<div style="margin-bottom:10px;"><label style="font-weight:bold; cursor:pointer;"><input type="checkbox" id="modal-select-all"> Select All Dates</label></div>';
+                        html += '<table style="width:100%; border-collapse:collapse; font-size:0.95em;">';
+                        html += '<thead><tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
+                        
+                        res.data.forEach(function(day) {
+                            let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="cursor:help; display:inline-block;">' + warningSvg + '</span>' : '';
+                            html += '<tr style="border-bottom:1px solid #e2e8f0;">';
+                            html += '<td style="padding:10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'"></td>';
+                            html += '<td style="padding:10px;">' + day.date + warning + '</td>';
+                            html += '<td style="padding:10px; color:#64748b;">' + day.status + '</td>';
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
+                        
+                        modalBody.innerHTML = html;
+                        confirmBtn.style.display = 'block';
+
+                        // Checkbox binding
+                        jQuery('#modal-select-all').on('change', function() {
+                            jQuery('.modal-day-checkbox').prop('checked', jQuery(this).is(':checked'));
+                        });
+                        jQuery('.modal-day-checkbox').on('change', function() {
+                            if (!jQuery(this).is(':checked')) {
+                                jQuery('#modal-select-all').prop('checked', false);
+                            } else if (jQuery('.modal-day-checkbox:not(:checked)').length === 0) {
+                                jQuery('#modal-select-all').prop('checked', true);
+                            }
+                        });
+                    }
+                } else {
+                    modalBody.innerHTML = '<p style="color:#dc2626; text-align:center;">Error loading data.</p>';
+                }
+            });
+        });
+
+        jQuery('.close-modal-btn').on('click', function() {
+            modal.style.display = 'none';
+        });
+
+        jQuery('#foh-confirm-cancel-btn').on('click', function() {
+            const subId = jQuery(this).data('sub-id');
+            const selectedIds = [];
+            jQuery('.modal-day-checkbox:checked').each(function() {
+                selectedIds.push(jQuery(this).val());
+            });
+
+            if(selectedIds.length === 0) {
+                alert('Please select at least one day to hold.');
+                return;
+            }
+
+            if(!confirm('Are you sure you want to HOLD these ' + selectedIds.length + ' day(s)?\n\nThey will be voided and the quota will be shifted to the end of the customer\'s plan.')) {
+                return;
+            }
+
+            const origText = jQuery(this).text();
+            jQuery(this).text('Processing...').prop('disabled', true);
+
+            var data = {
+                action: 'cmp_foh_bulk_cancel_days',
+                nonce: fohNonce,
+                sub_id: subId,
+                log_ids: selectedIds
+            };
+
+            jQuery.post(fohAjaxUrl, data, function(res) {
+                if(res.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + res.data);
+                    jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false);
+                }
+            }).fail(function() {
+                alert('Connection error.');
+                jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false);
             });
         });
 
@@ -1166,11 +1403,17 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Search Engine
+        // Tracking Metrics JavaScript Sorting Engine & Search Filtering
         document.getElementById('fohSearch').addEventListener('keyup', function() {
             currentPage = 1;
             renderTable();
         });
+        
+        document.getElementById('fohSort').addEventListener('change', function() {
+            currentPage = 1;
+            renderTable();
+        });
+        
         renderTable();
     });
 
@@ -1199,26 +1442,67 @@ function cmp_render_foh_portal() {
 
     function renderTable() {
         const query = document.getElementById('fohSearch').value.toLowerCase();
+        const sortVal = document.getElementById('fohSort').value;
+        const tbody = document.querySelector('#' + currentTab + ' tbody');
         
-        const allRows = Array.from(document.querySelectorAll('#' + currentTab + ' .foh-row'));
+        let allRows = Array.from(tbody.querySelectorAll('.foh-row'));
         
-        const filtered = allRows.filter(row => {
+        let filtered = allRows.filter(row => {
             const searchData = row.getAttribute('data-search');
             return query === '' || searchData.includes(query);
         });
 
+        // Numeric Sorting Engine
+        if (sortVal !== 'default') {
+            filtered.sort((a, b) => {
+                let valA = 0, valB = 0;
+                
+                if (sortVal === 'balance_asc' || sortVal === 'balance_desc') {
+                    valA = parseInt(a.getAttribute('data-balance')) || 0;
+                    valB = parseInt(b.getAttribute('data-balance')) || 0;
+                } else if (sortVal === 'filled_desc') {
+                    valA = parseInt(a.getAttribute('data-filled')) || 0;
+                    valB = parseInt(b.getAttribute('data-filled')) || 0;
+                } else if (sortVal === 'used_desc') {
+                    valA = parseInt(a.getAttribute('data-used')) || 0;
+                    valB = parseInt(b.getAttribute('data-used')) || 0;
+                }
+
+                if (sortVal.includes('_asc')) {
+                    return valA - valB;
+                } else {
+                    return valB - valA;
+                }
+            });
+        } else {
+            // Restore default sort (Descending ID)
+            filtered.sort((a, b) => {
+                let idA = parseInt(a.id.replace('sub-row-', '')) || 0;
+                let idB = parseInt(b.id.replace('sub-row-', '')) || 0;
+                return idB - idA;
+            });
+        }
+
+        // Hide all rows initially
         allRows.forEach(row => row.style.display = 'none');
 
+        // Re-append sorted rows to physical DOM to preserve ordering in the UI
+        filtered.forEach(row => tbody.appendChild(row));
+
+        // Paginate the sorted output
         const start = (currentPage - 1) * rowsPerPage;
         const end = start + rowsPerPage;
         filtered.slice(start, end).forEach(row => row.style.display = '');
 
-        let noResultsRow = document.querySelector('#' + currentTab + ' .no-search-results');
+        // Generate or relocate the empty state notice
+        let noResultsRow = tbody.querySelector('.no-search-results');
         if (!noResultsRow) {
             noResultsRow = document.createElement('tr');
             noResultsRow.className = 'no-search-results';
             noResultsRow.innerHTML = '<td colspan="6" style="text-align:center; padding:30px; color:#666;">No customers match your search criteria.</td>';
-            document.querySelector('#' + currentTab + ' tbody').appendChild(noResultsRow);
+            tbody.appendChild(noResultsRow);
+        } else {
+            tbody.appendChild(noResultsRow);
         }
         
         if (filtered.length === 0 && allRows.length > 0) {
