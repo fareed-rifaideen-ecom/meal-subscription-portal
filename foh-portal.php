@@ -7,7 +7,7 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 // ==========================================
 add_shortcode( 'meal_foh_portal', 'cmp_render_foh_portal' );
 
-// 1. AJAX HANDLER: Update Expiry Date
+// 1. AJAX HANDLERS
 add_action('wp_ajax_cmp_foh_update_expiry', 'cmp_ajax_foh_update_expiry');
 function cmp_ajax_foh_update_expiry() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -18,7 +18,6 @@ function cmp_ajax_foh_update_expiry() {
     wp_send_json_success();
 }
 
-// 2. AJAX HANDLER: Toggle Pause/Resume Status (Global Plan Level)
 add_action('wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status');
 function cmp_ajax_foh_toggle_status() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -29,7 +28,6 @@ function cmp_ajax_foh_toggle_status() {
     wp_send_json_success();
 }
 
-// 3. AJAX HANDLER: Save FOH Remarks
 add_action('wp_ajax_cmp_foh_save_remark', 'cmp_ajax_foh_save_remark');
 function cmp_ajax_foh_save_remark() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
@@ -41,31 +39,25 @@ function cmp_ajax_foh_save_remark() {
     wp_send_json_success();
 }
 
-// 4. AJAX HANDLER: Update Super Admin & Menu Manager Financials
 add_action('wp_ajax_cmp_foh_update_financials', 'cmp_ajax_foh_update_financials');
 function cmp_ajax_foh_update_financials() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
     check_ajax_referer('cmp_foh_nonce', 'nonce');
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    
     $sub_id   = intval($_POST['sub_id']);
     $price    = floatval($_POST['plan_price']);
     $discount = floatval($_POST['discount_amount']);
-    
     $wpdb->update($table_subs, array('plan_price' => $price, 'discount_amount' => $discount), array('id' => $sub_id));
     wp_send_json_success(array('price' => $price, 'discount' => $discount));
 }
 
-// 5. AJAX HANDLER: Update Account Details & Plan Mode (FOH, Menu Manager, Admin)
 add_action('wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details');
 function cmp_ajax_foh_update_account_details() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
-    
     if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
         wp_send_json_error('Permission Denied.');
     }
-
     $user_id   = intval($_POST['user_id']);
     $order_id  = intval($_POST['order_id']);
     $sub_id    = isset($_POST['sub_id']) ? intval($_POST['sub_id']) : 0;
@@ -100,14 +92,7 @@ function cmp_ajax_foh_update_account_details() {
         global $wpdb;
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
         
-        $wpdb->update(
-            $table_subs, 
-            array(
-                'is_flexible'  => $is_flexible,
-                'allow_custom' => $allow_custom
-            ), 
-            array('id' => $sub_id)
-        );
+        $wpdb->update($table_subs, array('is_flexible' => $is_flexible, 'allow_custom' => $allow_custom), array('id' => $sub_id));
 
         $sub = $wpdb->get_row($wpdb->prepare("SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id));
         if ($sub) {
@@ -121,60 +106,31 @@ function cmp_ajax_foh_update_account_details() {
             }
 
             $new_plan_name = $core_plan_name;
-            if (!empty($recipient_name)) {
-                $new_plan_name .= ' - ' . $recipient_name;
-            }
-            
+            if (!empty($recipient_name)) { $new_plan_name .= ' - ' . $recipient_name; }
             $wpdb->update($table_subs, array('plan_name' => $new_plan_name), array('id' => $sub_id));
         }
     }
-
-    wp_send_json_success(array(
-        'name'      => trim($first_name . ' ' . $last_name),
-        'recipient' => $recipient_name,
-        'plan_name' => $new_plan_name,
-        'plan_mode' => $plan_mode
-    ));
+    wp_send_json_success(array('name' => trim($first_name . ' ' . $last_name), 'recipient' => $recipient_name, 'plan_name' => $new_plan_name, 'plan_mode' => $plan_mode));
 }
 
-// 6. AJAX HANDLER: Delete Subscription Plan (Strictly Super Admin)
 add_action('wp_ajax_cmp_foh_delete_subscription', 'cmp_ajax_foh_delete_subscription');
 function cmp_ajax_foh_delete_subscription() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
-    
-    if ( ! current_user_can('manage_options') ) {
-        wp_send_json_error('Permission Denied. Only Super Administrators can delete plans.');
-    }
-
+    if ( ! current_user_can('manage_options') ) { wp_send_json_error('Permission Denied.'); }
     global $wpdb;
     $sub_id = intval($_POST['sub_id']);
-    if ($sub_id <= 0) {
-        wp_send_json_error('Invalid Subscription ID.');
-    }
+    if ($sub_id <= 0) { wp_send_json_error('Invalid ID.'); }
 
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $wpdb->delete($wpdb->prefix . 'cmp_daily_logs', array('subscription_id' => $sub_id), array('%d'));
+    $deleted = $wpdb->delete($wpdb->prefix . 'cmp_subscriptions', array('id' => $sub_id), array('%d'));
 
-    // Delete associated daily meal logs
-    $wpdb->delete($table_logs, array('subscription_id' => $sub_id), array('%d'));
-
-    // Delete the subscription record
-    $deleted = $wpdb->delete($table_subs, array('id' => $sub_id), array('%d'));
-
-    if ($deleted) {
-        wp_send_json_success();
-    } else {
-        wp_send_json_error('Failed to delete subscription from database.');
-    }
+    if ($deleted) wp_send_json_success();
+    else wp_send_json_error('Failed to delete.');
 }
 
-// 7. AJAX HANDLER: Export CSV
 add_action('wp_ajax_cmp_foh_export_csv', 'cmp_foh_export_csv');
 function cmp_foh_export_csv() {
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { 
-        wp_die('Access Denied'); 
-    }
-
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_die('Access Denied'); }
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
@@ -186,17 +142,13 @@ function cmp_foh_export_csv() {
     header('Content-Disposition: attachment; filename="FOH_Subscriptions_Export_' . date('Y-m-d') . '.csv"');
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
-
     fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Used Days', 'Balance Days', 'Start Date', 'Expiry Date', 'FOH Remarks'));
 
     foreach ($all_subs as $sub) {
         $order = wc_get_order($sub->wc_order_id);
-        
         $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
         $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
-        $fallback_name = trim($fname . ' ' . $lname);
-        if (empty($fallback_name)) $fallback_name = $sub->display_name;
-        
+        $fallback_name = trim($fname . ' ' . $lname) ?: $sub->display_name;
         $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
         if (empty(trim($full_name))) { $full_name = $fallback_name; }
 
@@ -207,15 +159,11 @@ function cmp_foh_export_csv() {
         $balance = max(0, $sub->total_days - $usage_days);
 
         $status_label = 'Active';
-        if ($sub->status === 'paused') {
-            $status_label = 'Paused';
-        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
-            $status_label = 'Inactive/Expired';
-        }
+        if ($sub->status === 'paused') { $status_label = 'Paused'; } 
+        elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) { $status_label = 'Inactive/Expired'; }
 
         $remarks = !empty($sub->foh_remarks) ? wp_strip_all_tags($sub->foh_remarks) : '';
 
-        // Extract Recipient
         $plan_parts = explode(' - ', $sub->plan_name);
         $potential_recipient = end($plan_parts);
         $recipient_name = '';
@@ -249,76 +197,41 @@ function cmp_foh_export_csv() {
         if ($deposit_held === 'own_bag') { $bag_status_text = "Customer's Own Bag"; }
 
         $display_order_id = 'Manual';
-        if ($sub->wc_order_id < 0) { 
-            $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); 
-        } elseif ($sub->wc_order_id > 0) { 
-            $display_order_id = '#' . $sub->wc_order_id; 
-        } else {
-            $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
-        }
+        if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
+        elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; } 
+        else { $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT); }
 
-        fputcsv($output, array(
-            $display_order_id,
-            $full_name,
-            $recipient_name,
-            $sub->user_email,
-            $phone,
-            $core_plan_name,
-            $mode_label,
-            $base_price,
-            $discount,
-            $final_price,
-            $status_label,
-            $bag_status_text,
-            $filled_days,
-            $usage_days,
-            $balance,
-            date('Y-m-d', strtotime($sub->start_date)),
-            date('Y-m-d', strtotime($sub->expiry_date)),
-            $remarks
-        ));
+        fputcsv($output, array($display_order_id, $full_name, $recipient_name, $sub->user_email, $phone, $core_plan_name, $mode_label, $base_price, $discount, $final_price, $status_label, $bag_status_text, $filled_days, $usage_days, $balance, date('Y-m-d', strtotime($sub->start_date)), date('Y-m-d', strtotime($sub->expiry_date)), $remarks));
     }
-    
-    fclose($output); 
-    exit;
+    fclose($output); exit;
 }
 
-// 8. AJAX HANDLER: Toggle Deposit Status
 add_action('wp_ajax_cmp_foh_toggle_deposit', 'cmp_ajax_foh_toggle_deposit');
 function cmp_ajax_foh_toggle_deposit() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) { wp_send_json_error('Access Denied'); }
     check_ajax_referer('cmp_foh_nonce', 'nonce');
-    
     $user_id = intval($_POST['user_id']);
     $new_status = sanitize_text_field($_POST['new_status']); 
-    
     update_user_meta($user_id, '_cmp_deposit_held', $new_status);
     wp_send_json_success();
 }
 
-// 9. AJAX HANDLER: Fetch Upcoming Days for Modal (Excludes Same Day)
 add_action('wp_ajax_cmp_foh_fetch_upcoming_meals', 'cmp_foh_fetch_upcoming_meals');
 function cmp_foh_fetch_upcoming_meals() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
-    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
-        wp_send_json_error('Permission Denied');
-    }
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) { wp_send_json_error('Permission Denied'); }
     
     global $wpdb;
     date_default_timezone_set('Asia/Dubai');
     $sub_id = intval($_POST['sub_id']);
     $today = date('Y-m-d');
 
-    // ONLY fetch days STRICTLY GREATER than today. Same-day cancellations via FOH modal are blocked.
     $logs = $wpdb->get_results($wpdb->prepare("
         SELECT * FROM {$wpdb->prefix}cmp_daily_logs 
-        WHERE subscription_id = %d 
-        AND target_date > %s 
-        AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))
+        WHERE subscription_id = %d AND target_date > %s AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))
         ORDER BY target_date ASC
     ", $sub_id, $today));
 
-    // Determine cutoffs to flag warnings
     $current_hour = (int) date('H');
     $cutoff_hour = intval( get_option('cmp_cutoff_time', '11') );
     $tomorrow = date('Y-m-d', strtotime('+1 day'));
@@ -341,13 +254,10 @@ function cmp_foh_fetch_upcoming_meals() {
     wp_send_json_success($data);
 }
 
-// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day)
 add_action('wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_foh_bulk_cancel_days');
 function cmp_foh_bulk_cancel_days() {
     check_ajax_referer('cmp_foh_nonce', 'nonce');
-    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
-        wp_send_json_error('Permission Denied');
-    }
+    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) { wp_send_json_error('Permission Denied'); }
     
     global $wpdb;
     date_default_timezone_set('Asia/Dubai');
@@ -359,7 +269,6 @@ function cmp_foh_bulk_cancel_days() {
     $today = date('Y-m-d');
     $ids_placeholder = implode(',', array_fill(0, count($log_ids), '%d'));
     
-    // Extra security check: enforce target_date > $today so same-day records cannot be affected.
     $query_params = array_merge([$sub_id], $log_ids, [$today]);
     $query = $wpdb->prepare("UPDATE {$wpdb->prefix}cmp_daily_logs SET delivery_result = 'Cancelled' WHERE subscription_id = %d AND id IN ($ids_placeholder) AND target_date > %s", $query_params);
     $wpdb->query($query);
@@ -370,7 +279,6 @@ function cmp_foh_bulk_cancel_days() {
         $updated_subs_queue[] = $sub_id;
         update_option('cmp_daily_updated_subs', $updated_subs_queue);
     }
-
     wp_send_json_success();
 }
 
@@ -423,61 +331,28 @@ function cmp_render_foh_portal() {
         }
     }
 
+    // SVG Icons
+    $icon_stop = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>';
+    $icon_play = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
+    $icon_pause = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
+    $icon_view = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+
     ob_start();
     ?>
     <style>
-        .foh-tile-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 15px;
-            margin-bottom: 25px;
-        }
-        .foh-tile {
-            background: #fff;
-            padding: 18px 22px;
-            border-radius: 8px;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-            cursor: pointer;
-            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-            position: relative;
-            user-select: none;
-        }
-        .foh-tile:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 14px rgba(0,0,0,0.07);
-        }
+        .foh-tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .foh-tile { background: #fff; padding: 18px 22px; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.04); cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease; position: relative; user-select: none; }
+        .foh-tile:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.07); }
         .foh-tile.tile-active   { border-left: 5px solid #10b981; }
         .foh-tile.tile-paused   { border-left: 5px solid #f59e0b; }
         .foh-tile.tile-inactive { border-left: 5px solid #dc2626; }
         
-        .foh-tile.active {
-            box-shadow: 0 0 0 2px #0f172a, 0 6px 16px rgba(15, 23, 42, 0.08);
-            border-color: #0f172a;
-            background: #ffffff;
-        }
-        .foh-tile.tile-active.active {
-            box-shadow: 0 0 0 2px #10b981, 0 6px 16px rgba(16, 185, 129, 0.15);
-            border-color: #10b981;
-        }
-        .foh-tile.tile-paused.active {
-            box-shadow: 0 0 0 2px #f59e0b, 0 6px 16px rgba(245, 158, 11, 0.15);
-            border-color: #f59e0b;
-        }
-        .foh-tile.tile-inactive.active {
-            box-shadow: 0 0 0 2px #dc2626, 0 6px 16px rgba(220, 38, 38, 0.15);
-            border-color: #dc2626;
-        }
+        .foh-tile.active { box-shadow: 0 0 0 2px #0f172a, 0 6px 16px rgba(15, 23, 42, 0.08); border-color: #0f172a; background: #ffffff; }
+        .foh-tile.tile-active.active { box-shadow: 0 0 0 2px #10b981, 0 6px 16px rgba(16, 185, 129, 0.15); border-color: #10b981; }
+        .foh-tile.tile-paused.active { box-shadow: 0 0 0 2px #f59e0b, 0 6px 16px rgba(245, 158, 11, 0.15); border-color: #f59e0b; }
+        .foh-tile.tile-inactive.active { box-shadow: 0 0 0 2px #dc2626, 0 6px 16px rgba(220, 38, 38, 0.15); border-color: #dc2626; }
 
-        .foh-tile-indicator {
-            display: none;
-            font-size: 0.75em;
-            font-weight: 800;
-            padding: 2px 8px;
-            border-radius: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
+        .foh-tile-indicator { display: none; font-size: 0.75em; font-weight: 800; padding: 2px 8px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
         .foh-tile.active .foh-tile-indicator { display: inline-block; }
         .foh-tile.tile-active.active .foh-tile-indicator   { background: #dcfce7; color: #166534; }
         .foh-tile.tile-paused.active .foh-tile-indicator   { background: #fef3c7; color: #92400e; }
@@ -540,10 +415,19 @@ function cmp_render_foh_portal() {
             </div>
         </div>
 
-        <!-- SEARCH BAR -->
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center;">
-            <div style="flex: 1; width: 100%;">
+        <!-- SEARCH AND SORT -->
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 250px;">
                 <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
+            </div>
+            <div style="min-width: 200px;">
+                <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; cursor: pointer; color: #334155; background-color: #fff;">
+                    <option value="default">Sort: Default (Newest First)</option>
+                    <option value="balance_asc">Balance Days (Low to High)</option>
+                    <option value="balance_desc">Balance Days (High to Low)</option>
+                    <option value="filled_desc">Filled Days (High to Low)</option>
+                    <option value="used_desc">Used Days (High to Low)</option>
+                </select>
             </div>
         </div>
 
@@ -646,7 +530,7 @@ function cmp_render_foh_portal() {
 
                             $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
                         ?>
-                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" id="sub-row-<?php echo $sub->id; ?>">
+                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" data-balance="<?php echo $sub->balance; ?>" data-filled="<?php echo $sub->filled; ?>" data-used="<?php echo $sub->usage; ?>" id="sub-row-<?php echo $sub->id; ?>">
                             
                             <td style="font-size: 1.1em; font-weight: bold; color: #334155;">
                                 <?php echo $display_order_id; ?>
@@ -655,7 +539,9 @@ function cmp_render_foh_portal() {
                             <td>
                                 <div style="display: flex; flex-direction: column;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <div><strong style="font-size: 1.1em; color: #0073aa;" id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($full_name ?: 'Customer'); ?></strong></div>
+                                        <strong style="font-size: 1.1em; color: #0073aa;" id="name-val-<?php echo $sub->id; ?>">
+                                            <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="color: inherit; text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'"><?php echo esc_html($full_name ?: 'Customer'); ?></a>
+                                        </strong>
                                         <?php if ($can_edit_details): ?>
                                             <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account & Mode">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
@@ -761,15 +647,19 @@ function cmp_render_foh_portal() {
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                             <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s; font-size: 0.85em;" title="Pause/Resume Entire Plan">
-                                                <?php echo $is_paused ? 'Resume' : 'Pause'; ?>
+                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dba617'; ?>; color: white; border: none; padding: 0; border-radius: 4px; cursor: pointer; box-sizing: border-box; transition: background 0.2s;" title="<?php echo $is_paused ? 'Resume Entire Plan' : 'Stop Entire Plan'; ?>">
+                                                <?php echo $is_paused ? $icon_play : $icon_stop; ?>
                                             </button>
                                         </form>
-                                        <!-- BULK CANCEL DAYS BUTTON -->
-                                        <button class="manage-days-btn" data-sub-id="<?php echo $sub->id; ?>" style="flex: 1; height: 32px; background: #64748b; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: 0.2s;" title="Cancel Specific Upcoming Days">Hold</button>
+                                        <!-- BULK HOLD DAYS BUTTON -->
+                                        <button class="manage-days-btn" data-sub-id="<?php echo $sub->id; ?>" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #64748b; color: white; border: none; padding: 0; border-radius: 4px; cursor: pointer; transition: 0.2s;" title="Hold Specific Upcoming Days">
+                                            <?php echo $icon_pause; ?>
+                                        </button>
                                         <?php endif; ?>
                                         
-                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box; font-size: 0.85em; text-align: center;">View</a>
+                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0; border-radius: 4px; box-sizing: border-box;" title="Edit/View Account">
+                                            <?php echo $icon_view; ?>
+                                        </a>
                                         
                                         <!-- SUPER ADMIN ONLY: PERMANENT SUBSCRIPTION DELETE KILL-SWITCH -->
                                         <?php if (current_user_can('manage_options')): ?>
@@ -877,7 +767,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Status Form (Freeze/Resume)
+        // Status Form (Stop/Resume)
         document.querySelectorAll('.ajax-status-form').forEach(form => {
             form.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -900,12 +790,14 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         if (newStatus === 'active') {
-                            btn.innerText = 'Pause';
+                            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>';
                             btn.style.background = '#dba617';
+                            btn.title = 'Stop Entire Plan';
                             statusInput.value = 'paused';
                         } else {
-                            btn.innerText = 'Resume';
+                            btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
                             btn.style.background = '#0073aa';
+                            btn.title = 'Resume Entire Plan';
                             statusInput.value = 'active';
                         }
                         btn.style.opacity = '1';
@@ -1379,6 +1271,13 @@ function cmp_render_foh_portal() {
             currentPage = 1;
             renderTable();
         });
+        
+        // Sorting Engine
+        document.getElementById('fohSort').addEventListener('change', function() {
+            currentPage = 1;
+            renderTable();
+        });
+        
         renderTable();
     });
 
@@ -1407,13 +1306,47 @@ function cmp_render_foh_portal() {
 
     function renderTable() {
         const query = document.getElementById('fohSearch').value.toLowerCase();
+        const sortMode = document.getElementById('fohSort').value;
         
         const allRows = Array.from(document.querySelectorAll('#' + currentTab + ' .foh-row'));
         
-        const filtered = allRows.filter(row => {
+        let filtered = allRows.filter(row => {
             const searchData = row.getAttribute('data-search');
             return query === '' || searchData.includes(query);
         });
+
+        if (sortMode !== 'default') {
+            filtered.sort((a, b) => {
+                let valA = 0, valB = 0;
+                if (sortMode.includes('balance')) {
+                    valA = parseInt(a.getAttribute('data-balance'));
+                    valB = parseInt(b.getAttribute('data-balance'));
+                } else if (sortMode.includes('filled')) {
+                    valA = parseInt(a.getAttribute('data-filled'));
+                    valB = parseInt(b.getAttribute('data-filled'));
+                } else if (sortMode.includes('used')) {
+                    valA = parseInt(a.getAttribute('data-used'));
+                    valB = parseInt(b.getAttribute('data-used'));
+                }
+
+                if (sortMode.endsWith('_asc')) {
+                    return valA - valB;
+                } else {
+                    return valB - valA;
+                }
+            });
+        } else {
+            // Restore default order (Highest ID first)
+            filtered.sort((a, b) => {
+                let idA = parseInt(a.id.replace('sub-row-', ''));
+                let idB = parseInt(b.id.replace('sub-row-', ''));
+                return idB - idA;
+            });
+        }
+
+        const tbody = document.querySelector('#' + currentTab + ' tbody');
+        // Re-append to physical DOM to apply the sorted visual order before paginating
+        filtered.forEach(row => tbody.appendChild(row));
 
         allRows.forEach(row => row.style.display = 'none');
 
@@ -1426,11 +1359,12 @@ function cmp_render_foh_portal() {
             noResultsRow = document.createElement('tr');
             noResultsRow.className = 'no-search-results';
             noResultsRow.innerHTML = '<td colspan="6" style="text-align:center; padding:30px; color:#666;">No customers match your search criteria.</td>';
-            document.querySelector('#' + currentTab + ' tbody').appendChild(noResultsRow);
+            tbody.appendChild(noResultsRow);
         }
         
         if (filtered.length === 0 && allRows.length > 0) {
             noResultsRow.style.display = '';
+            tbody.appendChild(noResultsRow); // Ensure it drops to the bottom
         } else {
             noResultsRow.style.display = 'none';
         }
