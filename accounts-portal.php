@@ -166,20 +166,22 @@ if(!function_exists('cmp_process_timing_data')){
 }
 
 // ==========================================
-// 2. ACCOUNTS PORTAL ROUTER & GLASS LOGIN UI
+// 2. ACCOUNTS PORTAL ROUTER
 // ==========================================
 add_shortcode('meal_accounts_portal', 'cmp_render_accounts_portal');
 function cmp_render_accounts_portal() {
     
     // Security & Custom Glassmorphism UI/UX Login Screen
     if ( ! is_user_logged_in() || ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) ) {
-        return cmp_render_accounts_glass_login( array(
-            'portal_id'      => 'accounts',
-            'title'          => 'Accounts Portal',
-            'subtitle'       => 'Finance, Compliance & Meal Plan Auditing',
-            'required_caps'  => array( 'manage_options', 'accounts_team' ),
-            'denied_message' => 'Finance or Accounts Team clearance is required to access this portal.',
-        ) );
+        if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
+            return cmp_render_portal_login_ui( array(
+                'portal_id'      => 'accounts',
+                'title'          => 'Accounts Portal',
+                'subtitle'       => 'Finance, Compliance & Meal Plan Auditing',
+                'required_caps'  => array( 'manage_options', 'accounts_team' ),
+                'denied_message' => 'Finance or Accounts Team clearance is required to access this portal.',
+            ) );
+        }
     }
 
     // Smart Routing
@@ -196,493 +198,6 @@ function cmp_render_accounts_portal() {
     }
 }
 
-// 2.1 Self-Contained Cycle Bistro Glass Login Screen (Desktop, Tablet & Mobile)
-function cmp_render_accounts_glass_login( $args = array() ) {
-    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
-        define( 'DONOTCACHEPAGE', true );
-    }
-
-    $defaults = array(
-        'portal_id'      => 'accounts',
-        'title'          => 'Accounts Portal',
-        'subtitle'       => 'Finance, Compliance & Meal Plan Auditing',
-        'required_caps'  => array( 'manage_options', 'accounts_team' ),
-        'denied_message' => 'Finance or Accounts Team clearance is required to access this portal.',
-    );
-    $cfg = wp_parse_args( $args, $defaults );
-
-    $uid         = esc_attr( $cfg['portal_id'] );
-    $caps_csv    = is_array( $cfg['required_caps'] ) ? implode( ',', $cfg['required_caps'] ) : $cfg['required_caps'];
-    $ajax_url    = esc_url( admin_url( 'admin-ajax.php' ) );
-    $nonce       = wp_create_nonce( 'cmp_portal_auth_nonce' );
-    $current_url = esc_url( remove_query_arg( array( 'cmp_login' ) ) );
-    $url_failed  = isset( $_GET['cmp_login'] ) && $_GET['cmp_login'] === 'failed';
-
-    ob_start();
-    ?>
-    <style>
-        #cmp-auth-stage-<?php echo $uid; ?>, #cmp-auth-stage-<?php echo $uid; ?> * { box-sizing: border-box !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; letter-spacing: normal !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> { position: relative !important; width: 100% !important; max-width: 490px !important; margin: 32px auto 60px auto !important; padding: 22px 18px !important; z-index: 1 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?>::before, #cmp-auth-stage-<?php echo $uid; ?>::after { content: "" !important; position: absolute !important; border-radius: 50% !important; filter: blur(38px) !important; z-index: -1 !important; pointer-events: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?>::before { width: 240px !important; height: 240px !important; top: -12px !important; left: -18px !important; background: radial-gradient(circle, rgba(104, 185, 70, 0.48) 0%, rgba(55, 146, 55, 0.16) 68%, transparent 100%) !important; }
-        #cmp-auth-stage-<?php echo $uid; ?>::after { width: 260px !important; height: 260px !important; bottom: -18px !important; right: -15px !important; background: radial-gradient(circle, rgba(220, 236, 201, 0.92) 0%, rgba(55, 146, 55, 0.22) 70%, transparent 100%) !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { position: relative !important; background: linear-gradient(145deg, rgba(255, 255, 255, 0.78) 0%, rgba(238, 247, 227, 0.68) 100%) !important; backdrop-filter: blur(22px) saturate(180%) !important; -webkit-backdrop-filter: blur(22px) saturate(180%) !important; border-radius: 24px !important; border: 1.5px solid rgba(255, 255, 255, 0.92) !important; box-shadow: 0 24px 50px rgba(27, 94, 32, 0.15), 0 6px 16px rgba(35, 31, 32, 0.06), inset 0 1px 2px rgba(255, 255, 255, 0.95) !important; overflow: hidden !important; transition: all 0.3s ease !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-brand-ribbon { height: 6px !important; width: 100% !important; background: linear-gradient(90deg, #1B5E20 0%, #379237 38%, #68B946 72%, #DCECC9 100%) !important; }
-        /* DESKTOP HEADER (> 992px): Frosted Pistachio-Sage & Fresh Leaf Glass */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { position: relative !important; background: linear-gradient(135deg, rgba(220, 236, 201, 0.88) 0%, rgba(238, 247, 227, 0.80) 50%, rgba(104, 185, 70, 0.30) 100%) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; padding: 28px 28px 24px 28px !important; text-align: center !important; border-bottom: 1.5px solid rgba(55, 146, 55, 0.22) !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 8px !important; margin: 0 !important; border-radius: 0 !important; transition: all 0.3s ease !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 58px !important; height: 58px !important; border-radius: 18px !important; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; border: 2px solid #DCECC9 !important; margin: 0 auto 4px auto !important; box-shadow: 0 8px 20px rgba(55, 146, 55, 0.28) !important; flex-shrink: 0 !important; color: #ffffff !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { display: inline-block !important; padding: 4px 12px !important; border-radius: 999px !important; font-size: 11px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; background: rgba(55, 146, 55, 0.14) !important; color: #1B5E20 !important; border: 1px solid rgba(55, 146, 55, 0.28) !important; margin-bottom: 2px !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: center !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { margin: 0 !important; padding: 0 !important; font-size: 25px !important; line-height: 1.2 !important; font-weight: 800 !important; color: #231F20 !important; text-transform: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { margin: 5px 0 0 0 !important; padding: 0 !important; font-size: 13.5px !important; line-height: 1.45 !important; color: #1B5E20 !important; font-weight: 600 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 26px 28px 30px 28px !important; background: transparent !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert { display: none; padding: 12px 15px !important; border-radius: 12px !important; font-size: 13.5px !important; line-height: 1.45 !important; margin: 0 0 18px 0 !important; font-weight: 600 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.error { display: block !important; background: rgba(254, 242, 242, 0.94) !important; color: #991b1b !important; border: 1px solid #fecaca !important; border-left: 4px solid #dc2626 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.success { display: block !important; background: rgba(238, 247, 227, 0.96) !important; color: #1B5E20 !important; border: 1px solid #b7e1a1 !important; border-left: 4px solid #379237 !important; }
-        @keyframes cmpShake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
-        .cmp-shake { animation: cmpShake 0.35s ease-in-out; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group { margin: 0 0 18px 0 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group label { display: block !important; font-size: 13.5px !important; line-height: 1.3 !important; font-weight: 700 !important; color: #231F20 !important; margin: 0 0 7px 0 !important; text-transform: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap { position: relative !important; display: flex !important; align-items: center !important; width: 100% !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-icon { position: absolute !important; left: 14px !important; color: #379237 !important; pointer-events: none !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 2 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] { width: 100% !important; height: 48px !important; padding: 10px 44px 10px 42px !important; font-size: 15px !important; line-height: 1.4 !important; color: #231F20 !important; background: rgba(255, 255, 255, 0.86) !important; border: 1.5px solid rgba(55, 146, 55, 0.30) !important; border-radius: 12px !important; transition: all 0.2s ease !important; outline: none !important; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important; margin: 0 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input:focus { background: #ffffff !important; border-color: #379237 !important; box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.24) !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle { position: absolute !important; right: 8px !important; top: 50% !important; transform: translateY(-50%) !important; background: transparent !important; border: none !important; box-shadow: none !important; color: #526352 !important; cursor: pointer !important; padding: 6px !important; margin: 0 !important; min-height: 0 !important; min-width: 0 !important; width: 34px !important; height: 34px !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; border-radius: 8px !important; z-index: 2 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:hover, #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:focus { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.65) !important; outline: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta { display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 10px !important; flex-wrap: nowrap !important; margin: 4px 0 22px 0 !important; width: 100% !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label { display: inline-flex !important; align-items: center !important; gap: 8px !important; color: #231F20 !important; cursor: pointer !important; font-size: 13.5px !important; line-height: 1.2 !important; font-weight: 600 !important; margin: 0 !important; white-space: nowrap !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label input[type="checkbox"] { width: 17px !important; height: 17px !important; min-width: 17px !important; accent-color: #379237 !important; cursor: pointer !important; margin: 0 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action { background: transparent !important; border: none !important; color: #1B5E20 !important; font-weight: 700 !important; font-size: 13.5px !important; line-height: 1.2 !important; cursor: pointer !important; padding: 4px 8px !important; margin: 0 !important; border-radius: 6px !important; text-decoration: none !important; white-space: nowrap !important; display: inline-block !important; transition: all 0.2s ease !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action:hover { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.7) !important; text-decoration: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn { width: 100% !important; min-height: 50px !important; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; background-color: #379237 !important; color: #ffffff !important; border: 1px solid rgba(220, 236, 201, 0.45) !important; padding: 13px 20px !important; font-size: 15.5px !important; line-height: 1.3 !important; font-weight: 700 !important; text-transform: none !important; border-radius: 12px !important; cursor: pointer !important; transition: all 0.25s ease !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 9px !important; text-decoration: none !important; box-shadow: 0 8px 20px rgba(55, 146, 55, 0.30) !important; margin: 0 !important; white-space: nowrap !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:hover, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn:hover { background: linear-gradient(135deg, #68B946 0%, #379237 100%) !important; background-color: #287028 !important; color: #ffffff !important; transform: translateY(-1px) !important; box-shadow: 0 10px 24px rgba(55, 146, 55, 0.38) !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:disabled { opacity: 0.68 !important; cursor: not-allowed !important; transform: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-spinner { width: 17px !important; height: 17px !important; border: 2.5px solid rgba(255,255,255,0.35) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cmpSpin 0.7s linear infinite !important; display: none; flex-shrink: 0 !important; }
-        @keyframes cmpSpin { to { transform: rotate(360deg); } }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-user-pill { background: rgba(238, 247, 227, 0.8) !important; border: 1px solid rgba(55, 146, 55, 0.28) !important; border-radius: 12px !important; padding: 14px !important; margin-bottom: 18px !important; font-size: 14px !important; line-height: 1.5 !important; color: #231F20 !important; }
-        /* TABLET HEADER (601px to 991px): Core Brand Green (#379237) to Leaf Lime (#68B946) Split Glass Header */
-        @media (min-width: 601px) and (max-width: 991px) {
-            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 460px !important; margin: 24px auto 48px auto !important; padding: 18px 16px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%) !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 16px !important; padding: 24px 26px !important; border-bottom: 3px solid #DCECC9 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { background: rgba(255, 255, 255, 0.22) !important; border-color: rgba(255, 255, 255, 0.55) !important; width: 54px !important; height: 54px !important; margin: 0 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: left !important; flex: 1 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(220, 236, 201, 0.28) !important; color: #EEF7E3 !important; border-color: rgba(220, 236, 201, 0.5) !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #ffffff !important; font-size: 23px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #EEF7E3 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 24px 24px 28px 24px !important; }
-        }
-        /* MOBILE HEADER (<= 600px): Floating Inset Deep Forest (#1B5E20) to Core Green (#379237) Glass Banner */
-        @media (max-width: 600px) {
-            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 100% !important; margin: 12px auto 32px auto !important; padding: 8px 12px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { border-radius: 20px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(145deg, rgba(27, 94, 32, 0.95) 0%, rgba(55, 146, 55, 0.90) 100%) !important; margin: 12px 12px 0 12px !important; border-radius: 16px !important; padding: 16px 16px !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 13px !important; border: 1.5px solid rgba(104, 185, 70, 0.65) !important; box-shadow: 0 8px 20px rgba(27, 94, 32, 0.18) !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { width: 46px !important; height: 46px !important; border-radius: 13px !important; margin: 0 !important; background: rgba(220, 236, 201, 0.2) !important; border-color: #68B946 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: left !important; flex: 1 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(104, 185, 70, 0.28) !important; color: #DCECC9 !important; border-color: rgba(220, 236, 201, 0.4) !important; font-size: 10px !important; padding: 2px 9px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #ffffff !important; font-size: 19.5px !important; line-height: 1.2 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #DCECC9 !important; font-size: 12px !important; margin-top: 3px !important; line-height: 1.35 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 18px 16px 22px 16px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] { font-size: 16px !important; height: 48px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta { gap: 6px !important; margin-bottom: 18px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action { font-size: 13px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn { font-size: 15px !important; min-height: 48px !important; padding: 12px 16px !important; }
-        }
-    </style>
-
-    <div id="cmp-auth-stage-<?php echo $uid; ?>">
-        <div class="cmp-auth-card" id="cmp-auth-card-<?php echo $uid; ?>">
-            <div class="cmp-brand-ribbon"></div>
-            <div class="cmp-auth-header" id="cmp-auth-header-<?php echo $uid; ?>">
-                <div class="cmp-auth-badge" id="cmp-auth-badge-<?php echo $uid; ?>">
-                    <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                    </svg>
-                </div>
-                <div class="cmp-auth-header-text" id="cmp-auth-htext-<?php echo $uid; ?>">
-                    <span class="cmp-auth-kicker" id="cmp-auth-kicker-<?php echo $uid; ?>">The Cycle Bistro</span>
-                    <h2 id="cmp-auth-title-<?php echo $uid; ?>"><?php echo esc_html( $cfg['title'] ); ?></h2>
-                    <p id="cmp-auth-sub-<?php echo $uid; ?>"><?php echo esc_html( $cfg['subtitle'] ); ?></p>
-                </div>
-            </div>
-
-            <div class="cmp-auth-body">
-                <?php if ( is_user_logged_in() ) : 
-                    $curr_user = wp_get_current_user();
-                ?>
-                    <div class="cmp-auth-alert error" style="display:block !important;">
-                        <strong>Access Restricted:</strong> <?php echo esc_html( $cfg['denied_message'] ); ?>
-                    </div>
-                    <div class="cmp-user-pill">
-                        Currently signed in as:<br>
-                        <strong style="color:#231F20;"><?php echo esc_html( $curr_user->display_name ); ?></strong>
-                        <span style="color:#526352;">(<?php echo esc_html( $curr_user->user_email ); ?>)</span>
-                    </div>
-                    <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-submit-btn">
-                        Log Out &amp; Switch Account
-                    </a>
-
-                <?php else : ?>
-                    <div id="cmp-login-view-<?php echo $uid; ?>">
-                        <div id="cmp-login-alert-<?php echo $uid; ?>" class="cmp-auth-alert <?php echo $url_failed ? 'error' : ''; ?>">
-                            <?php if ( $url_failed ) echo 'Incorrect username/email or password. Please try again.'; ?>
-                        </div>
-
-                        <form id="cmp-login-form-<?php echo $uid; ?>" novalidate>
-                            <div class="cmp-form-group">
-                                <label for="cmp-user-<?php echo $uid; ?>">Email Address or Username</label>
-                                <div class="cmp-input-wrap">
-                                    <span class="cmp-input-icon">
-                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                                            <circle cx="12" cy="7" r="4"></circle>
-                                        </svg>
-                                    </span>
-                                    <input type="text" id="cmp-user-<?php echo $uid; ?>" name="log" placeholder="name@thecyclebistro.com" autocomplete="username" required>
-                                </div>
-                            </div>
-
-                            <div class="cmp-form-group">
-                                <label for="cmp-pass-<?php echo $uid; ?>">Password</label>
-                                <div class="cmp-input-wrap">
-                                    <span class="cmp-input-icon">
-                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                                        </svg>
-                                    </span>
-                                    <input type="password" id="cmp-pass-<?php echo $uid; ?>" name="pwd" placeholder="Enter your password" autocomplete="current-password" required>
-                                    <button type="button" class="cmp-pwd-toggle" id="cmp-pwd-toggle-<?php echo $uid; ?>" aria-label="Show password" title="Show / Hide Password">
-                                        <svg id="cmp-eye-open-<?php echo $uid; ?>" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                            <circle cx="12" cy="12" r="3"></circle>
-                                        </svg>
-                                        <svg id="cmp-eye-closed-<?php echo $uid; ?>" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
-                                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                                            <line x1="1" y1="1" x2="23" y2="23"></line>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="cmp-auth-meta">
-                                <label class="cmp-remember-label">
-                                    <input type="checkbox" id="cmp-remember-<?php echo $uid; ?>" name="rememberme" value="forever">
-                                    <span>Remember me</span>
-                                </label>
-                                <a href="#forgot-password" class="cmp-link-action" id="cmp-show-forgot-<?php echo $uid; ?>">Forgot Password?</a>
-                            </div>
-
-                            <button type="submit" class="cmp-submit-btn" id="cmp-login-btn-<?php echo $uid; ?>">
-                                <span class="cmp-spinner" id="cmp-login-spin-<?php echo $uid; ?>"></span>
-                                <span id="cmp-login-btn-text-<?php echo $uid; ?>">Sign In</span>
-                                <svg id="cmp-login-arrow-<?php echo $uid; ?>" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
-                                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                                    <polyline points="12 5 19 12 12 19"></polyline>
-                                </svg>
-                            </button>
-                        </form>
-                    </div>
-
-                    <div id="cmp-forgot-view-<?php echo $uid; ?>" style="display:none;">
-                        <div id="cmp-forgot-alert-<?php echo $uid; ?>" class="cmp-auth-alert"></div>
-
-                        <p style="margin: 0 0 16px 0 !important; font-size: 13.5px !important; color: #231F20 !important; line-height: 1.5 !important;">
-                            Enter your account email or username and we will send you a password reset link.
-                        </p>
-
-                        <form id="cmp-forgot-form-<?php echo $uid; ?>" novalidate>
-                            <div class="cmp-form-group">
-                                <label for="cmp-reset-user-<?php echo $uid; ?>">Email Address or Username</label>
-                                <div class="cmp-input-wrap">
-                                    <span class="cmp-input-icon">
-                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                                            <polyline points="22,6 12,13 2,6"></polyline>
-                                        </svg>
-                                    </span>
-                                    <input type="text" id="cmp-reset-user-<?php echo $uid; ?>" name="user_login" placeholder="name@thecyclebistro.com" autocomplete="username" required>
-                                </div>
-                            </div>
-
-                            <button type="submit" class="cmp-submit-btn" id="cmp-forgot-btn-<?php echo $uid; ?>">
-                                <span class="cmp-spinner" id="cmp-forgot-spin-<?php echo $uid; ?>"></span>
-                                <span id="cmp-forgot-btn-text-<?php echo $uid; ?>">Send Reset Link</span>
-                            </button>
-                        </form>
-
-                        <div style="text-align: center !important; margin-top: 18px !important;">
-                            <a href="#sign-in" class="cmp-link-action" id="cmp-back-login-<?php echo $uid; ?>">&larr; Back to Sign In</a>
-                        </div>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
-
-    <script>
-    (function() {
-        const uid      = '<?php echo esc_js( $uid ); ?>';
-        const headerEl = document.getElementById('cmp-auth-header-' + uid);
-        const htextEl  = document.getElementById('cmp-auth-htext-' + uid);
-        const kickerEl = document.getElementById('cmp-auth-kicker-' + uid);
-        const titleEl  = document.getElementById('cmp-auth-title-' + uid);
-        const subEl    = document.getElementById('cmp-auth-sub-' + uid);
-
-        function applyResponsiveHeaderTheme() {
-            if (!headerEl) return;
-            const w = window.innerWidth;
-            if (w <= 600) {
-                headerEl.style.setProperty('background', 'linear-gradient(145deg, rgba(27, 94, 32, 0.95) 0%, rgba(55, 146, 55, 0.90) 100%)', 'important');
-                headerEl.style.setProperty('flex-direction', 'row', 'important');
-                headerEl.style.setProperty('text-align', 'left', 'important');
-                headerEl.style.setProperty('margin', '12px 12px 0 12px', 'important');
-                headerEl.style.setProperty('border-radius', '16px', 'important');
-                headerEl.style.setProperty('padding', '16px', 'important');
-                if (htextEl) htextEl.style.setProperty('text-align', 'left', 'important');
-                if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
-                if (subEl) subEl.style.setProperty('color', '#DCECC9', 'important');
-                if (kickerEl) {
-                    kickerEl.style.setProperty('background', 'rgba(104, 185, 70, 0.28)', 'important');
-                    kickerEl.style.setProperty('color', '#DCECC9', 'important');
-                }
-            } else if (w <= 991) {
-                headerEl.style.setProperty('background', 'linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%)', 'important');
-                headerEl.style.setProperty('flex-direction', 'row', 'important');
-                headerEl.style.setProperty('text-align', 'left', 'important');
-                headerEl.style.setProperty('margin', '0', 'important');
-                headerEl.style.setProperty('border-radius', '0', 'important');
-                headerEl.style.setProperty('padding', '24px 26px', 'important');
-                if (htextEl) htextEl.style.setProperty('text-align', 'left', 'important');
-                if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
-                if (subEl) subEl.style.setProperty('color', '#EEF7E3', 'important');
-                if (kickerEl) {
-                    kickerEl.style.setProperty('background', 'rgba(220, 236, 201, 0.28)', 'important');
-                    kickerEl.style.setProperty('color', '#EEF7E3', 'important');
-                }
-            } else {
-                headerEl.style.setProperty('background', 'linear-gradient(135deg, rgba(220, 236, 201, 0.88) 0%, rgba(238, 247, 227, 0.80) 50%, rgba(104, 185, 70, 0.30) 100%)', 'important');
-                headerEl.style.setProperty('flex-direction', 'column', 'important');
-                headerEl.style.setProperty('text-align', 'center', 'important');
-                headerEl.style.setProperty('margin', '0', 'important');
-                headerEl.style.setProperty('border-radius', '0', 'important');
-                headerEl.style.setProperty('padding', '28px 28px 24px 28px', 'important');
-                if (htextEl) htextEl.style.setProperty('text-align', 'center', 'important');
-                if (titleEl) titleEl.style.setProperty('color', '#231F20', 'important');
-                if (subEl) subEl.style.setProperty('color', '#1B5E20', 'important');
-                if (kickerEl) {
-                    kickerEl.style.setProperty('background', 'rgba(55, 146, 55, 0.14)', 'important');
-                    kickerEl.style.setProperty('color', '#1B5E20', 'important');
-                }
-            }
-        }
-
-        applyResponsiveHeaderTheme();
-        window.addEventListener('resize', applyResponsiveHeaderTheme);
-
-        <?php if ( ! is_user_logged_in() ) : ?>
-        const ajaxUrl     = '<?php echo $ajax_url; ?>';
-        const nonce       = '<?php echo esc_js( $nonce ); ?>';
-        const reqCaps     = '<?php echo esc_js( $caps_csv ); ?>';
-        const pTitle      = '<?php echo esc_js( $cfg['title'] ); ?>';
-        const reloadUrl   = '<?php echo $current_url; ?>';
-
-        const card        = document.getElementById('cmp-auth-card-' + uid);
-        const loginView   = document.getElementById('cmp-login-view-' + uid);
-        const forgotView  = document.getElementById('cmp-forgot-view-' + uid);
-        const loginAlert  = document.getElementById('cmp-login-alert-' + uid);
-        const forgotAlert = document.getElementById('cmp-forgot-alert-' + uid);
-
-        function showAlert(el, type, message) {
-            if (!el) return;
-            el.textContent = message;
-            el.className = 'cmp-auth-alert ' + type;
-            el.style.setProperty('display', 'block', 'important');
-        }
-
-        function hideAlert(el) {
-            if (!el) return;
-            el.textContent = '';
-            el.className = 'cmp-auth-alert';
-            el.style.setProperty('display', 'none', 'important');
-        }
-
-        function triggerCardShake() {
-            if (!card) return;
-            card.classList.remove('cmp-shake');
-            void card.offsetWidth;
-            card.classList.add('cmp-shake');
-        }
-
-        const passInput = document.getElementById('cmp-pass-' + uid);
-        const pwdToggle = document.getElementById('cmp-pwd-toggle-' + uid);
-        const eyeOpen   = document.getElementById('cmp-eye-open-' + uid);
-        const eyeClosed = document.getElementById('cmp-eye-closed-' + uid);
-
-        if (pwdToggle && passInput) {
-            pwdToggle.addEventListener('click', function(e) {
-                e.preventDefault();
-                const isPwd = passInput.type === 'password';
-                passInput.type = isPwd ? 'text' : 'password';
-                eyeOpen.style.display = isPwd ? 'none' : 'block';
-                eyeClosed.style.display = isPwd ? 'block' : 'none';
-                passInput.focus();
-            });
-        }
-
-        const showForgotBtn = document.getElementById('cmp-show-forgot-' + uid);
-        const backLoginBtn  = document.getElementById('cmp-back-login-' + uid);
-        const loginUserInp  = document.getElementById('cmp-user-' + uid);
-        const resetUserInp  = document.getElementById('cmp-reset-user-' + uid);
-
-        if (showForgotBtn) {
-            showForgotBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                hideAlert(forgotAlert);
-                loginView.style.display = 'none';
-                forgotView.style.display = 'block';
-                if (loginUserInp && loginUserInp.value.trim() !== '') {
-                    resetUserInp.value = loginUserInp.value.trim();
-                }
-                resetUserInp.focus();
-            });
-        }
-
-        if (backLoginBtn) {
-            backLoginBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                hideAlert(loginAlert);
-                forgotView.style.display = 'none';
-                loginView.style.display = 'block';
-                loginUserInp.focus();
-            });
-        }
-
-        const loginForm    = document.getElementById('cmp-login-form-' + uid);
-        const loginBtn     = document.getElementById('cmp-login-btn-' + uid);
-        const loginSpin    = document.getElementById('cmp-login-spin-' + uid);
-        const loginBtnText = document.getElementById('cmp-login-btn-text-' + uid);
-        const loginArrow   = document.getElementById('cmp-login-arrow-' + uid);
-
-        if (loginForm) {
-            loginForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                hideAlert(loginAlert);
-
-                const logVal = loginUserInp.value.trim();
-                const pwdVal = passInput.value;
-                const remVal = document.getElementById('cmp-remember-' + uid).checked ? '1' : '';
-
-                if (!logVal || !pwdVal) {
-                    showAlert(loginAlert, 'error', 'Please enter both your email/username and password.');
-                    triggerCardShake();
-                    return;
-                }
-
-                loginBtn.disabled = true;
-                loginSpin.style.display = 'inline-block';
-                if (loginArrow) loginArrow.style.display = 'none';
-                loginBtnText.textContent = 'Signing in...';
-
-                const formData = new URLSearchParams();
-                formData.append('action', 'cmp_portal_login');
-                formData.append('nonce', nonce);
-                formData.append('log', logVal);
-                formData.append('pwd', pwdVal);
-                formData.append('rememberme', remVal);
-                formData.append('required_caps', reqCaps);
-                formData.append('portal_title', pTitle);
-
-                fetch(ajaxUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
-                .then(res => res.json())
-                .then(response => {
-                    if (response && response.success) {
-                        showAlert(loginAlert, 'success', response.data.message);
-                        loginBtnText.textContent = 'Loading...';
-                        window.location.href = reloadUrl || window.location.href;
-                    } else {
-                        const errMsg = (response && response.data && response.data.message)
-                            ? response.data.message
-                            : 'Incorrect username/email or password. Please try again.';
-                        showAlert(loginAlert, 'error', errMsg);
-                        triggerCardShake();
-                        loginBtn.disabled = false;
-                        loginSpin.style.display = 'none';
-                        if (loginArrow) loginArrow.style.display = 'inline-block';
-                        loginBtnText.textContent = 'Sign In';
-                        passInput.value = '';
-                        passInput.focus();
-                    }
-                })
-                .catch(() => {
-                    showAlert(loginAlert, 'error', 'Unable to verify credentials right now. Please try again.');
-                    triggerCardShake();
-                    loginBtn.disabled = false;
-                    loginSpin.style.display = 'none';
-                    if (loginArrow) loginArrow.style.display = 'inline-block';
-                    loginBtnText.textContent = 'Sign In';
-                });
-            });
-        }
-
-        const forgotForm    = document.getElementById('cmp-forgot-form-' + uid);
-        const forgotBtn     = document.getElementById('cmp-forgot-btn-' + uid);
-        const forgotSpin    = document.getElementById('cmp-forgot-spin-' + uid);
-        const forgotBtnText = document.getElementById('cmp-forgot-btn-text-' + uid);
-
-        if (forgotForm) {
-            forgotForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-                hideAlert(forgotAlert);
-
-                const userVal = resetUserInp.value.trim();
-                if (!userVal) {
-                    showAlert(forgotAlert, 'error', 'Please enter your email address or username.');
-                    triggerCardShake();
-                    return;
-                }
-
-                forgotBtn.disabled = true;
-                forgotSpin.style.display = 'inline-block';
-                forgotBtnText.textContent = 'Sending...';
-
-                const formData = new URLSearchParams();
-                formData.append('action', 'cmp_portal_forgot_password');
-                formData.append('nonce', nonce);
-                formData.append('user_login', userVal);
-
-                fetch(ajaxUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
-                .then(res => res.json())
-                .then(response => {
-                    if (response && response.success) {
-                        showAlert(forgotAlert, 'success', response.data.message);
-                        resetUserInp.value = '';
-                    } else {
-                        const errMsg = (response && response.data && response.data.message)
-                            ? response.data.message
-                            : 'Could not process password reset request.';
-                        showAlert(forgotAlert, 'error', errMsg);
-                        triggerCardShake();
-                    }
-                })
-                .catch(() => {
-                    showAlert(forgotAlert, 'error', 'Network error occurred. Please try again.');
-                    triggerCardShake();
-                })
-                .finally(() => {
-                    forgotBtn.disabled = false;
-                    forgotSpin.style.display = 'none';
-                    forgotBtnText.textContent = 'Send Reset Link';
-                });
-            });
-        }
-        <?php endif; ?>
-    })();
-    </script>
-    <?php
-    return ob_get_clean();
-}
-
 // ==========================================
 // 3. MAIN DASHBOARD VIEW
 // ==========================================
@@ -691,11 +206,9 @@ function cmp_render_accounts_dashboard() {
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     
-    // Fetch Dynamic Lookback Defaults from WP Settings
     $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
     $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
 
-    // Filters & Active Selections
     $dash_start = isset($_GET['dash_start']) ? sanitize_text_field($_GET['dash_start']) : date('Y-m-d', strtotime('-3 months'));
     $dash_end   = isset($_GET['dash_end']) ? sanitize_text_field($_GET['dash_end']) : date('Y-m-d');
     
@@ -705,7 +218,6 @@ function cmp_render_accounts_dashboard() {
     $kit_start  = isset($_GET['kit_start']) ? sanitize_text_field($_GET['kit_start']) : date('Y-m-d', strtotime("-{$kit_days} days"));
     $kit_end    = isset($_GET['kit_end']) ? sanitize_text_field($_GET['kit_end']) : date('Y-m-d');
 
-    // --- KITCHEN COMPLIANCE (COUNT ONLY FOR PERFORMANCE) ---
     $pending_kitchen_count = $wpdb->get_var($wpdb->prepare(
         "SELECT COUNT(l.id) FROM $table_logs l 
          WHERE l.is_locked = 1 
@@ -714,7 +226,6 @@ function cmp_render_accounts_dashboard() {
         $kit_start, $kit_end
     ));
 
-    // --- POS COMPLIANCE (COUNT ONLY FOR PERFORMANCE) ---
     $pending_pos_count = $wpdb->get_var($wpdb->prepare(
         "SELECT COUNT(l.id) FROM $table_logs l 
          WHERE l.pos_updated = 0 AND l.delivery_result != 'Pending' AND l.is_locked = 1 
@@ -722,7 +233,6 @@ function cmp_render_accounts_dashboard() {
         $pos_start, $pos_end
     ));
 
-    // --- SUBSCRIPTION DATA & SORTING ---
     $all_subs_data = $wpdb->get_results($wpdb->prepare(
         "SELECT s.*, u.user_email, u.display_name FROM $table_subs s 
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID 
@@ -755,20 +265,20 @@ function cmp_render_accounts_dashboard() {
     <style>
         .acc-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px; }
         /* Desktop Dashboard Glass Header (> 992px) */
-        .acc-header { background: linear-gradient(135deg, rgba(220, 236, 201, 0.90) 0%, rgba(238, 247, 227, 0.82) 50%, rgba(104, 185, 70, 0.32) 100%) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; color: #231F20 !important; padding: 26px 30px !important; border-radius: 18px !important; border: 1.5px solid rgba(55, 146, 55, 0.28) !important; border-top: 5px solid #379237 !important; box-shadow: 0 14px 34px rgba(27, 94, 32, 0.10) !important; display: flex !important; justify-content: space-between !important; align-items: center !important; margin-bottom: 30px !important; flex-wrap: wrap !important; gap: 15px !important; }
-        .acc-header h1 { margin: 0 !important; color: #231F20 !important; font-size: 2em !important; font-weight: 800 !important; }
-        .acc-header p { margin: 5px 0 0 0 !important; color: #1B5E20 !important; font-weight: 600 !important; }
-        .acc-header .acc-logout-btn { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; color: #ffffff !important; text-decoration: none !important; padding: 10px 22px !important; border-radius: 10px !important; font-weight: 700 !important; border: 1px solid rgba(220, 236, 201, 0.5) !important; box-shadow: 0 6px 16px rgba(55, 146, 55, 0.25) !important; display: inline-block !important; }
+        .acc-header { background: linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; color: #ffffff !important; padding: 26px 30px !important; border-radius: 18px !important; border: 1.5px solid #DCECC9 !important; border-bottom: 4px solid #68B946 !important; box-shadow: 0 14px 34px rgba(27, 94, 32, 0.14) !important; display: flex !important; justify-content: space-between !important; align-items: center !important; margin-bottom: 30px !important; flex-wrap: wrap !important; gap: 15px !important; }
+        .acc-header h1 { margin: 0 !important; color: #ffffff !important; font-size: 2em !important; font-weight: 800 !important; }
+        .acc-header p { margin: 5px 0 0 0 !important; color: #EEF7E3 !important; font-weight: 600 !important; }
+        .acc-header .acc-logout-btn { background: rgba(255, 255, 255, 0.18) !important; color: #ffffff !important; text-decoration: none !important; padding: 10px 22px !important; border-radius: 10px !important; font-weight: 700 !important; border: 1.5px solid #DCECC9 !important; display: inline-block !important; }
         /* Tablet Dashboard Glass Header (601px - 991px) */
         @media (min-width: 601px) and (max-width: 991px) {
-            .acc-header { background: linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%) !important; border-top: 5px solid #DCECC9 !important; padding: 22px 24px !important; }
-            .acc-header h1 { color: #ffffff !important; font-size: 1.75em !important; }
-            .acc-header p { color: #EEF7E3 !important; }
-            .acc-header .acc-logout-btn { background: rgba(255, 255, 255, 0.2) !important; border: 1.5px solid #DCECC9 !important; }
+            .acc-header { background: linear-gradient(125deg, rgba(220, 236, 201, 0.92) 0%, rgba(104, 185, 70, 0.42) 100%) !important; border: 1.5px solid #379237 !important; padding: 22px 24px !important; }
+            .acc-header h1 { color: #231F20 !important; font-size: 1.75em !important; }
+            .acc-header p { color: #1B5E20 !important; }
+            .acc-header .acc-logout-btn { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; color: #ffffff !important; border: 1px solid #DCECC9 !important; }
         }
         /* Mobile Dashboard Glass Header (<= 600px) */
         @media (max-width: 600px) {
-            .acc-header { background: linear-gradient(145deg, rgba(27, 94, 32, 0.96) 0%, rgba(55, 146, 55, 0.90) 100%) !important; border: 1.5px solid #68B946 !important; border-radius: 16px !important; padding: 18px 18px !important; }
+            .acc-header { background: linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%) !important; border: 1.5px solid #68B946 !important; border-radius: 16px !important; padding: 18px 18px !important; }
             .acc-header h1 { color: #ffffff !important; font-size: 1.5em !important; }
             .acc-header p { color: #DCECC9 !important; font-size: 0.9em !important; }
             .acc-header .acc-logout-btn { background: rgba(220, 236, 201, 0.2) !important; border: 1px solid #DCECC9 !important; padding: 8px 16px !important; font-size: 0.9em !important; }
@@ -1267,7 +777,6 @@ function cmp_render_accounts_sub_view($sub_id) {
     if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
     elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; }
 
-    // Bag Status Logic
     $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
     if ($deposit_held === '') {
         $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
