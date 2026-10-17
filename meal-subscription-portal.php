@@ -416,7 +416,6 @@ function cmp_handle_portal_ajax_login() {
         ) );
     }
 
-    // Prevent fallback redirect hook from firing during AJAX authentication
     remove_action( 'wp_login_failed', 'cmp_intercept_failed_portal_login' );
 
     $user_login    = isset( $_POST['log'] ) ? sanitize_text_field( wp_unslash( $_POST['log'] ) ) : '';
@@ -446,7 +445,6 @@ function cmp_handle_portal_ajax_login() {
         wp_send_json_error( array( 'message' => $friendly_msg ) );
     }
 
-    // Verify Portal Role / Capability Clearance if specified
     if ( ! empty( $required_caps ) && $required_caps !== 'any' ) {
         $caps_array = array_filter( array_map( 'trim', explode( ',', $required_caps ) ) );
         $has_access = false;
@@ -525,6 +523,11 @@ function cmp_intercept_failed_portal_login( $username ) {
 
 // 6.4 Reusable Glassmorphism Portal Login & Access-Denied UI/UX Renderer
 function cmp_render_portal_login_ui( $args = array() ) {
+    // Prevent page caching plugins from serving stale login HTML
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+        define( 'DONOTCACHEPAGE', true );
+    }
+
     $defaults = array(
         'portal_id'      => 'portal',
         'title'          => 'Staff Portal',
@@ -532,7 +535,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
         'required_caps'  => array( 'manage_options' ),
         'denied_message' => 'Your account does not have clearance to view this portal.',
         'accent_color'   => '#379237',
-        'header_bg'      => '#1B5E20',
+        'header_bg'      => '#379237',
     );
     $cfg = wp_parse_args( $args, $defaults );
 
@@ -546,488 +549,88 @@ function cmp_render_portal_login_ui( $args = array() ) {
     ob_start();
     ?>
     <style>
-        /* =========================================================
-           THE CYCLE BISTRO — BRAND GLASSMORPHISM LOGIN UI/UX
-           Palette:
-           - Deep Forest Gear:  #1B5E20
-           - Core Brand Green:  #379237
-           - Fresh Leaf Lime:   #68B946
-           - Soft Pistachio:    #DCECC9 / #EEF7E3
-           - Bistro Charcoal:   #231F20
-           ========================================================= */
-        #cmp-auth-stage-<?php echo $uid; ?>,
-        #cmp-auth-stage-<?php echo $uid; ?> * {
-            box-sizing: border-box !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
-            letter-spacing: normal !important;
-        }
-
-        /* Ambient Stage Container for True Glass Refraction */
-        #cmp-auth-stage-<?php echo $uid; ?> {
-            position: relative !important;
-            width: 100% !important;
-            max-width: 520px !important;
-            margin: 32px auto 60px auto !important;
-            padding: 24px 18px !important;
-            z-index: 1 !important;
-        }
-
-        /* Decorative Brand Glow Orbs Behind Glass Card */
-        #cmp-auth-stage-<?php echo $uid; ?>::before,
-        #cmp-auth-stage-<?php echo $uid; ?>::after {
-            content: "" !important;
-            position: absolute !important;
-            border-radius: 50% !important;
-            filter: blur(42px) !important;
-            z-index: -1 !important;
-            pointer-events: none !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?>::before {
-            width: 230px !important;
-            height: 230px !important;
-            top: -10px !important;
-            left: -15px !important;
-            background: radial-gradient(circle, rgba(104, 185, 70, 0.42) 0%, rgba(55, 146, 55, 0.12) 70%, transparent 100%) !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?>::after {
-            width: 250px !important;
-            height: 250px !important;
-            bottom: -15px !important;
-            right: -15px !important;
-            background: radial-gradient(circle, rgba(220, 236, 201, 0.85) 0%, rgba(27, 94, 32, 0.18) 70%, transparent 100%) !important;
-        }
-
-        /* Main Frosted Glass Card */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card {
-            position: relative !important;
-            background: linear-gradient(145deg, rgba(255, 255, 255, 0.84) 0%, rgba(244, 250, 238, 0.74) 100%) !important;
-            backdrop-filter: blur(22px) saturate(170%) !important;
-            -webkit-backdrop-filter: blur(22px) saturate(170%) !important;
-            border-radius: 22px !important;
-            border: 1.5px solid rgba(255, 255, 255, 0.85) !important;
-            box-shadow:
-                0 22px 48px rgba(27, 94, 32, 0.14),
-                0 6px 16px rgba(35, 31, 32, 0.06),
-                inset 0 1px 1px rgba(255, 255, 255, 0.95) !important;
-            overflow: hidden !important;
-            transition: all 0.3s ease !important;
-        }
-
-        /* =========================================================
-           DESKTOP HEADER STYLING (> 992px)
-           Deep Forest (#1B5E20) -> Core (#379237) -> Leaf (#68B946)
-           ========================================================= */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header {
-            position: relative !important;
-            background: linear-gradient(135deg, #1B5E20 0%, #379237 58%, #68B946 100%) !important;
-            color: #ffffff !important;
-            padding: 32px 30px 26px 30px !important;
-            text-align: center !important;
-            border-bottom: 3px solid #DCECC9 !important;
-            display: flex !important;
-            flex-direction: column !important;
-            align-items: center !important;
-            justify-content: center !important;
-            gap: 6px !important;
-            overflow: hidden !important;
-        }
-
-        /* Subtle Glass Sheen Overlay inside Header */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header::after {
-            content: "" !important;
-            position: absolute !important;
-            top: -50% !important;
-            right: -20% !important;
-            width: 220px !important;
-            height: 220px !important;
-            background: radial-gradient(circle, rgba(220, 236, 201, 0.28) 0%, transparent 70%) !important;
-            pointer-events: none !important;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge {
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            width: 56px !important;
-            height: 56px !important;
-            border-radius: 16px !important;
-            background: rgba(255, 255, 255, 0.18) !important;
-            backdrop-filter: blur(8px) !important;
-            -webkit-backdrop-filter: blur(8px) !important;
-            border: 1.5px solid rgba(220, 236, 201, 0.55) !important;
-            margin: 0 auto 8px auto !important;
-            box-shadow: 0 8px 20px rgba(15, 46, 18, 0.22) !important;
-            flex-shrink: 0 !important;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text {
-            text-align: center !important;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 {
-            margin: 0 !important;
-            padding: 0 !important;
-            font-size: 25px !important;
-            line-height: 1.2 !important;
-            font-weight: 800 !important;
-            color: #ffffff !important;
-            text-transform: none !important;
-            text-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p {
-            margin: 6px 0 0 0 !important;
-            padding: 0 !important;
-            font-size: 13.5px !important;
-            line-height: 1.45 !important;
-            color: #EEF7E3 !important;
-            font-weight: 500 !important;
-        }
-
-        /* =========================================================
-           FORM BODY & GLASS INPUT CONTROLS
-           ========================================================= */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body {
-            padding: 28px 30px 32px 30px !important;
-            background: transparent !important;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert {
-            display: none;
-            padding: 12px 15px !important;
-            border-radius: 12px !important;
-            font-size: 13.5px !important;
-            line-height: 1.45 !important;
-            margin: 0 0 18px 0 !important;
-            font-weight: 600 !important;
-            backdrop-filter: blur(10px) !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.error {
-            display: block !important;
-            background: rgba(254, 242, 242, 0.92) !important;
-            color: #991b1b !important;
-            border: 1px solid #fecaca !important;
-            border-left: 4px solid #dc2626 !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.success {
-            display: block !important;
-            background: rgba(238, 247, 227, 0.95) !important;
-            color: #1B5E20 !important;
-            border: 1px solid #b7e1a1 !important;
-            border-left: 4px solid #379237 !important;
-        }
-
-        @keyframes cmpShake {
-            0%, 100% { transform: translateX(0); }
-            20%, 60% { transform: translateX(-6px); }
-            40%, 80% { transform: translateX(6px); }
-        }
-        .cmp-shake {
-            animation: cmpShake 0.35s ease-in-out;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group {
-            margin: 0 0 18px 0 !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group label {
-            display: block !important;
-            font-size: 13.5px !important;
-            line-height: 1.3 !important;
-            font-weight: 700 !important;
-            color: #231F20 !important;
-            margin: 0 0 7px 0 !important;
-            text-transform: none !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap {
-            position: relative !important;
-            display: flex !important;
-            align-items: center !important;
-            width: 100% !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-icon {
-            position: absolute !important;
-            left: 14px !important;
-            color: #379237 !important;
-            pointer-events: none !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            z-index: 2 !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"],
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"],
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] {
-            width: 100% !important;
-            height: 48px !important;
-            padding: 10px 44px 10px 42px !important;
-            font-size: 15px !important;
-            line-height: 1.4 !important;
-            color: #231F20 !important;
-            background: rgba(255, 255, 255, 0.82) !important;
-            border: 1.5px solid rgba(55, 146, 55, 0.28) !important;
-            border-radius: 12px !important;
-            transition: all 0.2s ease !important;
-            outline: none !important;
-            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important;
-            margin: 0 !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input:focus {
-            background: #ffffff !important;
-            border-color: #379237 !important;
-            box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.22) !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle {
-            position: absolute !important;
-            right: 8px !important;
-            top: 50% !important;
-            transform: translateY(-50%) !important;
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            color: #526352 !important;
-            cursor: pointer !important;
-            padding: 6px !important;
-            margin: 0 !important;
-            min-height: 0 !important;
-            min-width: 0 !important;
-            width: 34px !important;
-            height: 34px !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            border-radius: 8px !important;
-            z-index: 2 !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:hover,
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:focus {
-            color: #1B5E20 !important;
-            background: rgba(220, 236, 201, 0.6) !important;
-            outline: none !important;
-        }
-
-        /* Remember Me & Forgot Password Row */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta {
-            display: flex !important;
-            justify-content: space-between !important;
-            align-items: center !important;
-            gap: 10px !important;
-            flex-wrap: nowrap !important;
-            margin: 4px 0 22px 0 !important;
-            width: 100% !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label {
-            display: inline-flex !important;
-            align-items: center !important;
-            gap: 8px !important;
-            color: #231F20 !important;
-            cursor: pointer !important;
-            font-size: 13.5px !important;
-            line-height: 1.2 !important;
-            font-weight: 600 !important;
-            margin: 0 !important;
-            white-space: nowrap !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label input[type="checkbox"] {
-            width: 17px !important;
-            height: 17px !important;
-            min-width: 17px !important;
-            accent-color: #379237 !important;
-            cursor: pointer !important;
-            margin: 0 !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action {
-            background: transparent !important;
-            border: none !important;
-            color: #1B5E20 !important;
-            font-weight: 700 !important;
-            font-size: 13.5px !important;
-            line-height: 1.2 !important;
-            cursor: pointer !important;
-            padding: 4px 8px !important;
-            margin: 0 !important;
-            border-radius: 6px !important;
-            text-decoration: none !important;
-            white-space: nowrap !important;
-            display: inline-block !important;
-            transition: all 0.2s ease !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action:hover {
-            color: #1B5E20 !important;
-            background: rgba(220, 236, 201, 0.65) !important;
-            text-decoration: none !important;
-        }
-
-        /* Primary Brand Submit Button */
-        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn,
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn {
-            width: 100% !important;
-            min-height: 50px !important;
-            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important;
-            background-color: #379237 !important;
-            color: #ffffff !important;
-            border: 1px solid rgba(220, 236, 201, 0.4) !important;
-            padding: 13px 20px !important;
-            font-size: 15.5px !important;
-            line-height: 1.3 !important;
-            font-weight: 700 !important;
-            text-transform: none !important;
-            border-radius: 12px !important;
-            cursor: pointer !important;
-            transition: all 0.25s ease !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            gap: 9px !important;
-            text-decoration: none !important;
-            box-shadow: 0 8px 20px rgba(55, 146, 55, 0.30) !important;
-            margin: 0 !important;
-            white-space: nowrap !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:hover,
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn:hover {
-            background: linear-gradient(135deg, #68B946 0%, #379237 100%) !important;
-            background-color: #287028 !important;
-            color: #ffffff !important;
-            transform: translateY(-1px) !important;
-            box-shadow: 0 10px 24px rgba(55, 146, 55, 0.38) !important;
-        }
-        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:disabled {
-            opacity: 0.68 !important;
-            cursor: not-allowed !important;
-            transform: none !important;
-        }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-spinner {
-            width: 17px !important;
-            height: 17px !important;
-            border: 2.5px solid rgba(255,255,255,0.35) !important;
-            border-top-color: #ffffff !important;
-            border-radius: 50% !important;
-            animation: cmpSpin 0.7s linear infinite !important;
-            display: none;
-            flex-shrink: 0 !important;
-        }
+        #cmp-auth-stage-<?php echo $uid; ?>, #cmp-auth-stage-<?php echo $uid; ?> * { box-sizing: border-box !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; letter-spacing: normal !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> { position: relative !important; width: 100% !important; max-width: 490px !important; margin: 32px auto 60px auto !important; padding: 22px 18px !important; z-index: 1 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?>::before, #cmp-auth-stage-<?php echo $uid; ?>::after { content: "" !important; position: absolute !important; border-radius: 50% !important; filter: blur(38px) !important; z-index: -1 !important; pointer-events: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?>::before { width: 240px !important; height: 240px !important; top: -12px !important; left: -18px !important; background: radial-gradient(circle, rgba(104, 185, 70, 0.48) 0%, rgba(55, 146, 55, 0.16) 68%, transparent 100%) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?>::after { width: 260px !important; height: 260px !important; bottom: -18px !important; right: -15px !important; background: radial-gradient(circle, rgba(220, 236, 201, 0.92) 0%, rgba(55, 146, 55, 0.22) 70%, transparent 100%) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { position: relative !important; background: linear-gradient(145deg, rgba(255, 255, 255, 0.78) 0%, rgba(238, 247, 227, 0.68) 100%) !important; backdrop-filter: blur(22px) saturate(180%) !important; -webkit-backdrop-filter: blur(22px) saturate(180%) !important; border-radius: 24px !important; border: 1.5px solid rgba(255, 255, 255, 0.92) !important; box-shadow: 0 24px 50px rgba(27, 94, 32, 0.15), 0 6px 16px rgba(35, 31, 32, 0.06), inset 0 1px 2px rgba(255, 255, 255, 0.95) !important; overflow: hidden !important; transition: all 0.3s ease !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-brand-ribbon { height: 6px !important; width: 100% !important; background: linear-gradient(90deg, #1B5E20 0%, #379237 38%, #68B946 72%, #DCECC9 100%) !important; }
+        /* DESKTOP LOGIN HEADER (> 992px): Frosted Pistachio-Sage & Fresh Leaf Glass */
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { position: relative !important; background: linear-gradient(135deg, rgba(220, 236, 201, 0.86) 0%, rgba(238, 247, 227, 0.78) 50%, rgba(104, 185, 70, 0.28) 100%) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; padding: 28px 28px 24px 28px !important; text-align: center !important; border-bottom: 1.5px solid rgba(55, 146, 55, 0.22) !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 8px !important; margin: 0 !important; border-radius: 0 !important; transition: all 0.3s ease !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 58px !important; height: 58px !important; border-radius: 18px !important; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; border: 2px solid #DCECC9 !important; margin: 0 auto 4px auto !important; box-shadow: 0 8px 20px rgba(55, 146, 55, 0.28) !important; flex-shrink: 0 !important; color: #ffffff !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { display: inline-block !important; padding: 4px 12px !important; border-radius: 999px !important; font-size: 11px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; background: rgba(55, 146, 55, 0.14) !important; color: #1B5E20 !important; border: 1px solid rgba(55, 146, 55, 0.28) !important; margin-bottom: 2px !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: center !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { margin: 0 !important; padding: 0 !important; font-size: 25px !important; line-height: 1.2 !important; font-weight: 800 !important; color: #231F20 !important; text-transform: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { margin: 5px 0 0 0 !important; padding: 0 !important; font-size: 13.5px !important; line-height: 1.45 !important; color: #1B5E20 !important; font-weight: 600 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 26px 28px 30px 28px !important; background: transparent !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert { display: none; padding: 12px 15px !important; border-radius: 12px !important; font-size: 13.5px !important; line-height: 1.45 !important; margin: 0 0 18px 0 !important; font-weight: 600 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.error { display: block !important; background: rgba(254, 242, 242, 0.94) !important; color: #991b1b !important; border: 1px solid #fecaca !important; border-left: 4px solid #dc2626 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.success { display: block !important; background: rgba(238, 247, 227, 0.96) !important; color: #1B5E20 !important; border: 1px solid #b7e1a1 !important; border-left: 4px solid #379237 !important; }
+        @keyframes cmpShake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+        .cmp-shake { animation: cmpShake 0.35s ease-in-out; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group { margin: 0 0 18px 0 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group label { display: block !important; font-size: 13.5px !important; line-height: 1.3 !important; font-weight: 700 !important; color: #231F20 !important; margin: 0 0 7px 0 !important; text-transform: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap { position: relative !important; display: flex !important; align-items: center !important; width: 100% !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-icon { position: absolute !important; left: 14px !important; color: #379237 !important; pointer-events: none !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 2 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] { width: 100% !important; height: 48px !important; padding: 10px 44px 10px 42px !important; font-size: 15px !important; line-height: 1.4 !important; color: #231F20 !important; background: rgba(255, 255, 255, 0.86) !important; border: 1.5px solid rgba(55, 146, 55, 0.30) !important; border-radius: 12px !important; transition: all 0.2s ease !important; outline: none !important; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important; margin: 0 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input:focus { background: #ffffff !important; border-color: #379237 !important; box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.24) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle { position: absolute !important; right: 8px !important; top: 50% !important; transform: translateY(-50%) !important; background: transparent !important; border: none !important; box-shadow: none !important; color: #526352 !important; cursor: pointer !important; padding: 6px !important; margin: 0 !important; min-height: 0 !important; min-width: 0 !important; width: 34px !important; height: 34px !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; border-radius: 8px !important; z-index: 2 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:hover, #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:focus { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.65) !important; outline: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta { display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 10px !important; flex-wrap: nowrap !important; margin: 4px 0 22px 0 !important; width: 100% !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label { display: inline-flex !important; align-items: center !important; gap: 8px !important; color: #231F20 !important; cursor: pointer !important; font-size: 13.5px !important; line-height: 1.2 !important; font-weight: 600 !important; margin: 0 !important; white-space: nowrap !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label input[type="checkbox"] { width: 17px !important; height: 17px !important; min-width: 17px !important; accent-color: #379237 !important; cursor: pointer !important; margin: 0 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action { background: transparent !important; border: none !important; color: #1B5E20 !important; font-weight: 700 !important; font-size: 13.5px !important; line-height: 1.2 !important; cursor: pointer !important; padding: 4px 8px !important; margin: 0 !important; border-radius: 6px !important; text-decoration: none !important; white-space: nowrap !important; display: inline-block !important; transition: all 0.2s ease !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action:hover { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.7) !important; text-decoration: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn { width: 100% !important; min-height: 50px !important; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; background-color: #379237 !important; color: #ffffff !important; border: 1px solid rgba(220, 236, 201, 0.45) !important; padding: 13px 20px !important; font-size: 15.5px !important; line-height: 1.3 !important; font-weight: 700 !important; text-transform: none !important; border-radius: 12px !important; cursor: pointer !important; transition: all 0.25s ease !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 9px !important; text-decoration: none !important; box-shadow: 0 8px 20px rgba(55, 146, 55, 0.30) !important; margin: 0 !important; white-space: nowrap !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:hover, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn:hover { background: linear-gradient(135deg, #68B946 0%, #379237 100%) !important; background-color: #287028 !important; color: #ffffff !important; transform: translateY(-1px) !important; box-shadow: 0 10px 24px rgba(55, 146, 55, 0.38) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:disabled { opacity: 0.68 !important; cursor: not-allowed !important; transform: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-spinner { width: 17px !important; height: 17px !important; border: 2.5px solid rgba(255,255,255,0.35) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cmpSpin 0.7s linear infinite !important; display: none; flex-shrink: 0 !important; }
         @keyframes cmpSpin { to { transform: rotate(360deg); } }
-
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-user-pill {
-            background: rgba(238, 247, 227, 0.75) !important;
-            border: 1px solid rgba(55, 146, 55, 0.28) !important;
-            border-radius: 12px !important;
-            padding: 14px !important;
-            margin-bottom: 18px !important;
-            font-size: 14px !important;
-            line-height: 1.5 !important;
-            color: #231F20 !important;
-        }
-
-        /* =========================================================
-           TABLET HEADER & CARD STYLING (601px to 991px)
-           Vibrant Leaf-to-Forest Glass Header + Soft Sage Rim
-           ========================================================= */
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-user-pill { background: rgba(238, 247, 227, 0.8) !important; border: 1px solid rgba(55, 146, 55, 0.28) !important; border-radius: 12px !important; padding: 14px !important; margin-bottom: 18px !important; font-size: 14px !important; line-height: 1.5 !important; color: #231F20 !important; }
+        /* TABLET LOGIN HEADER (601px to 991px): Core Brand Green (#379237) to Leaf Lime (#68B946) Split Glass Header */
         @media (min-width: 601px) and (max-width: 991px) {
-            #cmp-auth-stage-<?php echo $uid; ?> {
-                max-width: 460px !important;
-                margin: 24px auto 48px auto !important;
-                padding: 18px 16px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header {
-                background: linear-gradient(120deg, #246A28 0%, #379237 48%, #68B946 100%) !important;
-                padding: 26px 24px 22px 24px !important;
-                border-bottom: 4px solid #82CD47 !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge {
-                width: 50px !important;
-                height: 50px !important;
-                border-radius: 14px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 {
-                font-size: 23px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body {
-                padding: 24px 24px 28px 24px !important;
-            }
+            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 460px !important; margin: 24px auto 48px auto !important; padding: 18px 16px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%) !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 16px !important; padding: 24px 26px !important; border-bottom: 3px solid #DCECC9 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { background: rgba(255, 255, 255, 0.22) !important; border-color: rgba(255, 255, 255, 0.55) !important; width: 54px !important; height: 54px !important; margin: 0 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: left !important; flex: 1 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(220, 236, 201, 0.28) !important; color: #EEF7E3 !important; border-color: rgba(220, 236, 201, 0.5) !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #ffffff !important; font-size: 23px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #EEF7E3 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 24px 24px 28px 24px !important; }
         }
-
-        /* =========================================================
-           MOBILE HEADER & CARD STYLING (<= 600px)
-           Compact Horizontal Glass Header Banner + Touch Ergonomics
-           ========================================================= */
+        /* MOBILE LOGIN HEADER (<= 600px): Floating Inset Deep Forest (#1B5E20) to Core Green (#379237) Glass Banner */
         @media (max-width: 600px) {
-            #cmp-auth-stage-<?php echo $uid; ?> {
-                max-width: 100% !important;
-                margin: 12px auto 32px auto !important;
-                padding: 10px 12px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card {
-                border-radius: 18px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header {
-                background: linear-gradient(160deg, #379237 0%, #1B5E20 100%) !important;
-                padding: 18px 18px !important;
-                flex-direction: row !important;
-                text-align: left !important;
-                justify-content: flex-start !important;
-                align-items: center !important;
-                gap: 14px !important;
-                border-bottom: 3px solid #68B946 !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge {
-                width: 46px !important;
-                height: 46px !important;
-                border-radius: 12px !important;
-                margin: 0 !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text {
-                text-align: left !important;
-                flex: 1 !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 {
-                font-size: 20px !important;
-                line-height: 1.2 !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p {
-                font-size: 12.5px !important;
-                margin-top: 3px !important;
-                line-height: 1.35 !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body {
-                padding: 20px 18px 22px 18px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"],
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"],
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] {
-                font-size: 16px !important; /* Prevents iOS auto-zoom */
-                height: 48px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta {
-                gap: 6px !important;
-                margin-bottom: 18px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label,
-            #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action {
-                font-size: 13px !important;
-            }
-            #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn,
-            #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn {
-                font-size: 15px !important;
-                min-height: 48px !important;
-                padding: 12px 16px !important;
-            }
+            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 100% !important; margin: 12px auto 32px auto !important; padding: 8px 12px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { border-radius: 20px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(145deg, rgba(27, 94, 32, 0.95) 0%, rgba(55, 146, 55, 0.90) 100%) !important; margin: 12px 12px 0 12px !important; border-radius: 16px !important; padding: 16px 16px !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 13px !important; border: 1.5px solid rgba(104, 185, 70, 0.65) !important; box-shadow: 0 8px 20px rgba(27, 94, 32, 0.18) !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { width: 46px !important; height: 46px !important; border-radius: 13px !important; margin: 0 !important; background: rgba(220, 236, 201, 0.2) !important; border-color: #68B946 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: left !important; flex: 1 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(104, 185, 70, 0.28) !important; color: #DCECC9 !important; border-color: rgba(220, 236, 201, 0.4) !important; font-size: 10px !important; padding: 2px 9px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #ffffff !important; font-size: 19.5px !important; line-height: 1.2 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #DCECC9 !important; font-size: 12px !important; margin-top: 3px !important; line-height: 1.35 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 18px 16px 22px 16px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] { font-size: 16px !important; height: 48px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta { gap: 6px !important; margin-bottom: 18px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action { font-size: 13px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn { font-size: 15px !important; min-height: 48px !important; padding: 12px 16px !important; }
         }
     </style>
 
     <div id="cmp-auth-stage-<?php echo $uid; ?>">
         <div class="cmp-auth-card" id="cmp-auth-card-<?php echo $uid; ?>">
-            <div class="cmp-auth-header" style="background: linear-gradient(135deg, #1B5E20 0%, #379237 58%, #68B946 100%);">
-                <div class="cmp-auth-badge">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#EEF7E3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            <div class="cmp-brand-ribbon"></div>
+            <div class="cmp-auth-header" id="cmp-auth-header-<?php echo $uid; ?>">
+                <div class="cmp-auth-badge" id="cmp-auth-badge-<?php echo $uid; ?>">
+                    <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                     </svg>
                 </div>
-                <div class="cmp-auth-header-text">
-                    <h2 style="color:#ffffff !important;"><?php echo esc_html( $cfg['title'] ); ?></h2>
-                    <p style="color:#EEF7E3 !important;"><?php echo esc_html( $cfg['subtitle'] ); ?></p>
+                <div class="cmp-auth-header-text" id="cmp-auth-htext-<?php echo $uid; ?>">
+                    <span class="cmp-auth-kicker" id="cmp-auth-kicker-<?php echo $uid; ?>">The Cycle Bistro</span>
+                    <h2 id="cmp-auth-title-<?php echo $uid; ?>"><?php echo esc_html( $cfg['title'] ); ?></h2>
+                    <p id="cmp-auth-sub-<?php echo $uid; ?>"><?php echo esc_html( $cfg['subtitle'] ); ?></p>
                 </div>
             </div>
 
@@ -1035,7 +638,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
                 <?php if ( is_user_logged_in() ) : 
                     $curr_user = wp_get_current_user();
                 ?>
-                    <!-- LOGGED IN BUT LACKS CLEARANCE FOR THIS PORTAL -->
                     <div class="cmp-auth-alert error" style="display:block !important;">
                         <strong>Access Restricted:</strong> <?php echo esc_html( $cfg['denied_message'] ); ?>
                     </div>
@@ -1044,12 +646,11 @@ function cmp_render_portal_login_ui( $args = array() ) {
                         <strong style="color:#231F20;"><?php echo esc_html( $curr_user->display_name ); ?></strong>
                         <span style="color:#526352;">(<?php echo esc_html( $curr_user->user_email ); ?>)</span>
                     </div>
-                    <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-submit-btn" style="background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: #ffffff;">
+                    <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-submit-btn">
                         Log Out &amp; Switch Account
                     </a>
 
                 <?php else : ?>
-                    <!-- VIEW 1: SIGN IN FORM -->
                     <div id="cmp-login-view-<?php echo $uid; ?>">
                         <div id="cmp-login-alert-<?php echo $uid; ?>" class="cmp-auth-alert <?php echo $url_failed ? 'error' : ''; ?>">
                             <?php if ( $url_failed ) echo 'Incorrect username/email or password. Please try again.'; ?>
@@ -1097,10 +698,10 @@ function cmp_render_portal_login_ui( $args = array() ) {
                                     <input type="checkbox" id="cmp-remember-<?php echo $uid; ?>" name="rememberme" value="forever">
                                     <span>Remember me</span>
                                 </label>
-                                <a href="#forgot-password" class="cmp-link-action" id="cmp-show-forgot-<?php echo $uid; ?>" style="color:#1B5E20;">Forgot Password?</a>
+                                <a href="#forgot-password" class="cmp-link-action" id="cmp-show-forgot-<?php echo $uid; ?>">Forgot Password?</a>
                             </div>
 
-                            <button type="submit" class="cmp-submit-btn" id="cmp-login-btn-<?php echo $uid; ?>" style="background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: #ffffff;">
+                            <button type="submit" class="cmp-submit-btn" id="cmp-login-btn-<?php echo $uid; ?>">
                                 <span class="cmp-spinner" id="cmp-login-spin-<?php echo $uid; ?>"></span>
                                 <span id="cmp-login-btn-text-<?php echo $uid; ?>">Sign In</span>
                                 <svg id="cmp-login-arrow-<?php echo $uid; ?>" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
@@ -1111,7 +712,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
                         </form>
                     </div>
 
-                    <!-- VIEW 2: FORGOT PASSWORD FORM -->
                     <div id="cmp-forgot-view-<?php echo $uid; ?>" style="display:none;">
                         <div id="cmp-forgot-alert-<?php echo $uid; ?>" class="cmp-auth-alert"></div>
 
@@ -1133,14 +733,14 @@ function cmp_render_portal_login_ui( $args = array() ) {
                                 </div>
                             </div>
 
-                            <button type="submit" class="cmp-submit-btn" id="cmp-forgot-btn-<?php echo $uid; ?>" style="background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: #ffffff;">
+                            <button type="submit" class="cmp-submit-btn" id="cmp-forgot-btn-<?php echo $uid; ?>">
                                 <span class="cmp-spinner" id="cmp-forgot-spin-<?php echo $uid; ?>"></span>
                                 <span id="cmp-forgot-btn-text-<?php echo $uid; ?>">Send Reset Link</span>
                             </button>
                         </form>
 
                         <div style="text-align: center !important; margin-top: 18px !important;">
-                            <a href="#sign-in" class="cmp-link-action" id="cmp-back-login-<?php echo $uid; ?>" style="color:#1B5E20;">&larr; Back to Sign In</a>
+                            <a href="#sign-in" class="cmp-link-action" id="cmp-back-login-<?php echo $uid; ?>">&larr; Back to Sign In</a>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -1148,10 +748,72 @@ function cmp_render_portal_login_ui( $args = array() ) {
         </div>
     </div>
 
-    <?php if ( ! is_user_logged_in() ) : ?>
     <script>
     (function() {
-        const uid        = '<?php echo esc_js( $uid ); ?>';
+        const uid         = '<?php echo esc_js( $uid ); ?>';
+        const headerEl    = document.getElementById('cmp-auth-header-' + uid);
+        const badgeEl     = document.getElementById('cmp-auth-badge-' + uid);
+        const htextEl     = document.getElementById('cmp-auth-htext-' + uid);
+        const kickerEl    = document.getElementById('cmp-auth-kicker-' + uid);
+        const titleEl     = document.getElementById('cmp-auth-title-' + uid);
+        const subEl       = document.getElementById('cmp-auth-sub-' + uid);
+
+        // Enforce Desktop, Tablet, and Mobile Header Color & Styling
+        function applyResponsiveHeaderTheme() {
+            if (!headerEl) return;
+            const w = window.innerWidth;
+            if (w <= 600) {
+                // MOBILE: Floating Inset Deep Forest (#1B5E20) -> Core Green (#379237) Glass Banner
+                headerEl.style.setProperty('background', 'linear-gradient(145deg, rgba(27, 94, 32, 0.95) 0%, rgba(55, 146, 55, 0.90) 100%)', 'important');
+                headerEl.style.setProperty('flex-direction', 'row', 'important');
+                headerEl.style.setProperty('text-align', 'left', 'important');
+                headerEl.style.setProperty('margin', '12px 12px 0 12px', 'important');
+                headerEl.style.setProperty('border-radius', '16px', 'important');
+                headerEl.style.setProperty('padding', '16px', 'important');
+                if (htextEl) htextEl.style.setProperty('text-align', 'left', 'important');
+                if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
+                if (subEl) subEl.style.setProperty('color', '#DCECC9', 'important');
+                if (kickerEl) {
+                    kickerEl.style.setProperty('background', 'rgba(104, 185, 70, 0.28)', 'important');
+                    kickerEl.style.setProperty('color', '#DCECC9', 'important');
+                }
+            } else if (w <= 991) {
+                // TABLET: Core Green (#379237) -> Leaf Lime (#68B946) Split Glass Header
+                headerEl.style.setProperty('background', 'linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%)', 'important');
+                headerEl.style.setProperty('flex-direction', 'row', 'important');
+                headerEl.style.setProperty('text-align', 'left', 'important');
+                headerEl.style.setProperty('margin', '0', 'important');
+                headerEl.style.setProperty('border-radius', '0', 'important');
+                headerEl.style.setProperty('padding', '24px 26px', 'important');
+                if (htextEl) htextEl.style.setProperty('text-align', 'left', 'important');
+                if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
+                if (subEl) subEl.style.setProperty('color', '#EEF7E3', 'important');
+                if (kickerEl) {
+                    kickerEl.style.setProperty('background', 'rgba(220, 236, 201, 0.28)', 'important');
+                    kickerEl.style.setProperty('color', '#EEF7E3', 'important');
+                }
+            } else {
+                // DESKTOP: Frosted Pistachio-Sage (#DCECC9) & Fresh Leaf (#68B946) Glass Header
+                headerEl.style.setProperty('background', 'linear-gradient(135deg, rgba(220, 236, 201, 0.88) 0%, rgba(238, 247, 227, 0.78) 50%, rgba(104, 185, 70, 0.30) 100%)', 'important');
+                headerEl.style.setProperty('flex-direction', 'column', 'important');
+                headerEl.style.setProperty('text-align', 'center', 'important');
+                headerEl.style.setProperty('margin', '0', 'important');
+                headerEl.style.setProperty('border-radius', '0', 'important');
+                headerEl.style.setProperty('padding', '28px 28px 24px 28px', 'important');
+                if (htextEl) htextEl.style.setProperty('text-align', 'center', 'important');
+                if (titleEl) titleEl.style.setProperty('color', '#231F20', 'important');
+                if (subEl) subEl.style.setProperty('color', '#1B5E20', 'important');
+                if (kickerEl) {
+                    kickerEl.style.setProperty('background', 'rgba(55, 146, 55, 0.14)', 'important');
+                    kickerEl.style.setProperty('color', '#1B5E20', 'important');
+                }
+            }
+        }
+
+        applyResponsiveHeaderTheme();
+        window.addEventListener('resize', applyResponsiveHeaderTheme);
+
+        <?php if ( ! is_user_logged_in() ) : ?>
         const ajaxUrl    = '<?php echo $ajax_url; ?>';
         const nonce      = '<?php echo esc_js( $nonce ); ?>';
         const reqCaps    = '<?php echo esc_js( $caps_csv ); ?>';
@@ -1185,7 +847,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
             card.classList.add('cmp-shake');
         }
 
-        // Password Visibility Toggle
         const passInput  = document.getElementById('cmp-pass-' + uid);
         const pwdToggle  = document.getElementById('cmp-pwd-toggle-' + uid);
         const eyeOpen    = document.getElementById('cmp-eye-open-' + uid);
@@ -1202,7 +863,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
             });
         }
 
-        // View Switching (Sign In <-> Forgot Password)
         const showForgotBtn = document.getElementById('cmp-show-forgot-' + uid);
         const backLoginBtn  = document.getElementById('cmp-back-login-' + uid);
         const loginUserInp  = document.getElementById('cmp-user-' + uid);
@@ -1231,7 +891,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
             });
         }
 
-        // AJAX Sign In Submission
         const loginForm    = document.getElementById('cmp-login-form-' + uid);
         const loginBtn     = document.getElementById('cmp-login-btn-' + uid);
         const loginSpin    = document.getElementById('cmp-login-spin-' + uid);
@@ -1299,7 +958,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
             });
         }
 
-        // AJAX Forgot Password Submission
         const forgotForm    = document.getElementById('cmp-forgot-form-' + uid);
         const forgotBtn     = document.getElementById('cmp-forgot-btn-' + uid);
         const forgotSpin    = document.getElementById('cmp-forgot-spin-' + uid);
@@ -1351,9 +1009,9 @@ function cmp_render_portal_login_ui( $args = array() ) {
                 });
             });
         }
+        <?php endif; ?>
     })();
     </script>
-    <?php endif; ?>
     <?php
     return ob_get_clean();
 }
