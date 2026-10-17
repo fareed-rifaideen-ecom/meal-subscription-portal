@@ -406,7 +406,7 @@ function cmp_run_kit_alert_2() {
 // 6. UNIFIED PORTAL AUTHENTICATION & UI/UX ENGINE
 // ==========================================
 
-// 6.1 AJAX Login Handler (Supports Non-Logged-In & Role-Switch Attempts)
+// 6.1 AJAX Login Handler
 add_action( 'wp_ajax_nopriv_cmp_portal_login', 'cmp_handle_portal_ajax_login' );
 add_action( 'wp_ajax_cmp_portal_login', 'cmp_handle_portal_ajax_login' );
 function cmp_handle_portal_ajax_login() {
@@ -416,7 +416,7 @@ function cmp_handle_portal_ajax_login() {
         ) );
     }
 
-    // Ensure fallback redirect hook never fires during AJAX authentication
+    // Prevent fallback redirect hook from firing during AJAX authentication
     remove_action( 'wp_login_failed', 'cmp_intercept_failed_portal_login' );
 
     $user_login    = isset( $_POST['log'] ) ? sanitize_text_field( wp_unslash( $_POST['log'] ) ) : '';
@@ -431,7 +431,6 @@ function cmp_handle_portal_ajax_login() {
         ) );
     }
 
-    // Authenticate credentials without setting cookies yet
     $user = wp_authenticate( $user_login, $user_password );
 
     if ( is_wp_error( $user ) ) {
@@ -465,7 +464,6 @@ function cmp_handle_portal_ajax_login() {
         }
     }
 
-    // Credentials & Clearance verified -> Sign the user in cleanly
     wp_set_current_user( $user->ID );
     wp_set_auth_cookie( $user->ID, $remember, is_ssl() );
     do_action( 'wp_login', $user->user_login, $user );
@@ -493,7 +491,6 @@ function cmp_handle_portal_ajax_forgot_password() {
         ) );
     }
 
-    // Check if account exists by email or username
     $user_data = is_email( $user_login ) ? get_user_by( 'email', $user_login ) : get_user_by( 'login', $user_login );
     if ( ! $user_data ) {
         wp_send_json_error( array(
@@ -505,10 +502,10 @@ function cmp_handle_portal_ajax_forgot_password() {
 
     if ( true === $errors ) {
         wp_send_json_success( array(
-            'message' => 'A password reset link has been sent to your email address. Please check your inbox (and spam folder).'
+            'message' => 'Password reset link sent! Please check your email inbox (and spam folder).'
         ) );
     } else {
-        $err_msg = is_wp_error( $errors ) ? wp_strip_all_tags( $errors->get_error_message() ) : 'Unable to send password reset email. Please contact an administrator.';
+        $err_msg = is_wp_error( $errors ) ? wp_strip_all_tags( $errors->get_error_message() ) : 'Unable to send password reset email. Please contact support.';
         wp_send_json_error( array( 'message' => $err_msg ) );
     }
 }
@@ -539,6 +536,14 @@ function cmp_render_portal_login_ui( $args = array() ) {
     );
     $cfg = wp_parse_args( $args, $defaults );
 
+    // Enforce brand green #379237 if legacy navy/blue values are passed
+    if ( empty( $cfg['header_bg'] ) || $cfg['header_bg'] === '#0f172a' ) {
+        $cfg['header_bg'] = '#379237';
+    }
+    if ( empty( $cfg['accent_color'] ) || $cfg['accent_color'] === '#3b82f6' ) {
+        $cfg['accent_color'] = '#379237';
+    }
+
     $uid           = esc_attr( $cfg['portal_id'] );
     $caps_csv      = is_array( $cfg['required_caps'] ) ? implode( ',', $cfg['required_caps'] ) : $cfg['required_caps'];
     $ajax_url      = esc_url( admin_url( 'admin-ajax.php' ) );
@@ -549,47 +554,329 @@ function cmp_render_portal_login_ui( $args = array() ) {
     ob_start();
     ?>
     <style>
-        .cmp-auth-outer { max-width: 440px; margin: 55px auto; padding: 0 15px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif; }
-        .cmp-auth-card { background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; box-shadow: 0 12px 30px rgba(55, 146, 55, 0.10); overflow: hidden; }
-        .cmp-auth-header { background: <?php echo esc_attr( $cfg['header_bg'] ); ?>; color: #ffffff; padding: 28px 30px 24px; text-align: center; border-bottom: 4px solid rgba(0, 0, 0, 0.12); }
-        .cmp-auth-badge { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 12px; background: rgba(255,255,255,0.18); margin-bottom: 12px; }
-        .cmp-auth-header h2 { margin: 0; font-size: 1.55em; font-weight: 800; color: #ffffff; letter-spacing: -0.02em; }
-        .cmp-auth-header p { margin: 6px 0 0 0; font-size: 0.9em; color: rgba(255, 255, 255, 0.88); }
-        .cmp-auth-body { padding: 28px 30px 30px; }
-        
-        .cmp-auth-alert { display: none; padding: 12px 14px; border-radius: 8px; font-size: 0.88em; line-height: 1.45; margin-bottom: 18px; font-weight: 600; }
-        .cmp-auth-alert.error { display: block !important; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-left: 4px solid #ef4444; }
-        .cmp-auth-alert.success { display: block !important; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; border-left: 4px solid #379237; }
-        
+        .cmp-auth-outer,
+        .cmp-auth-outer * {
+            box-sizing: border-box !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+            letter-spacing: normal !important;
+        }
+        .cmp-auth-outer {
+            width: 100% !important;
+            max-width: 430px !important;
+            margin: 36px auto 56px auto !important;
+            padding: 0 16px !important;
+        }
+        .cmp-auth-card {
+            background: #ffffff !important;
+            border-radius: 16px !important;
+            border: 1px solid #e2e8f0 !important;
+            box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(55, 146, 55, 0.08) !important;
+            overflow: hidden !important;
+        }
+        .cmp-auth-header {
+            background: linear-gradient(135deg, <?php echo esc_attr( $cfg['header_bg'] ); ?> 0%, #287028 100%) !important;
+            color: #ffffff !important;
+            padding: 28px 24px 24px 24px !important;
+            text-align: center !important;
+            border-bottom: 4px solid #1e561e !important;
+        }
+        .cmp-auth-badge {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 52px !important;
+            height: 52px !important;
+            border-radius: 14px !important;
+            background: rgba(255, 255, 255, 0.18) !important;
+            border: 1px solid rgba(255, 255, 255, 0.28) !important;
+            margin: 0 auto 12px auto !important;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1) !important;
+        }
+        .cmp-auth-header h2 {
+            margin: 0 !important;
+            padding: 0 !important;
+            font-size: 24px !important;
+            line-height: 1.25 !important;
+            font-weight: 800 !important;
+            color: #ffffff !important;
+            text-transform: none !important;
+        }
+        .cmp-auth-header p {
+            margin: 6px 0 0 0 !important;
+            padding: 0 !important;
+            font-size: 14px !important;
+            line-height: 1.45 !important;
+            color: rgba(255, 255, 255, 0.92) !important;
+            font-weight: 500 !important;
+        }
+        .cmp-auth-body {
+            padding: 26px 26px 30px 26px !important;
+            background: #ffffff !important;
+        }
+        .cmp-auth-alert {
+            display: none;
+            padding: 12px 14px !important;
+            border-radius: 10px !important;
+            font-size: 13.5px !important;
+            line-height: 1.45 !important;
+            margin: 0 0 18px 0 !important;
+            font-weight: 600 !important;
+        }
+        .cmp-auth-alert.error {
+            display: block !important;
+            background: #fef2f2 !important;
+            color: #b91c1c !important;
+            border: 1px solid #fecaca !important;
+            border-left: 4px solid #ef4444 !important;
+        }
+        .cmp-auth-alert.success {
+            display: block !important;
+            background: #f0fdf4 !important;
+            color: #166534 !important;
+            border: 1px solid #bbf7d0 !important;
+            border-left: 4px solid #379237 !important;
+        }
+
         @keyframes cmpShake {
             0%, 100% { transform: translateX(0); }
             20%, 60% { transform: translateX(-6px); }
             40%, 80% { transform: translateX(6px); }
         }
-        .cmp-shake { animation: cmpShake 0.35s ease-in-out; }
+        .cmp-shake {
+            animation: cmpShake 0.35s ease-in-out;
+        }
 
-        .cmp-form-group { margin-bottom: 18px; }
-        .cmp-form-group label { display: block; font-size: 0.85em; font-weight: 700; color: #334155; margin-bottom: 6px; }
-        .cmp-input-wrap { position: relative; display: flex; align-items: center; }
-        .cmp-input-wrap input { width: 100%; padding: 11px 14px; font-size: 0.95em; color: #1e293b; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; transition: all 0.2s ease; box-sizing: border-box; outline: none; }
-        .cmp-input-wrap input:focus { background: #ffffff; border-color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.18); }
-        .cmp-pwd-toggle { position: absolute; right: 10px; background: none; border: none; color: #64748b; cursor: pointer; padding: 6px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
-        .cmp-pwd-toggle:hover { color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; background: #f1f5f9; }
+        .cmp-form-group {
+            margin: 0 0 18px 0 !important;
+        }
+        .cmp-form-group label {
+            display: block !important;
+            font-size: 13.5px !important;
+            line-height: 1.3 !important;
+            font-weight: 700 !important;
+            color: #1e293b !important;
+            margin: 0 0 7px 0 !important;
+            text-transform: none !important;
+        }
+        .cmp-input-wrap {
+            position: relative !important;
+            display: flex !important;
+            align-items: center !important;
+            width: 100% !important;
+        }
+        .cmp-input-icon {
+            position: absolute !important;
+            left: 13px !important;
+            color: #64748b !important;
+            pointer-events: none !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+        .cmp-input-wrap input[type="text"],
+        .cmp-input-wrap input[type="password"],
+        .cmp-input-wrap input[type="email"] {
+            width: 100% !important;
+            height: 46px !important;
+            padding: 10px 42px 10px 40px !important;
+            font-size: 15px !important;
+            line-height: 1.4 !important;
+            color: #0f172a !important;
+            background: #f8fafc !important;
+            border: 1.5px solid #cbd5e1 !important;
+            border-radius: 10px !important;
+            transition: all 0.2s ease !important;
+            outline: none !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+        }
+        .cmp-input-wrap input:focus {
+            background: #ffffff !important;
+            border-color: <?php echo esc_attr( $cfg['accent_color'] ); ?> !important;
+            box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.16) !important;
+        }
+        .cmp-pwd-toggle {
+            position: absolute !important;
+            right: 8px !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #64748b !important;
+            cursor: pointer !important;
+            padding: 6px !important;
+            margin: 0 !important;
+            min-height: 0 !important;
+            min-width: 0 !important;
+            width: 32px !important;
+            height: 32px !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 6px !important;
+        }
+        .cmp-pwd-toggle:hover,
+        .cmp-pwd-toggle:focus {
+            color: <?php echo esc_attr( $cfg['accent_color'] ); ?> !important;
+            background: #f1f5f9 !important;
+            outline: none !important;
+        }
 
-        .cmp-auth-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; font-size: 0.86em; }
-        .cmp-remember-label { display: inline-flex; align-items: center; gap: 7px; color: #475569; cursor: pointer; font-weight: 500; margin: 0; }
-        .cmp-remember-label input { width: 16px; height: 16px; accent-color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; cursor: pointer; margin: 0; }
-        .cmp-link-btn { background: none; border: none; color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; font-weight: 700; cursor: pointer; padding: 0; font-size: 1em; text-decoration: none; }
-        .cmp-link-btn:hover { text-decoration: underline; }
+        .cmp-auth-meta {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            gap: 10px !important;
+            flex-wrap: nowrap !important;
+            margin: 4px 0 22px 0 !important;
+            width: 100% !important;
+        }
+        .cmp-remember-label {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            color: #475569 !important;
+            cursor: pointer !important;
+            font-size: 13.5px !important;
+            line-height: 1.2 !important;
+            font-weight: 500 !important;
+            margin: 0 !important;
+            white-space: nowrap !important;
+        }
+        .cmp-remember-label input[type="checkbox"] {
+            width: 17px !important;
+            height: 17px !important;
+            min-width: 17px !important;
+            accent-color: <?php echo esc_attr( $cfg['accent_color'] ); ?> !important;
+            cursor: pointer !important;
+            margin: 0 !important;
+        }
+        .cmp-link-action {
+            background: transparent !important;
+            border: none !important;
+            color: <?php echo esc_attr( $cfg['accent_color'] ); ?> !important;
+            font-weight: 700 !important;
+            font-size: 13.5px !important;
+            line-height: 1.2 !important;
+            cursor: pointer !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            text-decoration: none !important;
+            white-space: nowrap !important;
+            display: inline-block !important;
+        }
+        .cmp-link-action:hover {
+            color: #287028 !important;
+            text-decoration: underline !important;
+        }
 
-        .cmp-submit-btn { width: 100%; background: <?php echo esc_attr( $cfg['header_bg'] ); ?>; color: #ffffff; border: none; padding: 12px 18px; font-size: 0.96em; font-weight: 700; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; box-sizing: border-box; }
-        .cmp-submit-btn:hover { filter: brightness(0.93); transform: translateY(-1px); color: #ffffff; }
-        .cmp-submit-btn:disabled { opacity: 0.65; cursor: not-allowed; transform: none; }
+        button.cmp-submit-btn,
+        a.cmp-submit-btn {
+            width: 100% !important;
+            min-height: 48px !important;
+            background: <?php echo esc_attr( $cfg['header_bg'] ); ?> !important;
+            background-image: linear-gradient(135deg, <?php echo esc_attr( $cfg['header_bg'] ); ?> 0%, #2c7a2c 100%) !important;
+            color: #ffffff !important;
+            border: none !important;
+            padding: 12px 20px !important;
+            font-size: 15.5px !important;
+            line-height: 1.3 !important;
+            font-weight: 700 !important;
+            text-transform: none !important;
+            border-radius: 10px !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 8px !important;
+            text-decoration: none !important;
+            box-shadow: 0 4px 12px rgba(55, 146, 55, 0.25) !important;
+            margin: 0 !important;
+            white-space: nowrap !important;
+        }
+        button.cmp-submit-btn:hover,
+        a.cmp-submit-btn:hover {
+            background: #287028 !important;
+            background-image: linear-gradient(135deg, #2e802e 0%, #215e21 100%) !important;
+            color: #ffffff !important;
+            transform: translateY(-1px) !important;
+            box-shadow: 0 6px 16px rgba(55, 146, 55, 0.32) !important;
+        }
+        button.cmp-submit-btn:disabled {
+            opacity: 0.65 !important;
+            cursor: not-allowed !important;
+            transform: none !important;
+        }
 
-        .cmp-spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #ffffff; border-radius: 50%; animation: cmpSpin 0.7s linear infinite; display: none; }
+        .cmp-spinner {
+            width: 17px !important;
+            height: 17px !important;
+            border: 2.5px solid rgba(255,255,255,0.3) !important;
+            border-top-color: #ffffff !important;
+            border-radius: 50% !important;
+            animation: cmpSpin 0.7s linear infinite !important;
+            display: none;
+            flex-shrink: 0 !important;
+        }
         @keyframes cmpSpin { to { transform: rotate(360deg); } }
 
-        .cmp-user-pill { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; font-size: 0.88em; color: #334155; }
+        .cmp-user-pill {
+            background: #f8fafc !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 10px !important;
+            padding: 14px !important;
+            margin-bottom: 18px !important;
+            font-size: 14px !important;
+            line-height: 1.5 !important;
+            color: #334155 !important;
+        }
+
+        /* Mobile Viewport Optimization */
+        @media (max-width: 540px) {
+            .cmp-auth-outer {
+                margin: 20px auto 40px auto !important;
+                padding: 0 12px !important;
+            }
+            .cmp-auth-header {
+                padding: 22px 18px 18px 18px !important;
+            }
+            .cmp-auth-badge {
+                width: 46px !important;
+                height: 46px !important;
+                margin-bottom: 10px !important;
+            }
+            .cmp-auth-header h2 {
+                font-size: 21px !important;
+            }
+            .cmp-auth-header p {
+                font-size: 13px !important;
+            }
+            .cmp-auth-body {
+                padding: 22px 18px 24px 18px !important;
+            }
+            .cmp-input-wrap input[type="text"],
+            .cmp-input-wrap input[type="password"],
+            .cmp-input-wrap input[type="email"] {
+                font-size: 16px !important; /* Prevents iOS auto-zoom */
+                height: 48px !important;
+            }
+            .cmp-auth-meta {
+                gap: 8px !important;
+                margin-bottom: 20px !important;
+            }
+            .cmp-remember-label,
+            .cmp-link-action {
+                font-size: 13px !important;
+            }
+            button.cmp-submit-btn,
+            a.cmp-submit-btn {
+                font-size: 15px !important;
+                min-height: 48px !important;
+                padding: 12px 16px !important;
+            }
+        }
     </style>
 
     <div class="cmp-auth-outer">
@@ -615,7 +902,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
                     </div>
                     <div class="cmp-user-pill">
                         Currently signed in as:<br>
-                        <strong style="color:#1e293b;"><?php echo esc_html( $curr_user->display_name ); ?></strong>
+                        <strong style="color:#0f172a;"><?php echo esc_html( $curr_user->display_name ); ?></strong>
                         <span style="color:#64748b;">(<?php echo esc_html( $curr_user->user_email ); ?>)</span>
                     </div>
                     <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-submit-btn">
@@ -633,6 +920,12 @@ function cmp_render_portal_login_ui( $args = array() ) {
                             <div class="cmp-form-group">
                                 <label for="cmp-user-<?php echo $uid; ?>">Email Address or Username</label>
                                 <div class="cmp-input-wrap">
+                                    <span class="cmp-input-icon">
+                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                            <circle cx="12" cy="7" r="4"></circle>
+                                        </svg>
+                                    </span>
                                     <input type="text" id="cmp-user-<?php echo $uid; ?>" name="log" placeholder="name@company.com" autocomplete="username" required>
                                 </div>
                             </div>
@@ -640,7 +933,13 @@ function cmp_render_portal_login_ui( $args = array() ) {
                             <div class="cmp-form-group">
                                 <label for="cmp-pass-<?php echo $uid; ?>">Password</label>
                                 <div class="cmp-input-wrap">
-                                    <input type="password" id="cmp-pass-<?php echo $uid; ?>" name="pwd" placeholder="••••••••" autocomplete="current-password" style="padding-right: 42px;" required>
+                                    <span class="cmp-input-icon">
+                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                                        </svg>
+                                    </span>
+                                    <input type="password" id="cmp-pass-<?php echo $uid; ?>" name="pwd" placeholder="Enter your password" autocomplete="current-password" required>
                                     <button type="button" class="cmp-pwd-toggle" id="cmp-pwd-toggle-<?php echo $uid; ?>" aria-label="Show password" title="Show / Hide Password">
                                         <svg id="cmp-eye-open-<?php echo $uid; ?>" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -659,12 +958,16 @@ function cmp_render_portal_login_ui( $args = array() ) {
                                     <input type="checkbox" id="cmp-remember-<?php echo $uid; ?>" name="rememberme" value="forever">
                                     <span>Remember me</span>
                                 </label>
-                                <button type="button" class="cmp-link-btn" id="cmp-show-forgot-<?php echo $uid; ?>">Forgot Password?</button>
+                                <a href="#forgot-password" class="cmp-link-action" id="cmp-show-forgot-<?php echo $uid; ?>">Forgot Password?</a>
                             </div>
 
                             <button type="submit" class="cmp-submit-btn" id="cmp-login-btn-<?php echo $uid; ?>">
                                 <span class="cmp-spinner" id="cmp-login-spin-<?php echo $uid; ?>"></span>
-                                <span id="cmp-login-btn-text-<?php echo $uid; ?>">Sign In to <?php echo esc_html( $cfg['title'] ); ?></span>
+                                <span id="cmp-login-btn-text-<?php echo $uid; ?>">Sign In</span>
+                                <svg id="cmp-login-arrow-<?php echo $uid; ?>" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                    <polyline points="12 5 19 12 12 19"></polyline>
+                                </svg>
                             </button>
                         </form>
                     </div>
@@ -673,26 +976,32 @@ function cmp_render_portal_login_ui( $args = array() ) {
                     <div id="cmp-forgot-view-<?php echo $uid; ?>" style="display:none;">
                         <div id="cmp-forgot-alert-<?php echo $uid; ?>" class="cmp-auth-alert"></div>
 
-                        <p style="margin: 0 0 16px 0; font-size: 0.9em; color: #475569; line-height: 1.5;">
-                            Enter the email address or username associated with your account and we'll email you a password reset link.
+                        <p style="margin: 0 0 16px 0 !important; font-size: 13.5px !important; color: #475569 !important; line-height: 1.5 !important;">
+                            Enter your account email or username and we will send you a password reset link.
                         </p>
 
                         <form id="cmp-forgot-form-<?php echo $uid; ?>" novalidate>
                             <div class="cmp-form-group">
                                 <label for="cmp-reset-user-<?php echo $uid; ?>">Email Address or Username</label>
                                 <div class="cmp-input-wrap">
+                                    <span class="cmp-input-icon">
+                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                                            <polyline points="22,6 12,13 2,6"></polyline>
+                                        </svg>
+                                    </span>
                                     <input type="text" id="cmp-reset-user-<?php echo $uid; ?>" name="user_login" placeholder="name@company.com" autocomplete="username" required>
                                 </div>
                             </div>
 
                             <button type="submit" class="cmp-submit-btn" id="cmp-forgot-btn-<?php echo $uid; ?>">
                                 <span class="cmp-spinner" id="cmp-forgot-spin-<?php echo $uid; ?>"></span>
-                                <span id="cmp-forgot-btn-text-<?php echo $uid; ?>">Send Password Reset Link</span>
+                                <span id="cmp-forgot-btn-text-<?php echo $uid; ?>">Send Reset Link</span>
                             </button>
                         </form>
 
-                        <div style="text-align: center; margin-top: 18px;">
-                            <button type="button" class="cmp-link-btn" id="cmp-back-login-<?php echo $uid; ?>">&larr; Back to Sign In</button>
+                        <div style="text-align: center !important; margin-top: 18px !important;">
+                            <a href="#sign-in" class="cmp-link-action" id="cmp-back-login-<?php echo $uid; ?>">&larr; Back to Sign In</a>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -720,14 +1029,14 @@ function cmp_render_portal_login_ui( $args = array() ) {
             if (!el) return;
             el.textContent = message;
             el.className = 'cmp-auth-alert ' + type;
-            el.style.display = 'block';
+            el.style.setProperty('display', 'block', 'important');
         }
 
         function hideAlert(el) {
             if (!el) return;
             el.textContent = '';
             el.className = 'cmp-auth-alert';
-            el.style.display = 'none';
+            el.style.setProperty('display', 'none', 'important');
         }
 
         function triggerCardShake() {
@@ -744,7 +1053,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
         const eyeClosed  = document.getElementById('cmp-eye-closed-' + uid);
 
         if (pwdToggle && passInput) {
-            pwdToggle.addEventListener('click', function() {
+            pwdToggle.addEventListener('click', function(e) {
+                e.preventDefault();
                 const isPwd = passInput.type === 'password';
                 passInput.type = isPwd ? 'text' : 'password';
                 eyeOpen.style.display = isPwd ? 'none' : 'block';
@@ -760,7 +1070,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
         const resetUserInp  = document.getElementById('cmp-reset-user-' + uid);
 
         if (showForgotBtn) {
-            showForgotBtn.addEventListener('click', function() {
+            showForgotBtn.addEventListener('click', function(e) {
+                e.preventDefault();
                 hideAlert(forgotAlert);
                 loginView.style.display = 'none';
                 forgotView.style.display = 'block';
@@ -772,7 +1083,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
         }
 
         if (backLoginBtn) {
-            backLoginBtn.addEventListener('click', function() {
+            backLoginBtn.addEventListener('click', function(e) {
+                e.preventDefault();
                 hideAlert(loginAlert);
                 forgotView.style.display = 'none';
                 loginView.style.display = 'block';
@@ -785,6 +1097,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
         const loginBtn     = document.getElementById('cmp-login-btn-' + uid);
         const loginSpin    = document.getElementById('cmp-login-spin-' + uid);
         const loginBtnText = document.getElementById('cmp-login-btn-text-' + uid);
+        const loginArrow   = document.getElementById('cmp-login-arrow-' + uid);
 
         if (loginForm) {
             loginForm.addEventListener('submit', function(e) {
@@ -803,7 +1116,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
 
                 loginBtn.disabled = true;
                 loginSpin.style.display = 'inline-block';
-                loginBtnText.textContent = 'Verifying...';
+                if (loginArrow) loginArrow.style.display = 'none';
+                loginBtnText.textContent = 'Signing in...';
 
                 const formData = new URLSearchParams();
                 formData.append('action', 'cmp_portal_login');
@@ -819,7 +1133,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
                 .then(response => {
                     if (response && response.success) {
                         showAlert(loginAlert, 'success', response.data.message);
-                        loginBtnText.textContent = 'Redirecting...';
+                        loginBtnText.textContent = 'Loading...';
                         window.location.href = reloadUrl || window.location.href;
                     } else {
                         const errMsg = (response && response.data && response.data.message)
@@ -829,7 +1143,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
                         triggerCardShake();
                         loginBtn.disabled = false;
                         loginSpin.style.display = 'none';
-                        loginBtnText.textContent = 'Sign In to ' + pTitle;
+                        if (loginArrow) loginArrow.style.display = 'inline-block';
+                        loginBtnText.textContent = 'Sign In';
                         passInput.value = '';
                         passInput.focus();
                     }
@@ -839,7 +1154,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
                     triggerCardShake();
                     loginBtn.disabled = false;
                     loginSpin.style.display = 'none';
-                    loginBtnText.textContent = 'Sign In to ' + pTitle;
+                    if (loginArrow) loginArrow.style.display = 'inline-block';
+                    loginBtnText.textContent = 'Sign In';
                 });
             });
         }
@@ -864,7 +1180,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
 
                 forgotBtn.disabled = true;
                 forgotSpin.style.display = 'inline-block';
-                forgotBtnText.textContent = 'Sending Reset Link...';
+                forgotBtnText.textContent = 'Sending...';
 
                 const formData = new URLSearchParams();
                 formData.append('action', 'cmp_portal_forgot_password');
@@ -892,7 +1208,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
                 .finally(() => {
                     forgotBtn.disabled = false;
                     forgotSpin.style.display = 'none';
-                    forgotBtnText.textContent = 'Send Password Reset Link';
+                    forgotBtnText.textContent = 'Send Reset Link';
                 });
             });
         }
