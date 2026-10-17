@@ -410,7 +410,14 @@ function cmp_run_kit_alert_2() {
 add_action( 'wp_ajax_nopriv_cmp_portal_login', 'cmp_handle_portal_ajax_login' );
 add_action( 'wp_ajax_cmp_portal_login', 'cmp_handle_portal_ajax_login' );
 function cmp_handle_portal_ajax_login() {
-    check_ajax_referer( 'cmp_portal_auth_nonce', 'nonce' );
+    if ( ! check_ajax_referer( 'cmp_portal_auth_nonce', 'nonce', false ) ) {
+        wp_send_json_error( array(
+            'message' => 'Session expired. Please refresh the page and try again.'
+        ) );
+    }
+
+    // Ensure fallback redirect hook never fires during AJAX authentication
+    remove_action( 'wp_login_failed', 'cmp_intercept_failed_portal_login' );
 
     $user_login    = isset( $_POST['log'] ) ? sanitize_text_field( wp_unslash( $_POST['log'] ) ) : '';
     $user_password = isset( $_POST['pwd'] ) ? wp_unslash( $_POST['pwd'] ) : '';
@@ -424,13 +431,13 @@ function cmp_handle_portal_ajax_login() {
         ) );
     }
 
-    // Authenticate credentials first without setting cookies yet
+    // Authenticate credentials without setting cookies yet
     $user = wp_authenticate( $user_login, $user_password );
 
     if ( is_wp_error( $user ) ) {
         $error_code = $user->get_error_code();
         if ( in_array( $error_code, array( 'invalid_username', 'invalid_email' ), true ) ) {
-            $friendly_msg = 'No account was found with that email address or username.';
+            $friendly_msg = 'Invalid username or email address. No matching account was found.';
         } elseif ( $error_code === 'incorrect_password' ) {
             $friendly_msg = 'Incorrect password entered. Please try again or click "Forgot Password?" below.';
         } else {
@@ -453,7 +460,7 @@ function cmp_handle_portal_ajax_login() {
 
         if ( ! $has_access ) {
             wp_send_json_error( array(
-                'message' => "Access Denied: Your account ({$user->user_email}) does not have clearance for the {$portal_title}."
+                'message' => "Access Denied: Your account ({$user->user_email}) does not have clearance to access the {$portal_title}."
             ) );
         }
     }
@@ -472,7 +479,11 @@ function cmp_handle_portal_ajax_login() {
 add_action( 'wp_ajax_nopriv_cmp_portal_forgot_password', 'cmp_handle_portal_ajax_forgot_password' );
 add_action( 'wp_ajax_cmp_portal_forgot_password', 'cmp_handle_portal_ajax_forgot_password' );
 function cmp_handle_portal_ajax_forgot_password() {
-    check_ajax_referer( 'cmp_portal_auth_nonce', 'nonce' );
+    if ( ! check_ajax_referer( 'cmp_portal_auth_nonce', 'nonce', false ) ) {
+        wp_send_json_error( array(
+            'message' => 'Session expired. Please refresh the page and try again.'
+        ) );
+    }
 
     $user_login = isset( $_POST['user_login'] ) ? sanitize_text_field( wp_unslash( $_POST['user_login'] ) ) : '';
 
@@ -502,9 +513,12 @@ function cmp_handle_portal_ajax_forgot_password() {
     }
 }
 
-// 6.3 Fallback Safety Net: Prevent wp-login.php screen if a standard form ever fails
+// 6.3 Fallback Safety Net: Prevent wp-login.php screen ONLY on non-AJAX form submissions
 add_action( 'wp_login_failed', 'cmp_intercept_failed_portal_login' );
 function cmp_intercept_failed_portal_login( $username ) {
+    if ( wp_doing_ajax() || ( defined( 'DOING_AJAX' ) && DOING_AJAX ) ) {
+        return;
+    }
     $referrer = wp_get_referer();
     if ( ! empty( $referrer ) && ! strstr( $referrer, 'wp-login' ) && ! strstr( $referrer, 'wp-admin' ) ) {
         wp_safe_redirect( add_query_arg( 'cmp_login', 'failed', $referrer ) );
@@ -520,8 +534,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
         'subtitle'       => 'Sign in to access your dashboard',
         'required_caps'  => array( 'manage_options' ),
         'denied_message' => 'Your account does not have clearance to view this portal.',
-        'accent_color'   => '#3b82f6',
-        'header_bg'      => '#0f172a',
+        'accent_color'   => '#379237',
+        'header_bg'      => '#379237',
     );
     $cfg = wp_parse_args( $args, $defaults );
 
@@ -536,16 +550,16 @@ function cmp_render_portal_login_ui( $args = array() ) {
     ?>
     <style>
         .cmp-auth-outer { max-width: 440px; margin: 55px auto; padding: 0 15px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif; }
-        .cmp-auth-card { background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }
-        .cmp-auth-header { background: <?php echo esc_attr( $cfg['header_bg'] ); ?>; color: #ffffff; padding: 28px 30px 24px; text-align: center; border-bottom: 4px solid <?php echo esc_attr( $cfg['accent_color'] ); ?>; }
-        .cmp-auth-badge { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 12px; background: rgba(255,255,255,0.12); margin-bottom: 12px; }
+        .cmp-auth-card { background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0; box-shadow: 0 12px 30px rgba(55, 146, 55, 0.10); overflow: hidden; }
+        .cmp-auth-header { background: <?php echo esc_attr( $cfg['header_bg'] ); ?>; color: #ffffff; padding: 28px 30px 24px; text-align: center; border-bottom: 4px solid rgba(0, 0, 0, 0.12); }
+        .cmp-auth-badge { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 12px; background: rgba(255,255,255,0.18); margin-bottom: 12px; }
         .cmp-auth-header h2 { margin: 0; font-size: 1.55em; font-weight: 800; color: #ffffff; letter-spacing: -0.02em; }
-        .cmp-auth-header p { margin: 6px 0 0 0; font-size: 0.9em; color: #94a3b8; }
+        .cmp-auth-header p { margin: 6px 0 0 0; font-size: 0.9em; color: rgba(255, 255, 255, 0.88); }
         .cmp-auth-body { padding: 28px 30px 30px; }
         
         .cmp-auth-alert { display: none; padding: 12px 14px; border-radius: 8px; font-size: 0.88em; line-height: 1.45; margin-bottom: 18px; font-weight: 600; }
-        .cmp-auth-alert.error { display: block; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-left: 4px solid #ef4444; }
-        .cmp-auth-alert.success { display: block; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; border-left: 4px solid #22c55e; }
+        .cmp-auth-alert.error { display: block !important; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-left: 4px solid #ef4444; }
+        .cmp-auth-alert.success { display: block !important; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; border-left: 4px solid #379237; }
         
         @keyframes cmpShake {
             0%, 100% { transform: translateX(0); }
@@ -557,10 +571,10 @@ function cmp_render_portal_login_ui( $args = array() ) {
         .cmp-form-group { margin-bottom: 18px; }
         .cmp-form-group label { display: block; font-size: 0.85em; font-weight: 700; color: #334155; margin-bottom: 6px; }
         .cmp-input-wrap { position: relative; display: flex; align-items: center; }
-        .cmp-input-wrap input { width: 100%; padding: 11px 14px; font-size: 0.95em; color: #0f172a; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; transition: all 0.2s ease; box-sizing: border-box; outline: none; }
-        .cmp-input-wrap input:focus { background: #ffffff; border-color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
+        .cmp-input-wrap input { width: 100%; padding: 11px 14px; font-size: 0.95em; color: #1e293b; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; transition: all 0.2s ease; box-sizing: border-box; outline: none; }
+        .cmp-input-wrap input:focus { background: #ffffff; border-color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.18); }
         .cmp-pwd-toggle { position: absolute; right: 10px; background: none; border: none; color: #64748b; cursor: pointer; padding: 6px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }
-        .cmp-pwd-toggle:hover { color: #0f172a; background: #f1f5f9; }
+        .cmp-pwd-toggle:hover { color: <?php echo esc_attr( $cfg['accent_color'] ); ?>; background: #f1f5f9; }
 
         .cmp-auth-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; font-size: 0.86em; }
         .cmp-remember-label { display: inline-flex; align-items: center; gap: 7px; color: #475569; cursor: pointer; font-weight: 500; margin: 0; }
@@ -569,7 +583,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
         .cmp-link-btn:hover { text-decoration: underline; }
 
         .cmp-submit-btn { width: 100%; background: <?php echo esc_attr( $cfg['header_bg'] ); ?>; color: #ffffff; border: none; padding: 12px 18px; font-size: 0.96em; font-weight: 700; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; box-sizing: border-box; }
-        .cmp-submit-btn:hover { opacity: 0.93; transform: translateY(-1px); color: #ffffff; }
+        .cmp-submit-btn:hover { filter: brightness(0.93); transform: translateY(-1px); color: #ffffff; }
         .cmp-submit-btn:disabled { opacity: 0.65; cursor: not-allowed; transform: none; }
 
         .cmp-spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #ffffff; border-radius: 50%; animation: cmpSpin 0.7s linear infinite; display: none; }
@@ -601,7 +615,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
                     </div>
                     <div class="cmp-user-pill">
                         Currently signed in as:<br>
-                        <strong style="color:#0f172a;"><?php echo esc_html( $curr_user->display_name ); ?></strong>
+                        <strong style="color:#1e293b;"><?php echo esc_html( $curr_user->display_name ); ?></strong>
                         <span style="color:#64748b;">(<?php echo esc_html( $curr_user->user_email ); ?>)</span>
                     </div>
                     <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-submit-btn">
@@ -699,6 +713,29 @@ function cmp_render_portal_login_ui( $args = array() ) {
         const card       = document.getElementById('cmp-auth-card-' + uid);
         const loginView  = document.getElementById('cmp-login-view-' + uid);
         const forgotView = document.getElementById('cmp-forgot-view-' + uid);
+        const loginAlert = document.getElementById('cmp-login-alert-' + uid);
+        const forgotAlert= document.getElementById('cmp-forgot-alert-' + uid);
+
+        function showAlert(el, type, message) {
+            if (!el) return;
+            el.textContent = message;
+            el.className = 'cmp-auth-alert ' + type;
+            el.style.display = 'block';
+        }
+
+        function hideAlert(el) {
+            if (!el) return;
+            el.textContent = '';
+            el.className = 'cmp-auth-alert';
+            el.style.display = 'none';
+        }
+
+        function triggerCardShake() {
+            if (!card) return;
+            card.classList.remove('cmp-shake');
+            void card.offsetWidth;
+            card.classList.add('cmp-shake');
+        }
 
         // Password Visibility Toggle
         const passInput  = document.getElementById('cmp-pass-' + uid);
@@ -724,6 +761,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
 
         if (showForgotBtn) {
             showForgotBtn.addEventListener('click', function() {
+                hideAlert(forgotAlert);
                 loginView.style.display = 'none';
                 forgotView.style.display = 'block';
                 if (loginUserInp && loginUserInp.value.trim() !== '') {
@@ -735,21 +773,15 @@ function cmp_render_portal_login_ui( $args = array() ) {
 
         if (backLoginBtn) {
             backLoginBtn.addEventListener('click', function() {
+                hideAlert(loginAlert);
                 forgotView.style.display = 'none';
                 loginView.style.display = 'block';
                 loginUserInp.focus();
             });
         }
 
-        function triggerCardShake() {
-            card.classList.remove('cmp-shake');
-            void card.offsetWidth;
-            card.classList.add('cmp-shake');
-        }
-
         // AJAX Sign In Submission
         const loginForm    = document.getElementById('cmp-login-form-' + uid);
-        const loginAlert   = document.getElementById('cmp-login-alert-' + uid);
         const loginBtn     = document.getElementById('cmp-login-btn-' + uid);
         const loginSpin    = document.getElementById('cmp-login-spin-' + uid);
         const loginBtnText = document.getElementById('cmp-login-btn-text-' + uid);
@@ -757,16 +789,14 @@ function cmp_render_portal_login_ui( $args = array() ) {
         if (loginForm) {
             loginForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                loginAlert.className = 'cmp-auth-alert';
-                loginAlert.style.display = 'none';
+                hideAlert(loginAlert);
 
                 const logVal = loginUserInp.value.trim();
                 const pwdVal = passInput.value;
                 const remVal = document.getElementById('cmp-remember-' + uid).checked ? '1' : '';
 
                 if (!logVal || !pwdVal) {
-                    loginAlert.textContent = 'Please enter both your email/username and password.';
-                    loginAlert.className = 'cmp-auth-alert error';
+                    showAlert(loginAlert, 'error', 'Please enter both your email/username and password.');
                     triggerCardShake();
                     return;
                 }
@@ -787,14 +817,15 @@ function cmp_render_portal_login_ui( $args = array() ) {
                 fetch(ajaxUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
                 .then(res => res.json())
                 .then(response => {
-                    if (response.success) {
-                        loginAlert.textContent = response.data.message;
-                        loginAlert.className = 'cmp-auth-alert success';
+                    if (response && response.success) {
+                        showAlert(loginAlert, 'success', response.data.message);
                         loginBtnText.textContent = 'Redirecting...';
                         window.location.href = reloadUrl || window.location.href;
                     } else {
-                        loginAlert.textContent = (response.data && response.data.message) ? response.data.message : 'Login failed. Please check your credentials.';
-                        loginAlert.className = 'cmp-auth-alert error';
+                        const errMsg = (response && response.data && response.data.message)
+                            ? response.data.message
+                            : 'Incorrect username/email or password. Please try again.';
+                        showAlert(loginAlert, 'error', errMsg);
                         triggerCardShake();
                         loginBtn.disabled = false;
                         loginSpin.style.display = 'none';
@@ -804,8 +835,8 @@ function cmp_render_portal_login_ui( $args = array() ) {
                     }
                 })
                 .catch(() => {
-                    loginAlert.textContent = 'Network error occurred. Please try again.';
-                    loginAlert.className = 'cmp-auth-alert error';
+                    showAlert(loginAlert, 'error', 'Unable to verify credentials right now. Please try again.');
+                    triggerCardShake();
                     loginBtn.disabled = false;
                     loginSpin.style.display = 'none';
                     loginBtnText.textContent = 'Sign In to ' + pTitle;
@@ -815,7 +846,6 @@ function cmp_render_portal_login_ui( $args = array() ) {
 
         // AJAX Forgot Password Submission
         const forgotForm    = document.getElementById('cmp-forgot-form-' + uid);
-        const forgotAlert   = document.getElementById('cmp-forgot-alert-' + uid);
         const forgotBtn     = document.getElementById('cmp-forgot-btn-' + uid);
         const forgotSpin    = document.getElementById('cmp-forgot-spin-' + uid);
         const forgotBtnText = document.getElementById('cmp-forgot-btn-text-' + uid);
@@ -823,13 +853,11 @@ function cmp_render_portal_login_ui( $args = array() ) {
         if (forgotForm) {
             forgotForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                forgotAlert.className = 'cmp-auth-alert';
-                forgotAlert.style.display = 'none';
+                hideAlert(forgotAlert);
 
                 const userVal = resetUserInp.value.trim();
                 if (!userVal) {
-                    forgotAlert.textContent = 'Please enter your email address or username.';
-                    forgotAlert.className = 'cmp-auth-alert error';
+                    showAlert(forgotAlert, 'error', 'Please enter your email address or username.');
                     triggerCardShake();
                     return;
                 }
@@ -846,19 +874,20 @@ function cmp_render_portal_login_ui( $args = array() ) {
                 fetch(ajaxUrl, { method: 'POST', body: formData, credentials: 'same-origin' })
                 .then(res => res.json())
                 .then(response => {
-                    if (response.success) {
-                        forgotAlert.textContent = response.data.message;
-                        forgotAlert.className = 'cmp-auth-alert success';
+                    if (response && response.success) {
+                        showAlert(forgotAlert, 'success', response.data.message);
                         resetUserInp.value = '';
                     } else {
-                        forgotAlert.textContent = (response.data && response.data.message) ? response.data.message : 'Could not process request.';
-                        forgotAlert.className = 'cmp-auth-alert error';
+                        const errMsg = (response && response.data && response.data.message)
+                            ? response.data.message
+                            : 'Could not process password reset request.';
+                        showAlert(forgotAlert, 'error', errMsg);
                         triggerCardShake();
                     }
                 })
                 .catch(() => {
-                    forgotAlert.textContent = 'Network error occurred. Please try again.';
-                    forgotAlert.className = 'cmp-auth-alert error';
+                    showAlert(forgotAlert, 'error', 'Network error occurred. Please try again.');
+                    triggerCardShake();
                 })
                 .finally(() => {
                     forgotBtn.disabled = false;
