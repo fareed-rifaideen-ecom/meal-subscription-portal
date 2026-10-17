@@ -2,6 +2,10 @@
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
+if ( function_exists( 'opcache_invalidate' ) ) {
+    @opcache_invalidate( __FILE__, true );
+}
+
 // ==========================================
 // FRONT OF HOUSE (FOH) ADMIN PORTAL
 // ==========================================
@@ -378,20 +382,19 @@ function cmp_foh_bulk_cancel_days() {
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
 
-    if ( ! is_user_logged_in() ) {
-        $login_args = array('echo' => false, 'form_id' => 'cmp-foh-login', 'label_username' => __('Email Address or Username'), 'label_password' => __('Password'));
-        $custom_css = '
-        <style>
-            #cmp-foh-login label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; text-align: left; }
-            #cmp-foh-login input[type="text"], #cmp-foh-login input[type="password"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-            #cmp-foh-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; }
-            #cmp-foh-login .login-remember { text-align: left; margin-bottom: 15px; }
-        </style>';
-        return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">FOH Command Center</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with an authorized staff account.</p>' . wp_login_form( $login_args ) . '</div>';
-    }
+    $has_foh_access = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
 
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
-        return '<p style="padding: 20px; background: #fff; border-left: 4px solid #dc3232;">Access Denied. Authorized staff account required.</p>';
+    // Security & Custom Glassmorphism UI/UX Login Screen
+    if ( ! is_user_logged_in() || ! $has_foh_access ) {
+        if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
+            return cmp_render_portal_login_ui( array(
+                'portal_id'      => 'foh',
+                'title'          => 'FOH Command Center',
+                'subtitle'       => 'Front of House & Subscription Management',
+                'required_caps'  => array( 'manage_options', 'foh_manager', 'menu_manager' ),
+                'denied_message' => 'FOH Manager, Menu Manager, or Administrator clearance is required to access this portal.',
+            ) );
+        }
     }
 
     global $wpdb;
@@ -432,6 +435,50 @@ function cmp_render_foh_portal() {
     ob_start();
     ?>
     <style>
+        /* Desktop FOH Glass Header (> 992px) */
+        .foh-header-banner {
+            background: linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%) !important;
+            backdrop-filter: blur(18px) !important;
+            -webkit-backdrop-filter: blur(18px) !important;
+            color: #fff !important;
+            padding: 24px 28px !important;
+            border-radius: 18px !important;
+            border: 1.5px solid #DCECC9 !important;
+            border-bottom: 4px solid #68B946 !important;
+            box-shadow: 0 14px 34px rgba(27, 94, 32, 0.14) !important;
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            flex-wrap: wrap !important;
+            gap: 15px !important;
+            margin-bottom: 25px !important;
+        }
+        .foh-header-banner h2 { margin: 0 !important; color: #ffffff !important; font-weight: 800 !important; }
+        .foh-header-banner p { margin: 5px 0 0 0 !important; color: #EEF7E3 !important; font-weight: 500 !important; }
+
+        /* Tablet FOH Glass Header (601px - 991px) */
+        @media (min-width: 601px) and (max-width: 991px) {
+            .foh-header-banner {
+                background: linear-gradient(125deg, rgba(220, 236, 201, 0.92) 0%, rgba(104, 185, 70, 0.42) 100%) !important;
+                border: 1.5px solid #379237 !important;
+                padding: 22px 24px !important;
+            }
+            .foh-header-banner h2 { color: #231F20 !important; }
+            .foh-header-banner p { color: #1B5E20 !important; }
+        }
+
+        /* Mobile FOH Glass Header (<= 600px) */
+        @media (max-width: 600px) {
+            .foh-header-banner {
+                background: linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%) !important;
+                border: 1.5px solid #68B946 !important;
+                border-radius: 16px !important;
+                padding: 18px !important;
+            }
+            .foh-header-banner h2 { color: #ffffff !important; font-size: 1.45em !important; }
+            .foh-header-banner p { color: #DCECC9 !important; font-size: 0.9em !important; }
+        }
+
         .foh-tile-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -439,11 +486,12 @@ function cmp_render_foh_portal() {
             margin-bottom: 25px;
         }
         .foh-tile {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(12px);
             padding: 18px 22px;
-            border-radius: 8px;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            border-radius: 12px;
+            border: 1px solid #DCECC9;
+            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.05);
             cursor: pointer;
             transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
             position: relative;
@@ -451,20 +499,20 @@ function cmp_render_foh_portal() {
         }
         .foh-tile:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 14px rgba(0,0,0,0.07);
+            box-shadow: 0 8px 18px rgba(27, 94, 32, 0.10);
         }
-        .foh-tile.tile-active   { border-left: 5px solid #10b981; }
+        .foh-tile.tile-active   { border-left: 5px solid #379237; }
         .foh-tile.tile-paused   { border-left: 5px solid #f59e0b; }
         .foh-tile.tile-inactive { border-left: 5px solid #dc2626; }
         
         .foh-tile.active {
-            box-shadow: 0 0 0 2px #0f172a, 0 6px 16px rgba(15, 23, 42, 0.08);
-            border-color: #0f172a;
+            box-shadow: 0 0 0 2px #379237, 0 6px 16px rgba(55, 146, 55, 0.12);
+            border-color: #379237;
             background: #ffffff;
         }
         .foh-tile.tile-active.active {
-            box-shadow: 0 0 0 2px #10b981, 0 6px 16px rgba(16, 185, 129, 0.15);
-            border-color: #10b981;
+            box-shadow: 0 0 0 2px #379237, 0 6px 16px rgba(55, 146, 55, 0.18);
+            border-color: #379237;
         }
         .foh-tile.tile-paused.active {
             box-shadow: 0 0 0 2px #f59e0b, 0 6px 16px rgba(245, 158, 11, 0.15);
@@ -485,37 +533,37 @@ function cmp_render_foh_portal() {
             letter-spacing: 0.5px;
         }
         .foh-tile.active .foh-tile-indicator { display: inline-block; }
-        .foh-tile.tile-active.active .foh-tile-indicator   { background: #dcfce7; color: #166534; }
+        .foh-tile.tile-active.active .foh-tile-indicator   { background: #EEF7E3; color: #1B5E20; }
         .foh-tile.tile-paused.active .foh-tile-indicator   { background: #fef3c7; color: #92400e; }
         .foh-tile.tile-inactive.active .foh-tile-indicator { background: #fee2e2; color: #991b1b; }
 
         .foh-tab-content { display: none; }
         .foh-tab-content.active { display: block; }
         
-        .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.95em; }
-        .sub-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
+        .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e2e8f0; font-size: 0.95em; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05); }
+        .sub-table th { padding: 12px; border-bottom: 2px solid #DCECC9; text-align: left; background: #EEF7E3; color: #1B5E20; }
         .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
         .foh-row { transition: background-color 0.2s ease; }
         .foh-row:hover { background-color: #f8fafc !important; }
         
         .remark-edit-box { transition: all 0.3s ease; overflow: hidden; }
         .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
-        .metric-progress-fill { background-color: #16a34a; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
-        .edit-financials-btn:hover { color: #0284c7 !important; transform: scale(1.1); }
+        .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+        .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
     </style>
 
-    <div style="max-width: 1200px; margin: 0 auto; font-family: inherit;">
+    <div style="max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
         
         <!-- HEADER -->
-        <div style="background: #222; color: #fff; padding: 20px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 25px;">
+        <div class="foh-header-banner">
             <div>
-                <h2 style="margin: 0; color: #fff;">FOH Command Center</h2>
-                <p style="margin: 5px 0 0 0; color: #ccc;">Manage Customer Subscriptions.</p>
+                <h2>FOH Command Center</h2>
+                <p>The Cycle Bistro &mdash; Manage Customer Subscriptions</p>
             </div>
-            <div style="display: flex; gap: 10px;">
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_foh_export_csv')); ?>" style="background: #10b981; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; transition: background 0.2s;">Export CSV</a>
-                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #2271b1; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; font-weight: bold;">View Live Kitchen Report</a>
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_foh_export_csv')); ?>" style="background: #379237; color: white; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; border: 1px solid rgba(220,236,201,0.5); transition: background 0.2s;">Export CSV</a>
+                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #1B5E20; color: white; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; border: 1px solid rgba(220,236,201,0.5);">View Live Kitchen Report</a>
+                <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
 
@@ -523,10 +571,10 @@ function cmp_render_foh_portal() {
         <div class="foh-tile-grid">
             <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
+                    <div style="color:#1B5E20; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#0f172a; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
+                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
             </div>
 
             <div class="foh-tile tile-paused" onclick="switchTab(event, 'paused-tab')">
@@ -534,7 +582,7 @@ function cmp_render_foh_portal() {
                     <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#0f172a; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
+                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
             </div>
 
             <div class="foh-tile tile-inactive" onclick="switchTab(event, 'inactive-tab')">
@@ -542,17 +590,17 @@ function cmp_render_foh_portal() {
                     <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#0f172a; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
+                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
             </div>
         </div>
 
         <!-- SEARCH AND SORT BAR -->
-        <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+        <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #DCECC9; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 250px;">
-                <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
+                <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
             </div>
             <div style="min-width: 200px;">
-                <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1px solid #ccc; border-radius: 4px; font-size: 1.05em; background: #fff; cursor:pointer;">
+                <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
                     <option value="default">Sort By: Default (Newest)</option>
                     <option value="balance_asc">Balance Days (Low to High)</option>
                     <option value="balance_desc">Balance Days (High to Low)</option>
@@ -601,7 +649,7 @@ function cmp_render_foh_portal() {
                             
                             if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
                                 $raw_recipient = $potential_recipient;
-                                $recipient_badge = ' <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; margin-left:8px; display:inline-block; margin-bottom: 5px;">For: <strong>' . esc_html($potential_recipient) . '</strong></span>';
+                                $recipient_badge = ' <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; margin-left:8px; display:inline-block; margin-bottom: 5px;">For: <strong>' . esc_html($potential_recipient) . '</strong></span>';
                                 array_pop($plan_parts);
                                 $core_plan_name = implode(' - ', $plan_parts);
                             } else {
@@ -649,7 +697,7 @@ function cmp_render_foh_portal() {
                             if ($deposit_held === '') { $deposit_held = 'yes'; } 
                             
                             $status_color = '#dc2626'; $status_bg = '#fee2e2'; $status_text = 'Refunded / No Deposit';
-                            if ($deposit_held === 'yes') { $status_color = '#10b981'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held'; }
+                            if ($deposit_held === 'yes') { $status_color = '#379237'; $status_bg = '#dcfce7'; $status_text = 'Bag Deposit Held'; }
                             if ($deposit_held === 'own_bag') { $status_color = '#8b5cf6'; $status_bg = '#ede9fe'; $status_text = "Customer's Own Bag"; }
 
                             // Mutually Exclusive Modes
@@ -663,7 +711,7 @@ function cmp_render_foh_portal() {
                         ?>
                         <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" data-balance="<?php echo esc_attr($sub->balance); ?>" data-filled="<?php echo esc_attr($sub->filled); ?>" data-used="<?php echo esc_attr($sub->usage); ?>" id="sub-row-<?php echo $sub->id; ?>">
                             
-                            <td style="font-size: 1.1em; font-weight: bold; color: #334155;">
+                            <td style="font-size: 1.1em; font-weight: bold; color: #231F20;">
                                 <?php echo $display_order_id; ?>
                             </td>
                             
@@ -672,11 +720,11 @@ function cmp_render_foh_portal() {
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <div>
                                             <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="text-decoration: none;" title="Open Customer Portal in New Tab">
-                                                <strong style="font-size: 1.1em; color: #0073aa; border-bottom: 1px dotted #0073aa; transition: color 0.2s;" id="name-val-<?php echo $sub->id; ?>" onmouseover="this.style.color='#0284c7'" onmouseout="this.style.color='#0073aa'"><?php echo esc_html($full_name ?: 'Customer'); ?></strong>
+                                                <strong style="font-size: 1.1em; color: #379237; border-bottom: 1px dotted #379237; transition: color 0.2s;" id="name-val-<?php echo $sub->id; ?>" onmouseover="this.style.color='#1B5E20'" onmouseout="this.style.color='#379237'"><?php echo esc_html($full_name ?: 'Customer'); ?></strong>
                                             </a>
                                         </div>
                                         <?php if ($can_edit_details): ?>
-                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#0ea5e9; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account & Mode">
+                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account & Mode">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                             </button>
                                         <?php endif; ?>
@@ -686,7 +734,7 @@ function cmp_render_foh_portal() {
                                     </div>
                                     <span style="color: #555;"><?php echo esc_html($sub->user_email); ?></span>
                                     <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 3px;">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#379237" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                                         <?php echo esc_html($phone); ?>
                                     </span>
                                 </div>
@@ -711,16 +759,16 @@ function cmp_render_foh_portal() {
                                         </select>
                                     </div>
 
-                                    <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#46b450; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
+                                    <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
                                 </div>
                                 <?php endif; ?>
 
                             </td>
                             <td>
-                                <strong style="color: #222;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
+                                <strong style="color: #231F20;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
                                 
                                 <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
-                                    <span style="color: #2271b1; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
+                                    <span style="color: #1B5E20; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
                                     
                                     <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
                                         <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#94a3b8; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Pricing">
@@ -735,18 +783,18 @@ function cmp_render_foh_portal() {
                                         <input type="number" step="0.01" id="fin-price-<?php echo $sub->id; ?>" value="<?php echo esc_attr($base_price); ?>" style="width:100%; padding:4px; margin-bottom:5px; font-size:0.9em;">
                                         <label style="font-size:0.8em; font-weight:bold;">Discount (AED)</label>
                                         <input type="number" step="0.01" id="fin-discount-<?php echo $sub->id; ?>" value="<?php echo esc_attr($discount); ?>" style="width:100%; padding:4px; margin-bottom:8px; font-size:0.9em;">
-                                        <button class="save-financials-btn" data-sub-id="<?php echo $sub->id; ?>" style="background:#0284c7; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Financials</button>
+                                        <button class="save-financials-btn" data-sub-id="<?php echo $sub->id; ?>" style="background:#379237; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Financials</button>
                                     </div>
                                 <?php endif; ?>
                                 
                                 <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
-                                        <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#0073aa; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
+                                        <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
                                     </div>
                                     <div id="remark-box-<?php echo $sub->id; ?>" class="remark-edit-box" style="display:none; margin-top:8px;">
                                         <textarea id="remark-text-<?php echo $sub->id; ?>" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:0.9em; min-height:60px; box-sizing:border-box;" placeholder="Add specific delivery or kitchen notes here..."><?php echo esc_textarea($remark_text); ?></textarea>
-                                        <button class="save-remark-btn" data-sub-id="<?php echo $sub->id; ?>" style="margin-top:4px; background:#46b450; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Note</button>
+                                        <button class="save-remark-btn" data-sub-id="<?php echo $sub->id; ?>" style="margin-top:4px; background:#379237; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Note</button>
                                     </div>
                                 </div>
                             </td>
@@ -754,12 +802,12 @@ function cmp_render_foh_portal() {
                                 <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; text-align: left; width: 100%; box-sizing: border-box;">
                                     <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
                                         <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
-                                        <span style="color: #16a34a;">Used: <strong><?php echo $sub->usage; ?></strong></span>
+                                        <span style="color: #379237;">Used: <strong><?php echo $sub->usage; ?></strong></span>
                                     </div>
                                     <div class="metric-progress-bar">
                                         <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
                                     </div>
-                                    <div style="color: #0369a1; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
+                                    <div style="color: #1B5E20; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
                                         Balance: <?php echo $sub->balance; ?> Days
                                     </div>
                                 </div>
@@ -769,7 +817,7 @@ function cmp_render_foh_portal() {
                                 <form class="ajax-expiry-form" style="display: flex; flex-direction: column; gap: 5px; margin-top: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                     <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
-                                    <button type="submit" class="expiry-btn" style="width: 100%; background: #2271b1; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s;">Update</button>
+                                    <button type="submit" class="expiry-btn" style="width: 100%; background: #379237; color: white; border: none; padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s;">Update</button>
                                 </form>
                             </td>
                             <td style="vertical-align: middle;">
@@ -780,7 +828,7 @@ function cmp_render_foh_portal() {
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                             <input type="hidden" name="new_status" value="<?php echo $is_paused ? 'active' : 'paused'; ?>">
-                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#0073aa' : '#dc2626'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;" title="<?php echo $is_paused ? 'Resume Plan' : 'Stop Plan'; ?>">
+                                            <button type="submit" class="status-btn" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: <?php echo $is_paused ? '#379237' : '#dc2626'; ?>; color: white; border: none; padding: 0 6px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; transition: background 0.2s;" title="<?php echo $is_paused ? 'Resume Plan' : 'Stop Plan'; ?>">
                                                 <?php echo $is_paused ? $icon_play : $icon_stop; ?>
                                             </button>
                                         </form>
@@ -790,7 +838,7 @@ function cmp_render_foh_portal() {
                                         </button>
                                         <?php endif; ?>
                                         
-                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #46b450; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box;" title="Edit / View in Customer Portal">
+                                        <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="flex: 1; height: 32px; display: flex; align-items: center; justify-content: center; background: #1B5E20; color: white; text-decoration: none; padding: 0 6px; border-radius: 4px; font-weight: bold; box-sizing: border-box;" title="Edit / View in Customer Portal">
                                             <?php echo $icon_edit; ?>
                                         </a>
                                         
@@ -830,22 +878,22 @@ function cmp_render_foh_portal() {
 
     <!-- MANAGE DAYS AJAX MODAL -->
     <div id="foh-manage-days-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
-        <div style="background:#fff; width:90%; max-width:600px; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh;">
-            <div style="padding:20px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0; color:#0f172a;">Hold Upcoming Days</h3>
-                <button class="close-modal-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#64748b;">&times;</button>
+        <div style="background:#fff; width:90%; max-width:600px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh; overflow:hidden;">
+            <div style="padding:20px; border-bottom:1px solid #DCECC9; background:#EEF7E3; display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0; color:#1B5E20;">Hold Upcoming Days</h3>
+                <button class="close-modal-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#1B5E20;">&times;</button>
             </div>
             <div style="padding:20px; overflow-y:auto; flex:1;" id="foh-modal-body">
                 <p style="text-align:center; color:#64748b;">Loading...</p>
             </div>
-            <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; border-radius:0 0 8px 8px; display:flex; justify-content:space-between; align-items:center;">
+            <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; display:flex; justify-content:space-between; align-items:center;">
                 <div style="display:flex; align-items:center; gap:6px; font-size:0.85em; color:#64748b;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> 
                     = Past Kitchen Cut-off
                 </div>
                 <div style="display:flex; gap:10px;">
-                    <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer;">Close</button>
-                    <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:4px; font-weight:bold; cursor:pointer; transition:0.2s;">Hold Selected Days</button>
+                    <button class="close-modal-btn" style="background:#e2e8f0; color:#334155; border:none; padding:10px 15px; border-radius:6px; font-weight:bold; cursor:pointer;">Close</button>
+                    <button id="foh-confirm-cancel-btn" data-sub-id="" style="display:none; background:#dc2626; color:#fff; border:none; padding:10px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">Hold Selected Days</button>
                 </div>
             </div>
         </div>
@@ -886,7 +934,7 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if(response.success) {
                         btn.innerText = '✓ Saved';
-                        btn.style.background = '#46b450';
+                        btn.style.background = '#1B5E20';
                         setTimeout(() => {
                             btn.innerText = originalText;
                             btn.style.background = originalBg;
@@ -933,7 +981,7 @@ function cmp_render_foh_portal() {
                             statusInput.value = 'paused';
                         } else {
                             btn.innerHTML = playIcon;
-                            btn.style.background = '#0073aa';
+                            btn.style.background = '#379237';
                             btn.title = 'Resume Plan';
                             statusInput.value = 'active';
                         }
@@ -986,7 +1034,7 @@ function cmp_render_foh_portal() {
                     if(response.success) {
                         if (newStatus === 'yes') {
                             pill.innerHTML = 'Bag Deposit Held &#9662;';
-                            pill.style.background = '#dcfce7'; pill.style.color = '#10b981'; pill.style.borderColor = '#10b981';
+                            pill.style.background = '#dcfce7'; pill.style.color = '#379237'; pill.style.borderColor = '#379237';
                         } else if (newStatus === 'own_bag') {
                             pill.innerHTML = "Customer's Own Bag &#9662;";
                             pill.style.background = '#ede9fe'; pill.style.color = '#8b5cf6'; pill.style.borderColor = '#8b5cf6';
@@ -1061,7 +1109,7 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if (response.success) {
                         this.innerText = '✓ Saved';
-                        this.style.background = '#0f766e';
+                        this.style.background = '#1B5E20';
                         
                         let p = parseFloat(response.data.price);
                         let d = parseFloat(response.data.discount);
@@ -1076,7 +1124,7 @@ function cmp_render_foh_portal() {
 
                         setTimeout(() => {
                             this.innerText = 'Save Financials';
-                            this.style.background = '#0284c7';
+                            this.style.background = '#379237';
                             this.disabled = false;
                             document.getElementById('fin-edit-' + subId).style.display = 'none';
                             document.querySelector('.edit-financials-btn[data-target="fin-edit-' + subId + '"]').innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
@@ -1130,7 +1178,7 @@ function cmp_render_foh_portal() {
                 .then(response => {
                     if (response.success) {
                         this.innerText = '✓ Saved';
-                        this.style.background = '#0f766e';
+                        this.style.background = '#1B5E20';
                         
                         let displayTxt = textVal.trim();
                         let newPreview = displayTxt.length > 0 
@@ -1141,7 +1189,7 @@ function cmp_render_foh_portal() {
 
                         setTimeout(() => {
                             this.innerText = 'Save Note';
-                            this.style.background = '#46b450';
+                            this.style.background = '#379237';
                             this.disabled = false;
                             
                             document.getElementById('remark-box-' + subId).style.display = 'none';
@@ -1220,7 +1268,7 @@ function cmp_render_foh_portal() {
                         let badgeVal = document.getElementById('recipient-val-' + subId);
                         
                         if (response.data.recipient) {
-                            badgeVal.innerHTML = ' <span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' + response.data.recipient + '</span>';
+                            badgeVal.innerHTML = ' <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' + response.data.recipient + '</span>';
                             badgeContainer.style.display = 'block';
                         } else {
                             badgeContainer.style.display = 'none';
@@ -1231,18 +1279,18 @@ function cmp_render_foh_portal() {
                         }
                         
                         this.innerText = '✓ Saved';
-                        this.style.background = '#0f766e';
+                        this.style.background = '#1B5E20';
                         
                         setTimeout(() => {
                             document.getElementById('account-edit-' + subId).style.display = 'none';
                             let editBtn = document.querySelector('.toggle-account-edit[data-sub-id="' + subId + '"]');
                             if(editBtn) editBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
                             this.innerText = originalText;
-                            this.style.background = '#46b450';
+                            this.style.background = '#379237';
                             this.disabled = false;
                         }, 1000);
                     } else {
-                        alert('Error: ' + res.data);
+                        alert('Error: ' + response.data);
                         this.innerText = originalText;
                         this.disabled = false;
                     }
@@ -1258,7 +1306,6 @@ function cmp_render_foh_portal() {
         const modalBody = document.getElementById('foh-modal-body');
         const confirmBtn = document.getElementById('foh-confirm-cancel-btn');
 
-        // Dynamic SVG to replace native emoji scaling issues
         const warningSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom; margin-left: 5px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
 
         jQuery('.manage-days-btn').on('click', function(e) {
@@ -1282,7 +1329,7 @@ function cmp_render_foh_portal() {
                     } else {
                         let html = '<div style="margin-bottom:10px;"><label style="font-weight:bold; cursor:pointer;"><input type="checkbox" id="modal-select-all"> Select All Dates</label></div>';
                         html += '<table style="width:100%; border-collapse:collapse; font-size:0.95em;">';
-                        html += '<thead><tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
+                        html += '<thead><tr style="background:#EEF7E3; color:#1B5E20; border-bottom:2px solid #DCECC9;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
                         
                         res.data.forEach(function(day) {
                             let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="cursor:help; display:inline-block;">' + warningSvg + '</span>' : '';
@@ -1297,7 +1344,6 @@ function cmp_render_foh_portal() {
                         modalBody.innerHTML = html;
                         confirmBtn.style.display = 'block';
 
-                        // Checkbox binding
                         jQuery('#modal-select-all').on('change', function() {
                             jQuery('.modal-day-checkbox').prop('checked', jQuery(this).is(':checked'));
                         });
@@ -1525,11 +1571,11 @@ function cmp_render_foh_portal() {
             const btn = document.createElement('button');
             btn.innerText = i;
             btn.style.padding = "6px 14px";
-            btn.style.border = "1px solid #ccc";
-            btn.style.background = (i === currentPage) ? "#0073aa" : "#fff";
-            btn.style.color = (i === currentPage) ? "#fff" : "#333";
+            btn.style.border = "1px solid #cbd5e1";
+            btn.style.background = (i === currentPage) ? "#379237" : "#fff";
+            btn.style.color = (i === currentPage) ? "#fff" : "#231F20";
             btn.style.cursor = "pointer";
-            btn.style.borderRadius = "4px";
+            btn.style.borderRadius = "6px";
             btn.style.margin = "0 2px";
             btn.style.fontWeight = "bold";
             
