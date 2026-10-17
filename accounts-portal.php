@@ -180,8 +180,8 @@ function cmp_render_accounts_portal() {
                 'subtitle'       => 'Finance, Compliance & Meal Plan Auditing',
                 'required_caps'  => array( 'manage_options', 'accounts_team' ),
                 'denied_message' => 'Finance or Accounts Team clearance is required to access this portal.',
-                'accent_color'   => '#3b82f6',
-                'header_bg'      => '#0f172a',
+                'accent_color'   => '#379237',
+                'header_bg'      => '#379237',
             ) );
         }
     }
