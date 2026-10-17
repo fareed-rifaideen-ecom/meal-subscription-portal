@@ -171,14 +171,19 @@ if(!function_exists('cmp_process_timing_data')){
 add_shortcode('meal_accounts_portal', 'cmp_render_accounts_portal');
 function cmp_render_accounts_portal() {
     
-    // Security
-    if ( ! is_user_logged_in() ) {
-        $login_args = array('echo' => false, 'form_id' => 'cmp-acc-login', 'label_username' => __('Email Address'), 'label_password' => __('Password'));
-        return '<div style="max-width:400px; margin:50px auto; padding:30px; background:#fff; border-radius:8px; border:1px solid #ddd; box-shadow: 0 4px 15px rgba(0,0,0,0.05);"><h2 style="text-align:center; margin-top:0; color:#0f172a;">Accounts Portal</h2>' . wp_login_form( $login_args ) . '</div>';
-    }
-
-    if ( !current_user_can('manage_options') && !current_user_can('accounts_team') ) {
-        return '<div style="max-width:600px; margin:50px auto; padding:30px; background:#fff; border-left:4px solid #dc3232; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><p style="font-size:1.1em; color:#dc3232;"><strong>Access Denied:</strong> Finance / Accounts clearance required.</p><a href="'.wp_logout_url(get_permalink()).'" style="display:inline-block; background:#222; color:white; padding:8px 15px; text-decoration:none; border-radius:4px;">Log Out</a></div>';
+    // Security & Custom UI/UX Login Screen
+    if ( ! is_user_logged_in() || ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) ) {
+        if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
+            return cmp_render_portal_login_ui( array(
+                'portal_id'      => 'accounts',
+                'title'          => 'Accounts Portal',
+                'subtitle'       => 'Finance, Compliance & Meal Plan Auditing',
+                'required_caps'  => array( 'manage_options', 'accounts_team' ),
+                'denied_message' => 'Finance or Accounts Team clearance is required to access this portal.',
+                'accent_color'   => '#3b82f6',
+                'header_bg'      => '#0f172a',
+            ) );
+        }
     }
 
     // Smart Routing
