@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.9
+ * Version: 2.9.2
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
@@ -10,6 +10,40 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 define( 'CMP_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+
+// Flush PHP OPcache for plugin files if active on server
+if ( function_exists( 'opcache_invalidate' ) ) {
+    @opcache_invalidate( __FILE__, true );
+    if ( file_exists( CMP_PLUGIN_DIR . 'accounts-portal.php' ) ) {
+        @opcache_invalidate( CMP_PLUGIN_DIR . 'accounts-portal.php', true );
+    }
+}
+
+// ==========================================
+// 0. PREVENT SERVER/BROWSER CACHING ON PORTAL PAGES
+// ==========================================
+add_action( 'template_redirect', 'cmp_disable_portal_page_caching', 1 );
+function cmp_disable_portal_page_caching() {
+    if ( is_singular() ) {
+        global $post;
+        if ( $post && (
+            has_shortcode( $post->post_content, 'meal_accounts_portal' ) ||
+            has_shortcode( $post->post_content, 'meal_kitchen_portal' ) ||
+            has_shortcode( $post->post_content, 'meal_foh_portal' ) ||
+            has_shortcode( $post->post_content, 'meal_super_admin_portal' ) ||
+            has_shortcode( $post->post_content, 'meal_customer_portal' )
+        ) ) {
+            if ( ! defined( 'DONOTCACHEPAGE' ) ) { define( 'DONOTCACHEPAGE', true ); }
+            if ( ! defined( 'DONOTCACHEOBJECT' ) ) { define( 'DONOTCACHEOBJECT', true ); }
+            if ( ! defined( 'DONOTCACHEDB' ) ) { define( 'DONOTCACHEDB', true ); }
+            nocache_headers();
+            header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+            header( 'Pragma: no-cache' );
+            header( 'Expires: Wed, 11 Jan 1984 05:00:00 GMT' );
+            header( 'X-LiteSpeed-Cache-Control: no-cache' );
+        }
+    }
+}
 
 // ==========================================
 // 1. PLUGIN ACTIVATION (DATABASE CREATION)
@@ -174,33 +208,27 @@ foreach ( $files_to_include as $file ) {
 // ==========================================
 // 4. CRON JOBS & SCHEDULING LOGIC
 // ==========================================
-
-// Helper Function: Dynamically schedule a daily event based on EXACT time setting
 function cmp_schedule_exact_daily_cron($hook_name, $setting_key, $default_time) {
     $tz = new DateTimeZone('Asia/Dubai');
     $raw_val = get_option($setting_key, $default_time);
-    
-    // Auto-correct legacy integer settings (e.g. '19') to HTML5 time format ('19:00')
     $target_time = (strpos($raw_val, ':') !== false) ? $raw_val : str_pad($raw_val, 2, '0', STR_PAD_LEFT) . ':00';
     
     $next_scheduled = wp_next_scheduled($hook_name);
     $reschedule = false;
 
-    // If already scheduled, check if the exact minute matches the current WP setting
     if ($next_scheduled) {
         $scheduled_date = new DateTime('@' . $next_scheduled);
         $scheduled_date->setTimezone($tz);
         if ($scheduled_date->format('H:i') !== $target_time) {
             $reschedule = true;
-            wp_clear_scheduled_hook($hook_name); // Destroy the old schedule
+            wp_clear_scheduled_hook($hook_name);
         }
     }
 
-    // Schedule the new exact time
     if (!$next_scheduled || $reschedule) {
         $date = new DateTime("today $target_time", $tz);
         if ($date < new DateTime('now', $tz)) {
-            $date->modify('+1 day'); // Push to tomorrow if the time has passed today
+            $date->modify('+1 day');
         }
         wp_schedule_event( $date->getTimestamp(), 'daily', $hook_name );
     }
@@ -208,15 +236,12 @@ function cmp_schedule_exact_daily_cron($hook_name, $setting_key, $default_time) 
 
 add_action('init', 'cmp_setup_crons');
 function cmp_setup_crons() {
-    
-    // CLEANUP: Destroy old flawed Watchdogs & Legacy Hooks
     wp_clear_scheduled_hook('cmp_hourly_watchdog_cron_hook');
     wp_clear_scheduled_hook('cmp_foh_sameday_alert_hook');
     wp_clear_scheduled_hook('cmp_foh_nextday_alert_hook');
     wp_clear_scheduled_hook('cmp_kit_sameday_alert_hook');
     wp_clear_scheduled_hook('cmp_kit_nextday_alert_hook');
 
-    // 1. Daily Digest Cron (UNTOUCHED)
     if ( ! wp_next_scheduled( 'cmp_daily_digest_cron_hook' ) ) {
         $tz = new DateTimeZone('Asia/Dubai');
         $cutoff_hour = intval(get_option('cmp_cutoff_time', '11'));
@@ -225,15 +250,12 @@ function cmp_setup_crons() {
         wp_schedule_event( $date->getTimestamp(), 'daily', 'cmp_daily_digest_cron_hook' );
     }
 
-    // 2. Exact-Time Daily Crons for FOH & Kitchen (Down to the minute)
     cmp_schedule_exact_daily_cron('cmp_foh_alert_1_hook', 'cmp_pos_alert_time_1', '19:00');
     cmp_schedule_exact_daily_cron('cmp_foh_alert_2_hook', 'cmp_pos_alert_time_2', '10:00');
     cmp_schedule_exact_daily_cron('cmp_kit_alert_1_hook', 'cmp_kitchen_alert_time_1', '19:00');
     cmp_schedule_exact_daily_cron('cmp_kit_alert_2_hook', 'cmp_kitchen_alert_time_2', '10:00');
 }
 
-
-// --- DAILY DIGEST HANDLER (UNTOUCHED) ---
 add_action( 'cmp_daily_digest_cron_hook', 'cmp_send_daily_digest_email' );
 function cmp_send_daily_digest_email() {
     $updated_subs = get_option('cmp_daily_updated_subs', array());
@@ -273,8 +295,6 @@ function cmp_send_daily_digest_email() {
 // ==========================================
 // 5. ISOLATED COMPLIANCE ALERT HANDLERS
 // ==========================================
-
-// FOH: Alert 1 (Standard)
 add_action( 'cmp_foh_alert_1_hook', 'cmp_run_foh_alert_1' );
 function cmp_run_foh_alert_1() {
     $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
@@ -302,7 +322,6 @@ function cmp_run_foh_alert_1() {
     }
 }
 
-// FOH: Alert 2 (Escalation)
 add_action( 'cmp_foh_alert_2_hook', 'cmp_run_foh_alert_2' );
 function cmp_run_foh_alert_2() {
     $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
@@ -330,8 +349,6 @@ function cmp_run_foh_alert_2() {
     }
 }
 
-
-// KITCHEN: Alert 1 (Standard)
 add_action( 'cmp_kit_alert_1_hook', 'cmp_run_kit_alert_1' );
 function cmp_run_kit_alert_1() {
     $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
@@ -366,7 +383,6 @@ function cmp_run_kit_alert_1() {
     }
 }
 
-// KITCHEN: Alert 2 (Escalation)
 add_action( 'cmp_kit_alert_2_hook', 'cmp_run_kit_alert_2' );
 function cmp_run_kit_alert_2() {
     $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
@@ -523,7 +539,6 @@ function cmp_intercept_failed_portal_login( $username ) {
 
 // 6.4 Reusable Glassmorphism Portal Login & Access-Denied UI/UX Renderer
 function cmp_render_portal_login_ui( $args = array() ) {
-    // Prevent page caching plugins from serving stale login HTML
     if ( ! defined( 'DONOTCACHEPAGE' ) ) {
         define( 'DONOTCACHEPAGE', true );
     }
@@ -534,38 +549,36 @@ function cmp_render_portal_login_ui( $args = array() ) {
         'subtitle'       => 'Sign in to access your dashboard',
         'required_caps'  => array( 'manage_options' ),
         'denied_message' => 'Your account does not have clearance to view this portal.',
-        'accent_color'   => '#379237',
-        'header_bg'      => '#379237',
     );
     $cfg = wp_parse_args( $args, $defaults );
 
-    $uid           = esc_attr( $cfg['portal_id'] );
-    $caps_csv      = is_array( $cfg['required_caps'] ) ? implode( ',', $cfg['required_caps'] ) : $cfg['required_caps'];
-    $ajax_url      = esc_url( admin_url( 'admin-ajax.php' ) );
-    $nonce         = wp_create_nonce( 'cmp_portal_auth_nonce' );
-    $current_url   = esc_url( remove_query_arg( array( 'cmp_login' ) ) );
-    $url_failed    = isset( $_GET['cmp_login'] ) && $_GET['cmp_login'] === 'failed';
+    $uid         = esc_attr( $cfg['portal_id'] );
+    $caps_csv    = is_array( $cfg['required_caps'] ) ? implode( ',', $cfg['required_caps'] ) : $cfg['required_caps'];
+    $ajax_url    = esc_url( admin_url( 'admin-ajax.php' ) );
+    $nonce       = wp_create_nonce( 'cmp_portal_auth_nonce' );
+    $current_url = esc_url( remove_query_arg( array( 'cmp_login' ) ) );
+    $url_failed  = isset( $_GET['cmp_login'] ) && $_GET['cmp_login'] === 'failed';
 
     ob_start();
     ?>
     <style>
         #cmp-auth-stage-<?php echo $uid; ?>, #cmp-auth-stage-<?php echo $uid; ?> * { box-sizing: border-box !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; letter-spacing: normal !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> { position: relative !important; width: 100% !important; max-width: 490px !important; margin: 32px auto 60px auto !important; padding: 22px 18px !important; z-index: 1 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?>::before, #cmp-auth-stage-<?php echo $uid; ?>::after { content: "" !important; position: absolute !important; border-radius: 50% !important; filter: blur(38px) !important; z-index: -1 !important; pointer-events: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?>::before { width: 240px !important; height: 240px !important; top: -12px !important; left: -18px !important; background: radial-gradient(circle, rgba(104, 185, 70, 0.48) 0%, rgba(55, 146, 55, 0.16) 68%, transparent 100%) !important; }
-        #cmp-auth-stage-<?php echo $uid; ?>::after { width: 260px !important; height: 260px !important; bottom: -18px !important; right: -15px !important; background: radial-gradient(circle, rgba(220, 236, 201, 0.92) 0%, rgba(55, 146, 55, 0.22) 70%, transparent 100%) !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { position: relative !important; background: linear-gradient(145deg, rgba(255, 255, 255, 0.78) 0%, rgba(238, 247, 227, 0.68) 100%) !important; backdrop-filter: blur(22px) saturate(180%) !important; -webkit-backdrop-filter: blur(22px) saturate(180%) !important; border-radius: 24px !important; border: 1.5px solid rgba(255, 255, 255, 0.92) !important; box-shadow: 0 24px 50px rgba(27, 94, 32, 0.15), 0 6px 16px rgba(35, 31, 32, 0.06), inset 0 1px 2px rgba(255, 255, 255, 0.95) !important; overflow: hidden !important; transition: all 0.3s ease !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-brand-ribbon { height: 6px !important; width: 100% !important; background: linear-gradient(90deg, #1B5E20 0%, #379237 38%, #68B946 72%, #DCECC9 100%) !important; }
-        /* DESKTOP LOGIN HEADER (> 992px): Frosted Pistachio-Sage & Fresh Leaf Glass */
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { position: relative !important; background: linear-gradient(135deg, rgba(220, 236, 201, 0.86) 0%, rgba(238, 247, 227, 0.78) 50%, rgba(104, 185, 70, 0.28) 100%) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; padding: 28px 28px 24px 28px !important; text-align: center !important; border-bottom: 1.5px solid rgba(55, 146, 55, 0.22) !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 8px !important; margin: 0 !important; border-radius: 0 !important; transition: all 0.3s ease !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 58px !important; height: 58px !important; border-radius: 18px !important; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; border: 2px solid #DCECC9 !important; margin: 0 auto 4px auto !important; box-shadow: 0 8px 20px rgba(55, 146, 55, 0.28) !important; flex-shrink: 0 !important; color: #ffffff !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { display: inline-block !important; padding: 4px 12px !important; border-radius: 999px !important; font-size: 11px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; background: rgba(55, 146, 55, 0.14) !important; color: #1B5E20 !important; border: 1px solid rgba(55, 146, 55, 0.28) !important; margin-bottom: 2px !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> { position: relative !important; width: 100% !important; max-width: 500px !important; margin: 28px auto 60px auto !important; padding: 26px 20px !important; border-radius: 28px !important; background: radial-gradient(circle at 15% 15%, rgba(104, 185, 70, 0.28) 0%, rgba(220, 236, 201, 0.55) 48%, rgba(27, 94, 32, 0.12) 100%) !important; box-shadow: inset 0 1px 2px rgba(255,255,255,0.9) !important; z-index: 1 !important; overflow: hidden !important; }
+        #cmp-auth-stage-<?php echo $uid; ?>::before, #cmp-auth-stage-<?php echo $uid; ?>::after { content: "" !important; position: absolute !important; border-radius: 50% !important; filter: blur(32px) !important; z-index: -1 !important; pointer-events: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?>::before { width: 220px !important; height: 220px !important; top: -30px !important; left: -30px !important; background: rgba(55, 146, 55, 0.45) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?>::after { width: 240px !important; height: 240px !important; bottom: -40px !important; right: -30px !important; background: rgba(104, 185, 70, 0.45) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { position: relative !important; background: rgba(255, 255, 255, 0.68) !important; backdrop-filter: blur(24px) saturate(190%) !important; -webkit-backdrop-filter: blur(24px) saturate(190%) !important; border-radius: 22px !important; border: 1.5px solid rgba(255, 255, 255, 0.92) !important; box-shadow: 0 20px 45px rgba(27, 94, 32, 0.16), 0 4px 12px rgba(35, 31, 32, 0.06), inset 0 1px 2px rgba(255, 255, 255, 0.98) !important; overflow: hidden !important; transition: all 0.3s ease !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-brand-ribbon { height: 6px !important; width: 100% !important; background: linear-gradient(90deg, #1B5E20 0%, #379237 40%, #68B946 75%, #DCECC9 100%) !important; }
+        /* DESKTOP HEADER (> 991px): Deep Forest (#1B5E20) -> Core Green (#379237) -> Fresh Leaf (#68B946) Glass */
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { position: relative !important; background: linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; padding: 28px 28px 24px 28px !important; text-align: center !important; border-bottom: 3px solid #DCECC9 !important; display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 8px !important; margin: 0 !important; border-radius: 0 !important; transition: all 0.3s ease !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 58px !important; height: 58px !important; border-radius: 18px !important; background: rgba(255, 255, 255, 0.20) !important; border: 1.5px solid #DCECC9 !important; margin: 0 auto 4px auto !important; box-shadow: 0 8px 20px rgba(15, 46, 18, 0.24) !important; flex-shrink: 0 !important; color: #ffffff !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { display: inline-block !important; padding: 4px 12px !important; border-radius: 999px !important; font-size: 11px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; background: rgba(220, 236, 201, 0.25) !important; color: #EEF7E3 !important; border: 1px solid rgba(220, 236, 201, 0.55) !important; margin-bottom: 2px !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: center !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { margin: 0 !important; padding: 0 !important; font-size: 25px !important; line-height: 1.2 !important; font-weight: 800 !important; color: #231F20 !important; text-transform: none !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { margin: 5px 0 0 0 !important; padding: 0 !important; font-size: 13.5px !important; line-height: 1.45 !important; color: #1B5E20 !important; font-weight: 600 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { margin: 0 !important; padding: 0 !important; font-size: 25px !important; line-height: 1.2 !important; font-weight: 800 !important; color: #ffffff !important; text-transform: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { margin: 5px 0 0 0 !important; padding: 0 !important; font-size: 13.5px !important; line-height: 1.45 !important; color: #EEF7E3 !important; font-weight: 500 !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 26px 28px 30px 28px !important; background: transparent !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert { display: none; padding: 12px 15px !important; border-radius: 12px !important; font-size: 13.5px !important; line-height: 1.45 !important; margin: 0 0 18px 0 !important; font-weight: 600 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.error { display: block !important; background: rgba(254, 242, 242, 0.94) !important; color: #991b1b !important; border: 1px solid #fecaca !important; border-left: 4px solid #dc2626 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.error { display: block !important; background: rgba(254, 242, 242, 0.95) !important; color: #991b1b !important; border: 1px solid #fecaca !important; border-left: 4px solid #dc2626 !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-alert.success { display: block !important; background: rgba(238, 247, 227, 0.96) !important; color: #1B5E20 !important; border: 1px solid #b7e1a1 !important; border-left: 4px solid #379237 !important; }
         @keyframes cmpShake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
         .cmp-shake { animation: cmpShake 0.35s ease-in-out; }
@@ -573,40 +586,40 @@ function cmp_render_portal_login_ui( $args = array() ) {
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-form-group label { display: block !important; font-size: 13.5px !important; line-height: 1.3 !important; font-weight: 700 !important; color: #231F20 !important; margin: 0 0 7px 0 !important; text-transform: none !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap { position: relative !important; display: flex !important; align-items: center !important; width: 100% !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-icon { position: absolute !important; left: 14px !important; color: #379237 !important; pointer-events: none !important; display: flex !important; align-items: center !important; justify-content: center !important; z-index: 2 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] { width: 100% !important; height: 48px !important; padding: 10px 44px 10px 42px !important; font-size: 15px !important; line-height: 1.4 !important; color: #231F20 !important; background: rgba(255, 255, 255, 0.86) !important; border: 1.5px solid rgba(55, 146, 55, 0.30) !important; border-radius: 12px !important; transition: all 0.2s ease !important; outline: none !important; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important; margin: 0 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input:focus { background: #ffffff !important; border-color: #379237 !important; box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.24) !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="text"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="password"], #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input[type="email"] { width: 100% !important; height: 48px !important; padding: 10px 44px 10px 42px !important; font-size: 15px !important; line-height: 1.4 !important; color: #231F20 !important; background: rgba(255, 255, 255, 0.85) !important; border: 1.5px solid rgba(55, 146, 55, 0.32) !important; border-radius: 12px !important; transition: all 0.2s ease !important; outline: none !important; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important; margin: 0 !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-input-wrap input:focus { background: #ffffff !important; border-color: #379237 !important; box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.25) !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle { position: absolute !important; right: 8px !important; top: 50% !important; transform: translateY(-50%) !important; background: transparent !important; border: none !important; box-shadow: none !important; color: #526352 !important; cursor: pointer !important; padding: 6px !important; margin: 0 !important; min-height: 0 !important; min-width: 0 !important; width: 34px !important; height: 34px !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; border-radius: 8px !important; z-index: 2 !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:hover, #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:focus { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.65) !important; outline: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:hover, #cmp-auth-stage-<?php echo $uid; ?> .cmp-pwd-toggle:focus { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.7) !important; outline: none !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-meta { display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 10px !important; flex-wrap: nowrap !important; margin: 4px 0 22px 0 !important; width: 100% !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label { display: inline-flex !important; align-items: center !important; gap: 8px !important; color: #231F20 !important; cursor: pointer !important; font-size: 13.5px !important; line-height: 1.2 !important; font-weight: 600 !important; margin: 0 !important; white-space: nowrap !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-remember-label input[type="checkbox"] { width: 17px !important; height: 17px !important; min-width: 17px !important; accent-color: #379237 !important; cursor: pointer !important; margin: 0 !important; }
         #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action { background: transparent !important; border: none !important; color: #1B5E20 !important; font-weight: 700 !important; font-size: 13.5px !important; line-height: 1.2 !important; cursor: pointer !important; padding: 4px 8px !important; margin: 0 !important; border-radius: 6px !important; text-decoration: none !important; white-space: nowrap !important; display: inline-block !important; transition: all 0.2s ease !important; }
-        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action:hover { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.7) !important; text-decoration: none !important; }
+        #cmp-auth-stage-<?php echo $uid; ?> a.cmp-link-action:hover { color: #1B5E20 !important; background: rgba(220, 236, 201, 0.75) !important; text-decoration: none !important; }
         #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn { width: 100% !important; min-height: 50px !important; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; background-color: #379237 !important; color: #ffffff !important; border: 1px solid rgba(220, 236, 201, 0.45) !important; padding: 13px 20px !important; font-size: 15.5px !important; line-height: 1.3 !important; font-weight: 700 !important; text-transform: none !important; border-radius: 12px !important; cursor: pointer !important; transition: all 0.25s ease !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; gap: 9px !important; text-decoration: none !important; box-shadow: 0 8px 20px rgba(55, 146, 55, 0.30) !important; margin: 0 !important; white-space: nowrap !important; }
         #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:hover, #cmp-auth-stage-<?php echo $uid; ?> a.cmp-submit-btn:hover { background: linear-gradient(135deg, #68B946 0%, #379237 100%) !important; background-color: #287028 !important; color: #ffffff !important; transform: translateY(-1px) !important; box-shadow: 0 10px 24px rgba(55, 146, 55, 0.38) !important; }
         #cmp-auth-stage-<?php echo $uid; ?> button.cmp-submit-btn:disabled { opacity: 0.68 !important; cursor: not-allowed !important; transform: none !important; }
         #cmp-auth-stage-<?php echo $uid; ?> .cmp-spinner { width: 17px !important; height: 17px !important; border: 2.5px solid rgba(255,255,255,0.35) !important; border-top-color: #ffffff !important; border-radius: 50% !important; animation: cmpSpin 0.7s linear infinite !important; display: none; flex-shrink: 0 !important; }
         @keyframes cmpSpin { to { transform: rotate(360deg); } }
-        #cmp-auth-stage-<?php echo $uid; ?> .cmp-user-pill { background: rgba(238, 247, 227, 0.8) !important; border: 1px solid rgba(55, 146, 55, 0.28) !important; border-radius: 12px !important; padding: 14px !important; margin-bottom: 18px !important; font-size: 14px !important; line-height: 1.5 !important; color: #231F20 !important; }
-        /* TABLET LOGIN HEADER (601px to 991px): Core Brand Green (#379237) to Leaf Lime (#68B946) Split Glass Header */
+        #cmp-auth-stage-<?php echo $uid; ?> .cmp-user-pill { background: rgba(238, 247, 227, 0.85) !important; border: 1px solid rgba(55, 146, 55, 0.3) !important; border-radius: 12px !important; padding: 14px !important; margin-bottom: 18px !important; font-size: 14px !important; line-height: 1.5 !important; color: #231F20 !important; }
+        /* TABLET HEADER (601px to 991px): Pistachio-Sage (#DCECC9) & Fresh Leaf (#68B946) Split Glass Header */
         @media (min-width: 601px) and (max-width: 991px) {
-            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 460px !important; margin: 24px auto 48px auto !important; padding: 18px 16px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%) !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 16px !important; padding: 24px 26px !important; border-bottom: 3px solid #DCECC9 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { background: rgba(255, 255, 255, 0.22) !important; border-color: rgba(255, 255, 255, 0.55) !important; width: 54px !important; height: 54px !important; margin: 0 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 470px !important; margin: 22px auto 46px auto !important; padding: 20px 16px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(125deg, rgba(220, 236, 201, 0.92) 0%, rgba(104, 185, 70, 0.42) 100%) !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 16px !important; padding: 24px 26px !important; border-bottom: 3px solid #379237 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; border-color: #DCECC9 !important; width: 54px !important; height: 54px !important; margin: 0 !important; color: #ffffff !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: left !important; flex: 1 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(220, 236, 201, 0.28) !important; color: #EEF7E3 !important; border-color: rgba(220, 236, 201, 0.5) !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #ffffff !important; font-size: 23px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #EEF7E3 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(27, 94, 32, 0.14) !important; color: #1B5E20 !important; border-color: rgba(27, 94, 32, 0.3) !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #231F20 !important; font-size: 23px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #1B5E20 !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 24px 24px 28px 24px !important; }
         }
-        /* MOBILE LOGIN HEADER (<= 600px): Floating Inset Deep Forest (#1B5E20) to Core Green (#379237) Glass Banner */
+        /* MOBILE HEADER (<= 600px): Floating Inset Core Green (#379237) to Deep Forest (#1B5E20) Glass Banner */
         @media (max-width: 600px) {
-            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 100% !important; margin: 12px auto 32px auto !important; padding: 8px 12px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> { max-width: 100% !important; margin: 10px auto 30px auto !important; padding: 14px 12px !important; border-radius: 22px !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-card { border-radius: 20px !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(145deg, rgba(27, 94, 32, 0.95) 0%, rgba(55, 146, 55, 0.90) 100%) !important; margin: 12px 12px 0 12px !important; border-radius: 16px !important; padding: 16px 16px !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 13px !important; border: 1.5px solid rgba(104, 185, 70, 0.65) !important; box-shadow: 0 8px 20px rgba(27, 94, 32, 0.18) !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { width: 46px !important; height: 46px !important; border-radius: 13px !important; margin: 0 !important; background: rgba(220, 236, 201, 0.2) !important; border-color: #68B946 !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header { background: linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%) !important; margin: 12px 12px 0 12px !important; border-radius: 16px !important; padding: 16px 16px !important; flex-direction: row !important; text-align: left !important; justify-content: flex-start !important; align-items: center !important; gap: 13px !important; border: 1.5px solid #68B946 !important; box-shadow: 0 8px 20px rgba(27, 94, 32, 0.20) !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-badge { width: 46px !important; height: 46px !important; border-radius: 13px !important; margin: 0 !important; background: rgba(220, 236, 201, 0.22) !important; border-color: #DCECC9 !important; color: #ffffff !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header-text { text-align: left !important; flex: 1 !important; }
-            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(104, 185, 70, 0.28) !important; color: #DCECC9 !important; border-color: rgba(220, 236, 201, 0.4) !important; font-size: 10px !important; padding: 2px 9px !important; }
+            #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-kicker { background: rgba(220, 236, 201, 0.24) !important; color: #DCECC9 !important; border-color: rgba(220, 236, 201, 0.45) !important; font-size: 10px !important; padding: 2px 9px !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header h2 { color: #ffffff !important; font-size: 19.5px !important; line-height: 1.2 !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-header p { color: #DCECC9 !important; font-size: 12px !important; margin-top: 3px !important; line-height: 1.35 !important; }
             #cmp-auth-stage-<?php echo $uid; ?> .cmp-auth-body { padding: 18px 16px 22px 16px !important; }
@@ -622,7 +635,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
             <div class="cmp-brand-ribbon"></div>
             <div class="cmp-auth-header" id="cmp-auth-header-<?php echo $uid; ?>">
                 <div class="cmp-auth-badge" id="cmp-auth-badge-<?php echo $uid; ?>">
-                    <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="3"></circle>
                         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                     </svg>
@@ -750,62 +763,64 @@ function cmp_render_portal_login_ui( $args = array() ) {
 
     <script>
     (function() {
-        const uid         = '<?php echo esc_js( $uid ); ?>';
-        const headerEl    = document.getElementById('cmp-auth-header-' + uid);
-        const badgeEl     = document.getElementById('cmp-auth-badge-' + uid);
-        const htextEl     = document.getElementById('cmp-auth-htext-' + uid);
-        const kickerEl    = document.getElementById('cmp-auth-kicker-' + uid);
-        const titleEl     = document.getElementById('cmp-auth-title-' + uid);
-        const subEl       = document.getElementById('cmp-auth-sub-' + uid);
+        const uid      = '<?php echo esc_js( $uid ); ?>';
+        const headerEl = document.getElementById('cmp-auth-header-' + uid);
+        const badgeEl  = document.getElementById('cmp-auth-badge-' + uid);
+        const htextEl  = document.getElementById('cmp-auth-htext-' + uid);
+        const kickerEl = document.getElementById('cmp-auth-kicker-' + uid);
+        const titleEl  = document.getElementById('cmp-auth-title-' + uid);
+        const subEl    = document.getElementById('cmp-auth-sub-' + uid);
 
-        // Enforce Desktop, Tablet, and Mobile Header Color & Styling
         function applyResponsiveHeaderTheme() {
             if (!headerEl) return;
             const w = window.innerWidth;
             if (w <= 600) {
-                // MOBILE: Floating Inset Deep Forest (#1B5E20) -> Core Green (#379237) Glass Banner
-                headerEl.style.setProperty('background', 'linear-gradient(145deg, rgba(27, 94, 32, 0.95) 0%, rgba(55, 146, 55, 0.90) 100%)', 'important');
+                // MOBILE: Floating Inset Core Green (#379237) -> Deep Forest (#1B5E20) Glass Banner
+                headerEl.style.setProperty('background', 'linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%)', 'important');
                 headerEl.style.setProperty('flex-direction', 'row', 'important');
                 headerEl.style.setProperty('text-align', 'left', 'important');
                 headerEl.style.setProperty('margin', '12px 12px 0 12px', 'important');
                 headerEl.style.setProperty('border-radius', '16px', 'important');
                 headerEl.style.setProperty('padding', '16px', 'important');
+                if (badgeEl) badgeEl.style.setProperty('background', 'rgba(220, 236, 201, 0.22)', 'important');
                 if (htextEl) htextEl.style.setProperty('text-align', 'left', 'important');
                 if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
                 if (subEl) subEl.style.setProperty('color', '#DCECC9', 'important');
                 if (kickerEl) {
-                    kickerEl.style.setProperty('background', 'rgba(104, 185, 70, 0.28)', 'important');
+                    kickerEl.style.setProperty('background', 'rgba(220, 236, 201, 0.24)', 'important');
                     kickerEl.style.setProperty('color', '#DCECC9', 'important');
                 }
             } else if (w <= 991) {
-                // TABLET: Core Green (#379237) -> Leaf Lime (#68B946) Split Glass Header
-                headerEl.style.setProperty('background', 'linear-gradient(125deg, rgba(55, 146, 55, 0.92) 0%, rgba(104, 185, 70, 0.86) 100%)', 'important');
+                // TABLET: Soft Pistachio-Sage (#DCECC9) -> Fresh Leaf (#68B946) Split Glass Header
+                headerEl.style.setProperty('background', 'linear-gradient(125deg, rgba(220, 236, 201, 0.92) 0%, rgba(104, 185, 70, 0.42) 100%)', 'important');
                 headerEl.style.setProperty('flex-direction', 'row', 'important');
                 headerEl.style.setProperty('text-align', 'left', 'important');
                 headerEl.style.setProperty('margin', '0', 'important');
                 headerEl.style.setProperty('border-radius', '0', 'important');
                 headerEl.style.setProperty('padding', '24px 26px', 'important');
+                if (badgeEl) badgeEl.style.setProperty('background', 'linear-gradient(135deg, #379237 0%, #1B5E20 100%)', 'important');
                 if (htextEl) htextEl.style.setProperty('text-align', 'left', 'important');
-                if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
-                if (subEl) subEl.style.setProperty('color', '#EEF7E3', 'important');
+                if (titleEl) titleEl.style.setProperty('color', '#231F20', 'important');
+                if (subEl) subEl.style.setProperty('color', '#1B5E20', 'important');
                 if (kickerEl) {
-                    kickerEl.style.setProperty('background', 'rgba(220, 236, 201, 0.28)', 'important');
-                    kickerEl.style.setProperty('color', '#EEF7E3', 'important');
+                    kickerEl.style.setProperty('background', 'rgba(27, 94, 32, 0.14)', 'important');
+                    kickerEl.style.setProperty('color', '#1B5E20', 'important');
                 }
             } else {
-                // DESKTOP: Frosted Pistachio-Sage (#DCECC9) & Fresh Leaf (#68B946) Glass Header
-                headerEl.style.setProperty('background', 'linear-gradient(135deg, rgba(220, 236, 201, 0.88) 0%, rgba(238, 247, 227, 0.78) 50%, rgba(104, 185, 70, 0.30) 100%)', 'important');
+                // DESKTOP: Deep Forest (#1B5E20) -> Core Green (#379237) -> Fresh Leaf (#68B946) Glass Header
+                headerEl.style.setProperty('background', 'linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%)', 'important');
                 headerEl.style.setProperty('flex-direction', 'column', 'important');
                 headerEl.style.setProperty('text-align', 'center', 'important');
                 headerEl.style.setProperty('margin', '0', 'important');
                 headerEl.style.setProperty('border-radius', '0', 'important');
                 headerEl.style.setProperty('padding', '28px 28px 24px 28px', 'important');
+                if (badgeEl) badgeEl.style.setProperty('background', 'rgba(255, 255, 255, 0.20)', 'important');
                 if (htextEl) htextEl.style.setProperty('text-align', 'center', 'important');
-                if (titleEl) titleEl.style.setProperty('color', '#231F20', 'important');
-                if (subEl) subEl.style.setProperty('color', '#1B5E20', 'important');
+                if (titleEl) titleEl.style.setProperty('color', '#ffffff', 'important');
+                if (subEl) subEl.style.setProperty('color', '#EEF7E3', 'important');
                 if (kickerEl) {
-                    kickerEl.style.setProperty('background', 'rgba(55, 146, 55, 0.14)', 'important');
-                    kickerEl.style.setProperty('color', '#1B5E20', 'important');
+                    kickerEl.style.setProperty('background', 'rgba(220, 236, 201, 0.25)', 'important');
+                    kickerEl.style.setProperty('color', '#EEF7E3', 'important');
                 }
             }
         }
@@ -814,17 +829,17 @@ function cmp_render_portal_login_ui( $args = array() ) {
         window.addEventListener('resize', applyResponsiveHeaderTheme);
 
         <?php if ( ! is_user_logged_in() ) : ?>
-        const ajaxUrl    = '<?php echo $ajax_url; ?>';
-        const nonce      = '<?php echo esc_js( $nonce ); ?>';
-        const reqCaps    = '<?php echo esc_js( $caps_csv ); ?>';
-        const pTitle     = '<?php echo esc_js( $cfg['title'] ); ?>';
-        const reloadUrl  = '<?php echo $current_url; ?>';
+        const ajaxUrl     = '<?php echo $ajax_url; ?>';
+        const nonce       = '<?php echo esc_js( $nonce ); ?>';
+        const reqCaps     = '<?php echo esc_js( $caps_csv ); ?>';
+        const pTitle      = '<?php echo esc_js( $cfg['title'] ); ?>';
+        const reloadUrl   = '<?php echo $current_url; ?>';
 
-        const card       = document.getElementById('cmp-auth-card-' + uid);
-        const loginView  = document.getElementById('cmp-login-view-' + uid);
-        const forgotView = document.getElementById('cmp-forgot-view-' + uid);
-        const loginAlert = document.getElementById('cmp-login-alert-' + uid);
-        const forgotAlert= document.getElementById('cmp-forgot-alert-' + uid);
+        const card        = document.getElementById('cmp-auth-card-' + uid);
+        const loginView   = document.getElementById('cmp-login-view-' + uid);
+        const forgotView  = document.getElementById('cmp-forgot-view-' + uid);
+        const loginAlert  = document.getElementById('cmp-login-alert-' + uid);
+        const forgotAlert = document.getElementById('cmp-forgot-alert-' + uid);
 
         function showAlert(el, type, message) {
             if (!el) return;
@@ -847,10 +862,10 @@ function cmp_render_portal_login_ui( $args = array() ) {
             card.classList.add('cmp-shake');
         }
 
-        const passInput  = document.getElementById('cmp-pass-' + uid);
-        const pwdToggle  = document.getElementById('cmp-pwd-toggle-' + uid);
-        const eyeOpen    = document.getElementById('cmp-eye-open-' + uid);
-        const eyeClosed  = document.getElementById('cmp-eye-closed-' + uid);
+        const passInput = document.getElementById('cmp-pass-' + uid);
+        const pwdToggle = document.getElementById('cmp-pwd-toggle-' + uid);
+        const eyeOpen   = document.getElementById('cmp-eye-open-' + uid);
+        const eyeClosed = document.getElementById('cmp-eye-closed-' + uid);
 
         if (pwdToggle && passInput) {
             pwdToggle.addEventListener('click', function(e) {
