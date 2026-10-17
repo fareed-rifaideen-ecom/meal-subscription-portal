@@ -271,28 +271,28 @@ function cmp_render_accounts_dashboard() {
     ?>
     <style>
         .acc-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; }
-        .acc-header { background: #0f172a; color: #fff; padding: 25px 30px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-        .acc-section-title { font-size: 1.4em; color: #0f172a; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
+        .acc-header { background: #379237; color: #fff; padding: 25px 30px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .acc-section-title { font-size: 1.4em; color: #1e293b; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
         
         .acc-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
-        .acc-kpi-card { background: #fff; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #3b82f6; box-shadow: 0 4px 6px rgba(0,0,0,0.02); cursor: pointer; transition: 0.2s; position: relative; text-decoration:none; display:block; }
+        .acc-kpi-card { background: #fff; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; border-left: 5px solid #379237; box-shadow: 0 4px 6px rgba(0,0,0,0.02); cursor: pointer; transition: 0.2s; position: relative; text-decoration:none; display:block; }
         .acc-kpi-card:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.05); }
-        .acc-kpi-card.active-tab { box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.1); border-color:#0f172a; }
+        .acc-kpi-card.active-tab { box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.18); border-color:#379237; }
         
-        .acc-kpi-card.green { border-left-color: #10b981; }
+        .acc-kpi-card.green { border-left-color: #379237; }
         .acc-kpi-card.orange { border-left-color: #f59e0b; }
         .acc-kpi-card.red { border-left-color: #ef4444; }
-        .acc-kpi-val { font-size: 2.8em; font-weight: 900; color: #0f172a; margin: 5px 0 0 0; line-height: 1; pointer-events: none;}
+        .acc-kpi-val { font-size: 2.8em; font-weight: 900; color: #1e293b; margin: 5px 0 0 0; line-height: 1; pointer-events: none;}
         
-        .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; }
+        .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; flex-wrap: wrap; }
         .acc-filter input[type="date"] { padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; }
-        .acc-filter button { background: #3b82f6; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .acc-filter button { background: #379237; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
         
         .acc-table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); font-size: 0.9em; border-radius:8px; overflow:hidden; }
         .acc-table th { background: #f1f5f9; color: #334155; padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0; }
         .acc-table td { padding: 12px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
-        .acc-btn { background: #0f172a; color: #fff; padding: 8px 15px; border-radius: 4px; text-decoration: none; font-weight: bold; display: inline-block; transition:0.2s;}
-        .acc-btn:hover { background: #334155; color: #fff; }
+        .acc-btn { background: #379237; color: #fff; padding: 8px 15px; border-radius: 4px; text-decoration: none; font-weight: bold; display: inline-block; transition:0.2s;}
+        .acc-btn:hover { background: #287028; color: #fff; }
 
         .acc-tab-content { display: none; }
         .acc-tab-content.active { display: block; animation: fadeIn 0.3s; }
@@ -303,16 +303,16 @@ function cmp_render_accounts_dashboard() {
         <div class="acc-header cmp-no-print">
             <div>
                 <h1 style="margin:0; color:#fff; font-size:2em;">Accounts Portal</h1>
-                <p style="margin:5px 0 0 0; color:#94a3b8;">Meal Plan Monitoring</p>
+                <p style="margin:5px 0 0 0; color:rgba(255,255,255,0.88);">Meal Plan Monitoring</p>
             </div>
             <div>
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: rgba(255,255,255,0.1); color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; border: 1px solid rgba(255,255,255,0.2);">Log Out</a>
+                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: rgba(255,255,255,0.15); color: white; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; border: 1px solid rgba(255,255,255,0.3);">Log Out</a>
             </div>
         </div>
 
         <!-- COMPLIANCE TILES -->
         <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
-            <span style="color:#0f172a;">Operational Auditing</span>
+            <span style="color:#1e293b;">Operational Auditing</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
                 <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
@@ -378,10 +378,10 @@ function cmp_render_accounts_dashboard() {
             if($status_filter == 'completed') $title = 'Completed/Expired Plans';
 
             echo "<div id='{$table_id}' class='acc-tab-content {$display}'>
-                    <div style='display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;'>
-                        <h3 style='margin:0; color:#0f172a;'>{$title}</h3>
+                    <div style='display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px; flex-wrap:wrap; gap:10px;'>
+                        <h3 style='margin:0; color:#1e293b;'>{$title}</h3>
                         <div class='cmp-no-print' style='display:flex; gap:10px;'>
-                            <a href='" . esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_main&status_filter='.$status_filter.'&start='.$dash_start.'&end='.$dash_end)) . "' style='background:#1d6f42; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;'>Export {$title} to CSV</a>
+                            <a href='" . esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_main&status_filter='.$status_filter.'&start='.$dash_start.'&end='.$dash_end)) . "' style='background:#379237; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;'>Export {$title} to CSV</a>
                             <button onclick='window.print()' style='background:#475569; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.9em;'>Print PDF</button>
                         </div>
                     </div>
@@ -409,7 +409,7 @@ function cmp_render_accounts_dashboard() {
                     
                     if ($sub->status === 'paused') { $status_color = '#f59e0b'; $status_label = 'PAUSED'; }
                     elseif ($balance <= 0 || $sub->expiry_date < current_time('mysql')) { $status_color = '#ef4444'; $status_label = 'COMPLETED'; }
-                    else { $status_color = '#10b981'; $status_label = 'ACTIVE'; }
+                    else { $status_color = '#379237'; $status_label = 'ACTIVE'; }
 
                     $display_order_id = '<span style="color:#ef4444;">Manual</span>';
                     if ($sub->wc_order_id < 0) {
@@ -426,13 +426,13 @@ function cmp_render_accounts_dashboard() {
                         $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
                     }
                     $b_color = '#dc2626'; $b_bg = '#fee2e2'; $b_text = 'Refunded / No Deposit';
-                    if ($deposit_held === 'yes') { $b_color = '#10b981'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
+                    if ($deposit_held === 'yes') { $b_color = '#379237'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
                     if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
 
                     echo "<tr>
-                        <td><strong style='color:#0f172a; font-size:1.1em;'>{$display_order_id}</strong></td>
+                        <td><strong style='color:#1e293b; font-size:1.1em;'>{$display_order_id}</strong></td>
                         <td>
-                            <strong style='color:#0073aa;'>" . esc_html($name) . "</strong><br>
+                            <strong style='color:#379237;'>" . esc_html($name) . "</strong><br>
                             <span style='color:#64748b; font-size:0.9em;'>" . esc_html($sub->user_email) . "</span><br>
                             <span style='color:#64748b; font-size:0.9em;'>" . esc_html($phone ?: 'N/A') . "</span>
                         </td>
@@ -526,16 +526,16 @@ function cmp_render_kitchen_audit_view() {
         .acc-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; }
         .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; }
         .acc-filter input[type="date"] { padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; }
-        .acc-filter button { background: #3b82f6; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .acc-section-title { font-size: 1.4em; color: #0f172a; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
+        .acc-filter button { background: #379237; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .acc-section-title { font-size: 1.4em; color: #1e293b; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
     </style>
     <div class="acc-wrap">
         <div class="cmp-no-print" style="margin-bottom: 20px;">
-            <a href="?" style="color:#0073aa; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
+            <a href="?" style="color:#379237; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
         </div>
         
         <div class="acc-section-title cmp-no-print">
-            <span style="color:#0f172a;">Audit: Kitchen Operations</span>
+            <span style="color:#1e293b;">Audit: Kitchen Operations</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="view" value="kitchen_audit">
                 <span>Period:</span>
@@ -633,16 +633,16 @@ function cmp_render_pos_audit_view() {
         .acc-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; }
         .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; }
         .acc-filter input[type="date"] { padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; }
-        .acc-filter button { background: #3b82f6; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .acc-section-title { font-size: 1.4em; color: #0f172a; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
+        .acc-filter button { background: #379237; color: white; border: none; padding: 7px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .acc-section-title { font-size: 1.4em; color: #1e293b; margin: 0 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
     </style>
     <div class="acc-wrap">
         <div class="cmp-no-print" style="margin-bottom: 20px;">
-            <a href="?" style="color:#0073aa; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
+            <a href="?" style="color:#379237; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
         </div>
 
         <div class="acc-section-title cmp-no-print">
-            <span style="color:#0f172a;">Audit: POS Reconciliations</span>
+            <span style="color:#1e293b;">Audit: POS Reconciliations</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="view" value="pos_audit">
                 <span>Period:</span>
@@ -778,7 +778,7 @@ function cmp_render_accounts_sub_view($sub_id) {
         $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
     }
     $b_color = '#dc2626'; $b_bg = '#fee2e2'; $b_text = 'Refunded / No Deposit';
-    if ($deposit_held === 'yes') { $b_color = '#10b981'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
+    if ($deposit_held === 'yes') { $b_color = '#379237'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
     if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
 
     ob_start();
@@ -788,7 +788,7 @@ function cmp_render_accounts_sub_view($sub_id) {
         .acc-ledger-header { background:#fff; padding:25px; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:30px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px; box-shadow:0 2px 4px rgba(0,0,0,0.02); }
         .acc-summary-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:15px; margin-bottom:30px; }
         .acc-sum-box { background:#f8fafc; padding:20px; border-radius:8px; border:1px solid #e2e8f0; text-align:center; }
-        .acc-sum-val { font-size:2em; font-weight:900; color:#0f172a; margin-bottom:5px; line-height:1; }
+        .acc-sum-val { font-size:2em; font-weight:900; color:#1e293b; margin-bottom:5px; line-height:1; }
         .acc-sum-label { font-size:0.85em; font-weight:bold; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
         
         .acc-table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); font-size: 0.9em; border-radius:8px; overflow:hidden; }
@@ -805,19 +805,19 @@ function cmp_render_accounts_sub_view($sub_id) {
 
     <div class="acc-wrap">
         <div class="cmp-no-print" style="margin-bottom: 20px;">
-            <a href="?" style="color:#0073aa; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
+            <a href="?" style="color:#379237; text-decoration:none; font-weight:bold;">&larr; Back to Dashboard</a>
         </div>
 
         <div class="acc-ledger-header">
             <div>
-                <h1 style="margin:0 0 10px 0; color:#0f172a; font-size:1.8em;">Customer Record</h1>
+                <h1 style="margin:0 0 10px 0; color:#1e293b; font-size:1.8em;">Customer Record</h1>
                 <div style="font-size:1.1em; color:#334155;"><strong><?php echo esc_html($name); ?></strong></div>
                 <div style="color:#64748b; margin-top:5px;"><?php echo esc_html($sub->user_email); ?> | <?php echo esc_html($phone ?: 'No Phone'); ?></div>
             </div>
             <div style="text-align:right;">
-                <div style="font-size:1.2em; font-weight:bold; color:#0f172a; margin-bottom:10px;"><?php echo esc_html($sub->plan_name); ?></div>
+                <div style="font-size:1.2em; font-weight:bold; color:#1e293b; margin-bottom:10px;"><?php echo esc_html($sub->plan_name); ?></div>
                 <div style="color:#64748b;">Order: <strong><?php echo esc_html($display_order_id); ?></strong></div>
-                <div style="color:#64748b; margin-top:5px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status == 'active' ? '#10b981' : ($derived_status == 'Completed' ? '#ef4444' : '#f59e0b'); ?>;"><?php echo esc_html($derived_status); ?></strong></div>
+                <div style="color:#64748b; margin-top:5px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status == 'active' ? '#379237' : ($derived_status == 'Completed' ? '#ef4444' : '#f59e0b'); ?>;"><?php echo esc_html($derived_status); ?></strong></div>
                 
                 <div style="color:#64748b; margin-top:8px; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
                     <span>Bag Status:</span>
@@ -840,8 +840,8 @@ function cmp_render_accounts_sub_view($sub_id) {
                 <div class="acc-sum-val"><?php echo $sub->total_days; ?></div>
                 <div class="acc-sum-label">Total Days</div>
             </div>
-            <div class="acc-sum-box" style="border-bottom: 4px solid #10b981;">
-                <div class="acc-sum-val" style="color:#10b981;"><?php echo $used; ?></div>
+            <div class="acc-sum-box" style="border-bottom: 4px solid #379237;">
+                <div class="acc-sum-val" style="color:#379237;"><?php echo $used; ?></div>
                 <div class="acc-sum-label">Consumed (Success)</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #3b82f6;">
@@ -859,9 +859,9 @@ function cmp_render_accounts_sub_view($sub_id) {
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;">
-            <h2 style="margin:0; font-size:1.3em; color:#0f172a;">Daily Selections & Logistics</h2>
+            <h2 style="margin:0; font-size:1.3em; color:#1e293b;">Daily Selections & Logistics</h2>
             <div class="cmp-no-print" style="display:flex; gap:10px;">
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_sub&sub_id='.$sub_id)); ?>" style="background:#1d6f42; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;">Export CSV</a>
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_sub&sub_id='.$sub_id)); ?>" style="background:#379237; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;">Export CSV</a>
                 <button onclick="window.print()" style="background:#475569; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.9em;">Print PDF</button>
             </div>
         </div>
@@ -898,7 +898,7 @@ function cmp_render_accounts_sub_view($sub_id) {
                         }
 
                         $del_color = '#64748b'; // pending
-                        if ($l->delivery_result === 'Successful') $del_color = '#10b981';
+                        if ($l->delivery_result === 'Successful') $del_color = '#379237';
                         if ($l->delivery_result === 'Cancelled') $del_color = '#ef4444';
                         if ($l->delivery_result === 'Returned') $del_color = '#f59e0b';
                     ?>
@@ -912,7 +912,7 @@ function cmp_render_accounts_sub_view($sub_id) {
                             <strong style="color:<?php echo $del_color; ?>;"><?php echo esc_html($l->delivery_result); ?></strong>
                         </td>
                         <td style="text-align:center;">
-                            <?php echo $l->pos_updated ? '<span style="color:#10b981; font-weight:bold;">Yes</span>' : '<span style="color:#ef4444; font-weight:bold;">No</span>'; ?>
+                            <?php echo $l->pos_updated ? '<span style="color:#379237; font-weight:bold;">Yes</span>' : '<span style="color:#ef4444; font-weight:bold;">No</span>'; ?>
                         </td>
                     </tr>
                     <?php endforeach; endif; ?>
@@ -969,7 +969,7 @@ function cmp_render_acc_bag_script() {
                     if(response.success) {
                         if (newStatus === 'yes') {
                             pill.innerHTML = 'Bag Deposit Held &#9662;';
-                            pill.style.background = '#dcfce7'; pill.style.color = '#10b981'; pill.style.borderColor = '#10b981';
+                            pill.style.background = '#dcfce7'; pill.style.color = '#379237'; pill.style.borderColor = '#379237';
                         } else if (newStatus === 'own_bag') {
                             pill.innerHTML = "Customer's Own Bag &#9662;";
                             pill.style.background = '#ede9fe'; pill.style.color = '#8b5cf6'; pill.style.borderColor = '#8b5cf6';
