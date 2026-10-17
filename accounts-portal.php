@@ -171,7 +171,7 @@ if(!function_exists('cmp_process_timing_data')){
 add_shortcode('meal_accounts_portal', 'cmp_render_accounts_portal');
 function cmp_render_accounts_portal() {
     
-    // Security & Custom UI/UX Login Screen
+    // Security & Custom Glass UI/UX Login Screen
     if ( ! is_user_logged_in() || ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) ) {
         if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
             return cmp_render_portal_login_ui( array(
@@ -181,7 +181,7 @@ function cmp_render_accounts_portal() {
                 'required_caps'  => array( 'manage_options', 'accounts_team' ),
                 'denied_message' => 'Finance or Accounts Team clearance is required to access this portal.',
                 'accent_color'   => '#379237',
-                'header_bg'      => '#379237',
+                'header_bg'      => '#1B5E20',
             ) );
         }
     }
