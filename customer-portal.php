@@ -7,6 +7,61 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 }
 
 // ==========================================
+// 0. ROLE & DATE LOCK HELPER FUNCTIONS
+// ==========================================
+
+/**
+ * Strictly allow only Administrators and Menu Managers to Add or Remove Plan Days.
+ * FOH Managers (foh_manager) are explicitly excluded.
+ */
+function cmp_can_adjust_plan_days() {
+    if ( ! is_user_logged_in() ) {
+        return false;
+    }
+    $user  = wp_get_current_user();
+    $roles = (array) $user->roles;
+
+    if ( current_user_can( 'manage_options' ) || in_array( 'administrator', $roles, true ) || in_array( 'menu_manager', $roles, true ) ) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Returns the earliest allowed YYYY-MM-DD date a customer can modify, reset, or cancel
+ * based on Asia/Dubai timezone and the configured daily cut-off hour.
+ * Past dates and today's date are ALWAYS locked. Tomorrow is locked if current hour >= cutoff.
+ */
+function cmp_get_earliest_customer_allowed_date() {
+    $tz           = new DateTimeZone( 'Asia/Dubai' );
+    $now          = new DateTime( 'now', $tz );
+    $current_hour = (int) $now->format( 'H' );
+    $cutoff_hour  = intval( get_option( 'cmp_cutoff_time', '11' ) );
+    $tomorrow     = ( clone $now )->modify( '+1 day' )->format( 'Y-m-d' );
+    $day_after    = ( clone $now )->modify( '+2 days' )->format( 'Y-m-d' );
+
+    return ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
+}
+
+/**
+ * Checks whether a target date is locked for customer edits/resets/cancellations.
+ */
+function cmp_is_date_locked_for_customer( $target_date ) {
+    if ( empty( $target_date ) || $target_date === '0000-00-00' ) {
+        return false;
+    }
+    $tz               = new DateTimeZone( 'Asia/Dubai' );
+    $today            = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d' );
+    $earliest_allowed = cmp_get_earliest_customer_allowed_date();
+
+    // Lock if date is today, in the past, or earlier than the cutoff-adjusted earliest date
+    if ( $target_date <= $today || $target_date < $earliest_allowed ) {
+        return true;
+    }
+    return false;
+}
+
+// ==========================================
 // 1. AJAX HANDLERS
 // ==========================================
 add_action('wp_ajax_cmp_save_daily_log', 'cmp_ajax_save_daily_log');
@@ -16,31 +71,26 @@ function cmp_ajax_save_daily_log() {
 
     if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
-    $log_id       = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
-    $sub_id       = intval($_POST['sub_id']);
-    $target_date  = sanitize_text_field($_POST['date']);
+    $log_id            = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
+    $sub_id            = intval($_POST['sub_id']);
+    $target_date       = sanitize_text_field($_POST['date']);
+    $is_override_mode  = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
 
-    // Check privileges
+    // Check privileges (Only bypass date lock when actively in Staff Override Mode)
     $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
     $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
-    $is_privileged = $is_admin || $is_chef;
+    $is_privileged = ($is_admin || $is_chef) && $is_override_mode === 1;
 
     // Cutoff Time Validation (Ironclad Server Rule)
     if ( ! $is_privileged ) {
-        $tz           = new DateTimeZone('Asia/Dubai');
-        $now          = new DateTime('now', $tz);
-        $current_hour = (int) $now->format('H');
-        $cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
-        $tomorrow     = ( clone $now )->modify('+1 day')->format('Y-m-d');
-        $day_after    = ( clone $now )->modify('+2 days')->format('Y-m-d');
+        $cutoff_hour      = intval( get_option('cmp_cutoff_time', '11') );
+        $earliest_allowed = cmp_get_earliest_customer_allowed_date();
 
-        $earliest_allowed = ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
-
-        if ( $target_date < $earliest_allowed ) {
+        if ( cmp_is_date_locked_for_customer( $target_date ) ) {
             wp_send_json_error(
-                'This date is no longer available. The cutoff time of ' .
+                'This date is no longer available. Past dates, today, and dates past the ' .
                 str_pad($cutoff_hour, 2, '0', STR_PAD_LEFT) .
-                ':00 GST has passed. The earliest available date is ' .
+                ':00 GST cutoff are locked. The earliest available date is ' .
                 date('D, d M Y', strtotime($earliest_allowed)) . '.'
             );
         }
@@ -55,11 +105,9 @@ function cmp_ajax_save_daily_log() {
 
     // --- LOG-LEVEL SNAPSHOT LOGIC (Phase 7) ---
     if ($log_id > 0) {
-        // It's an update: Preserve historical plan mode
         $existing_log = $wpdb->get_row($wpdb->prepare("SELECT plan_mode FROM $table_logs WHERE id = %d", $log_id));
         $plan_mode = ($existing_log && !empty($existing_log->plan_mode)) ? $existing_log->plan_mode : 'standard';
     } else {
-        // It's new: Capture current subscription mode
         $plan_mode = 'standard';
         if (!empty($sub->is_flexible)) $plan_mode = 'flexible';
         if (!empty($sub->allow_custom)) $plan_mode = 'custom';
@@ -113,7 +161,7 @@ function cmp_ajax_save_daily_log() {
     }
 
     // --- STRICT SELECTION QUOTA ENFORCEMENT ---
-    if (!$is_admin && !$is_chefs_choice && !$is_menu_pending) {
+    if (!($is_admin && $is_override_mode === 1) && !$is_chefs_choice && !$is_menu_pending) {
         if ($is_juice) {
             if ($row_allow_custom) {
                 if (empty($_POST['custom_juice_1']) || empty($_POST['custom_juice_2']) || empty($_POST['custom_juice_3'])) {
@@ -204,7 +252,7 @@ function cmp_ajax_save_daily_log() {
 
     if ($log_id > 0) {
         $wpdb->update($table_logs, $data, array('id' => $log_id));
-        $response_data = array('msg' => 'Updated');
+        $response_data = array('msg' => 'Updated', 'new_log_id' => $log_id);
     } else {
         $wpdb->insert($table_logs, $data);
         $response_data = array('new_log_id' => $wpdb->insert_id);
@@ -331,12 +379,12 @@ function cmp_ajax_cp_admin_update_account_details() {
     ));
 }
 
-// 1.7 AJAX HANDLER: ADMIN ADD/REMOVE PLAN DAYS
+// 1.7 AJAX HANDLER: ADMIN & MENU MANAGER ONLY — ADD/REMOVE PLAN DAYS
 add_action('wp_ajax_cmp_cp_admin_adjust_days', 'cmp_ajax_cp_admin_adjust_days');
 function cmp_ajax_cp_admin_adjust_days() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
-    if ( ! current_user_can('manage_options') && ! current_user_can('menu_manager') ) {
-        wp_send_json_error('Permission Denied. Only Admins and Menu Managers can adjust total plan days.');
+    if ( ! cmp_can_adjust_plan_days() ) {
+        wp_send_json_error('Permission Denied. Only Administrators and Menu Managers are permitted to add or remove plan days.');
     }
 
     $sub_id = intval($_POST['sub_id']);
@@ -380,8 +428,10 @@ function cmp_ajax_clear_daily_log() {
 
     if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
-    $log_id = intval($_POST['log_id']);
-    $sub_id = intval($_POST['sub_id']);
+    $log_id           = intval($_POST['log_id']);
+    $sub_id           = intval($_POST['sub_id']);
+    $is_override_mode = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
+
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
@@ -391,27 +441,17 @@ function cmp_ajax_clear_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    // Check privileges
-    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
-    $is_chef       = current_user_can('kitchen_staff');
-    $is_privileged = $is_admin || $is_chef;
+    $is_staff_role = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager') || current_user_can('kitchen_staff');
+    $is_privileged = $is_staff_role && $is_override_mode === 1;
     
-    if (!$is_privileged && $sub->user_id != get_current_user_id()) {
+    if (!$is_staff_role && $sub->user_id != get_current_user_id()) {
         wp_send_json_error('Unauthorized access to this subscription.');
     }
 
+    // Strict Date & Cut-off Lock for Customers (blocks past dates, today, and post-cutoff tomorrow)
     if ( ! $is_privileged ) {
-        $tz           = new DateTimeZone('Asia/Dubai');
-        $now          = new DateTime('now', $tz);
-        $current_hour = (int) $now->format('H');
-        $cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
-        $tomorrow     = ( clone $now )->modify('+1 day')->format('Y-m-d');
-        $day_after    = ( clone $now )->modify('+2 days')->format('Y-m-d');
-
-        $earliest_allowed = ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
-
-        if ( $log->target_date < $earliest_allowed ) {
-            wp_send_json_error('Cut-off time has passed for this date. You cannot clear this selection.');
+        if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
+            wp_send_json_error('Past dates, today\'s date, and dates past the daily cut-off time cannot be reset.');
         }
     }
 
@@ -427,8 +467,10 @@ function cmp_ajax_cancel_daily_log() {
 
     if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
-    $log_id = intval($_POST['log_id']);
-    $sub_id = intval($_POST['sub_id']);
+    $log_id           = intval($_POST['log_id']);
+    $sub_id           = intval($_POST['sub_id']);
+    $is_override_mode = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
+
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
@@ -438,26 +480,17 @@ function cmp_ajax_cancel_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
-    $is_chef       = current_user_can('kitchen_staff');
-    $is_privileged = $is_admin || $is_chef;
+    $is_staff_role = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager') || current_user_can('kitchen_staff');
+    $is_privileged = $is_staff_role && $is_override_mode === 1;
     
-    if (!$is_privileged && $sub->user_id != get_current_user_id()) {
+    if (!$is_staff_role && $sub->user_id != get_current_user_id()) {
         wp_send_json_error('Unauthorized access to this subscription.');
     }
 
+    // Strict Date & Cut-off Lock for Customers (blocks past dates, today, and post-cutoff tomorrow)
     if ( ! $is_privileged ) {
-        $tz           = new DateTimeZone('Asia/Dubai');
-        $now          = new DateTime('now', $tz);
-        $current_hour = (int) $now->format('H');
-        $cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
-        $tomorrow     = ( clone $now )->modify('+1 day')->format('Y-m-d');
-        $day_after    = ( clone $now )->modify('+2 days')->format('Y-m-d');
-
-        $earliest_allowed = ( $current_hour >= $cutoff_hour ) ? $day_after : $tomorrow;
-
-        if ( $log->target_date < $earliest_allowed ) {
-            wp_send_json_error('Cut-off time has passed for this date. You cannot cancel this day.');
+        if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
+            wp_send_json_error('Past dates, today\'s date, and dates past the daily cut-off time cannot be cancelled.');
         }
     }
 
@@ -499,10 +532,10 @@ function cmp_render_customer_portal() {
     }
 
     global $wpdb;
-    $user_id = get_current_user_id();
+    $user_id      = get_current_user_id();
     $current_user = wp_get_current_user();
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
-    $table_foods = $wpdb->prefix . 'cmp_foods';
+    $table_logs   = $wpdb->prefix . 'cmp_daily_logs';
+    $table_foods  = $wpdb->prefix . 'cmp_foods';
 
     $dynamic_cutoff_hour  = intval( get_option('cmp_cutoff_time', '11') );
     $label_chefs_choice   = get_option('cmp_label_chefs_choice', "Chef's Choice");
@@ -512,8 +545,8 @@ function cmp_render_customer_portal() {
     $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
 
     // Clean SVG Icons for Action Buttons
-    $icon_reset = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
-    $icon_cancel = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+    $icon_reset  = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+    $icon_cancel = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
@@ -528,14 +561,18 @@ function cmp_render_customer_portal() {
     }
 
     $subs = array();
-    $today = date('Y-m-d H:i:s');
+    $tz_dubai  = new DateTimeZone('Asia/Dubai');
+    $now_dubai = new DateTime('now', $tz_dubai);
+    $today_dt  = $now_dubai->format('Y-m-d H:i:s');
+    $today_ymd = $now_dubai->format('Y-m-d');
+
     if ($raw_subs) {
         foreach ($raw_subs as $sub) {
             if ($is_admin_override || $is_chef_override) {
                 $subs[] = $sub; 
             } else {
                 $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
-                if ($usage_days < $sub->total_days && $sub->expiry_date >= $today) {
+                if ($usage_days < $sub->total_days && $sub->expiry_date >= $today_dt) {
                     $subs[] = $sub; 
                 }
             }
@@ -574,23 +611,22 @@ function cmp_render_customer_portal() {
 
     // --- FETCH ALL FOODS FOR JS INJECTION ---
     $foods = $wpdb->get_results("SELECT * FROM $table_foods WHERE is_active = 1 ORDER BY category_name, food_name");
-    $foods_map = array(); 
-    foreach ($foods as $food) { $foods_map[$food->id] = $food; }
 
-    $current_hour = (int) date('H');
+    $current_hour         = (int) $now_dubai->format('H');
+    $customer_min_date    = cmp_get_earliest_customer_allowed_date();
 
-    // --- UNLOCK BACK-DATES FOR ADMINS ---
+    // --- UNLOCK BACK-DATES FOR ADMINS IN OVERRIDE MODE ---
     if ($is_admin_override || $is_chef_override) {
         $global_min_date = ''; 
         $note_text = "Admin/Chef Mode: Date restrictions are disabled. You may assign back-dates.";
         $note_color = "#379237"; 
     } elseif ( $current_hour >= $dynamic_cutoff_hour ) {
-        $global_min_date = date( 'Y-m-d', strtotime('+2 days') );
-        $note_text = "Note: It is past " . str_pad($dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT) . ":00 GST. Meal selections are now locked for tomorrow.";
+        $global_min_date = $customer_min_date;
+        $note_text = "Note: It is past " . str_pad($dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT) . ":00 GST. Meal selections, resets, and cancellations are now locked for today and tomorrow.";
         $note_color = "#d63638"; 
     } else {
-        $global_min_date = date( 'Y-m-d', strtotime('+1 day') );
-        $note_text = "Note: Please make selections before " . str_pad($dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT) . ":00 GST the day prior to delivery.";
+        $global_min_date = $customer_min_date;
+        $note_text = "Note: Please make selections, resets, or cancellations before " . str_pad($dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT) . ":00 GST the day prior to delivery.";
         $note_color = "#1B5E20"; 
     }
 
@@ -601,8 +637,9 @@ function cmp_render_customer_portal() {
     </script>
 
     <style>
-        .cmp-dashboard-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; overflow-x: hidden; box-sizing: border-box; position: relative; padding: 0 12px; }
-        
+        .cmp-dashboard-wrap { max-width: 1220px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; overflow-x: hidden; box-sizing: border-box; position: relative; padding: 0 12px 40px 12px; }
+        .cmp-dashboard-wrap *, .cmp-dashboard-wrap *::before, .cmp-dashboard-wrap *::after { box-sizing: border-box; }
+
         /* Desktop Customer Glass Header (> 992px) */
         .cmp-header-banner {
             background: linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%) !important;
@@ -652,15 +689,460 @@ function cmp_render_customer_portal() {
         .cmp-tab-content { display: none; padding: 25px 0; }
         .cmp-tab-content.active { display: block; }
 
-        .cmp-table-responsive { overflow: hidden; background: #fff; border: 1px solid #DCECC9; border-radius: 12px; width: 100%; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05); }
-        .cmp-table { width: 100%; border-collapse: collapse; font-size: 0.9em; table-layout: fixed; }
-        .cmp-table th { padding: 12px 5px; border-bottom: 2px solid #DCECC9; background: #EEF7E3; color: #1B5E20; text-align: center; vertical-align: middle; white-space: normal; overflow: visible; word-wrap: break-word; }
-        .cmp-table td { padding: 10px 5px; border-bottom: 1px solid #eee; vertical-align: middle; box-sizing: border-box; }
+        /* Recipient Name Inline Pill Label */
+        .cmp-recipient-label-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #68B946;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: 0.85em;
+            font-weight: 700;
+            line-height: 1.3;
+            white-space: nowrap;
+        }
 
-        .cmp-mobile-label { display: none; }
-        .cmp-mobile-status { display: none; }
-        .macro-mobile { display: none; }
-        .macro-desktop { display: inline-block; white-space: normal; word-wrap: break-word; line-height: 1.4; font-size: 0.85em; transition: opacity 0.2s; }
+        /* =========================================================
+           OPTION A: UNIFIED STACKED DAY CARD LAYOUT (ALL VIEWPORTS)
+           WITH MOBILE-STYLE FULL-VISIBILITY DROPDOWNS
+           ========================================================= */
+        .cmp-table-responsive {
+            overflow: visible !important;
+            background: transparent !important;
+            border: none !important;
+            width: 100%;
+            box-shadow: none !important;
+        }
+        .cmp-table { width: 100% !important; display: block !important; border-collapse: separate; }
+        .cmp-table thead { display: none !important; }
+        .cmp-table tbody { display: block !important; width: 100% !important; }
+
+        /* Day Card Container */
+        .cmp-table tr.cmp-day-row {
+            margin-bottom: 22px !important;
+            border-radius: 16px !important;
+            padding: 20px 22px !important;
+            background: #ffffff !important;
+            border: 2px solid #dbe3ec !important;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05) !important;
+            transition: all 0.2s ease;
+        }
+        .cmp-table tr.cmp-day-row.status-pending { border-color: #fde68a !important; }
+        .cmp-table tr.cmp-day-row.status-saved { border-color: #bbf7d0 !important; }
+        .cmp-table tr.cmp-day-row.status-void { border-color: #fecdd3 !important; opacity: 0.82; }
+
+        /* Field Micro-Label inside each Card Box */
+        .cmp-mobile-label {
+            display: block !important;
+            font-weight: 800 !important;
+            color: #1B5E20 !important;
+            margin-bottom: 8px !important;
+            font-size: 0.82rem !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+        }
+
+        /* Full-Visibility Mobile-Style Dropdowns & Inputs Across Desktop, Tablet & Mobile */
+        .cmp-table select,
+        .cmp-table input[type="text"],
+        .cmp-table input[type="date"] {
+            -webkit-appearance: none !important;
+            appearance: none !important;
+            width: 100% !important;
+            min-height: 50px !important;
+            padding: 11px 42px 11px 16px !important;
+            font-size: 15px !important;
+            line-height: 1.35 !important;
+            background-color: #f8fafc !important;
+            border: 2px solid #cbd5e1 !important;
+            border-radius: 10px !important;
+            box-shadow: 0 2px 0 #cbd5e1 !important;
+            font-weight: 700 !important;
+            color: #231F20 !important;
+            margin-bottom: 0 !important;
+            box-sizing: border-box !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+        }
+        .cmp-table select {
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23379237' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") !important;
+            background-repeat: no-repeat !important;
+            background-position: right 14px center !important;
+            background-size: 18px !important;
+            cursor: pointer;
+        }
+        .cmp-table select:focus,
+        .cmp-table input[type="text"]:focus,
+        .cmp-table input[type="date"]:focus {
+            background-color: #ffffff !important;
+            border-color: #379237 !important;
+            box-shadow: 0 0 0 3px rgba(104, 185, 70, 0.22) !important;
+            outline: none !important;
+        }
+        .cmp-table select:disabled,
+        .cmp-table input[type="text"]:disabled,
+        .cmp-table input[type="date"]:disabled {
+            background-color: #f1f5f9 !important;
+            color: #64748b !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: none !important;
+            cursor: not-allowed !important;
+        }
+        .cmp-table input[type="date"],
+        .cmp-table input[type="text"] {
+            padding-right: 14px !important;
+            background-image: none !important;
+        }
+        .cmp-stacked-snack { margin-bottom: 10px !important; }
+
+        /* Status Box — Strictly Contained Inside Box on Desktop, Tablet & Mobile */
+        .cmp-status-box {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 100% !important;
+            min-height: 50px !important;
+            padding: 8px 12px !important;
+            background: #f8fafc !important;
+            border: 1.5px solid #e2e8f0 !important;
+            border-radius: 10px !important;
+            box-sizing: border-box !important;
+            text-align: center !important;
+            overflow: hidden !important;
+        }
+        .cmp-status-pill {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            max-width: 100% !important;
+            padding: 5px 12px !important;
+            border-radius: 999px !important;
+            font-size: 0.85rem !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            white-space: nowrap !important;
+            box-sizing: border-box !important;
+        }
+        .cmp-status-pill.pill-pending { color: #475569; background: #e2e8f0; border: 1px solid #cbd5e1; }
+        .cmp-status-pill.pill-confirmed { color: #1B5E20; background: #EEF7E3; border: 1px solid #68B946; }
+        .cmp-status-pill.pill-successful { color: #166534; background: #dcfce7; border: 1px solid #86efac; }
+        .cmp-status-pill.pill-void { color: #9f1239; background: #ffe4e6; border: 1px solid #fda4af; }
+        .cmp-status-pill.pill-paused { color: #b45309; background: #fef3c7; border: 1px solid #fde68a; }
+
+        /* Action Buttons — Never Wrap "Update" / "Updated ✓" Text */
+        .cmp-action-box {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            gap: 8px !important;
+            flex-wrap: nowrap !important;
+            width: 100% !important;
+        }
+        .cmp-save-row {
+            min-width: 122px !important;
+            width: auto !important;
+            flex: 1 1 auto !important;
+            min-height: 48px !important;
+            padding: 10px 18px !important;
+            font-size: 15px !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            white-space: nowrap !important;
+            border-radius: 10px !important;
+            border: none !important;
+            color: #ffffff !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+            transition: all 0.2s ease !important;
+            box-shadow: 0 4px 10px rgba(27, 94, 32, 0.18) !important;
+        }
+        .cmp-save-row:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
+        .cmp-save-row:disabled { opacity: 0.7; cursor: not-allowed !important; transform: none !important; }
+
+        .cmp-secondary-actions {
+            display: inline-flex !important;
+            gap: 6px !important;
+            flex-shrink: 0 !important;
+        }
+        .cmp-clear-row,
+        .cmp-cancel-day-row {
+            width: 44px !important;
+            height: 48px !important;
+            padding: 0 !important;
+            border-radius: 10px !important;
+            border: none !important;
+            color: #fff !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            transition: all 0.2s ease !important;
+            flex-shrink: 0 !important;
+        }
+        .cmp-clear-row { background: #f59e0b !important; }
+        .cmp-clear-row:hover:not(:disabled) { background: #d97706 !important; }
+        .cmp-cancel-day-row { background: #dc2626 !important; }
+        .cmp-cancel-day-row:hover:not(:disabled) { background: #b91c1c !important; }
+
+        /* Colourful Macro Tiles Inside the Box (Single Unified Renderer — Zero Mobile Duplication) */
+        .cmp-macro-display {
+            display: block !important;
+            width: 100% !important;
+            padding: 12px !important;
+            background: #f8fafc !important;
+            border: 1.5px solid #e2e8f0 !important;
+            border-radius: 12px !important;
+            box-sizing: border-box !important;
+        }
+        .cmp-macro-chef-tag {
+            display: inline-block;
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #68B946;
+            font-size: 0.75rem;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 999px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .cmp-macro-tiles-grid {
+            display: grid !important;
+            grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            width: 100% !important;
+        }
+        .cmp-macro-tile {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 8px 6px !important;
+            border-radius: 10px !important;
+            text-align: center !important;
+            box-sizing: border-box !important;
+            transition: transform 0.15s ease;
+        }
+        .cmp-macro-tile .tile-label {
+            font-size: 0.68rem !important;
+            font-weight: 800 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+            opacity: 0.88 !important;
+            margin-bottom: 2px !important;
+            line-height: 1.1 !important;
+        }
+        .cmp-macro-tile .tile-val {
+            font-size: 0.98rem !important;
+            font-weight: 900 !important;
+            line-height: 1.2 !important;
+            white-space: nowrap !important;
+        }
+        /* Individual Colourful Macro Tile Themes */
+        .cmp-macro-tile.tile-cal {
+            background: linear-gradient(145deg, #fffbeb 0%, #fef3c7 100%) !important;
+            border: 1.5px solid #fcd34d !important;
+            color: #b45309 !important;
+        }
+        .cmp-macro-tile.tile-pro {
+            background: linear-gradient(145deg, #ecfdf5 0%, #d1fae5 100%) !important;
+            border: 1.5px solid #6ee7b7 !important;
+            color: #047857 !important;
+        }
+        .cmp-macro-tile.tile-carb {
+            background: linear-gradient(145deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+            border: 1.5px solid #7dd3fc !important;
+            color: #0369a1 !important;
+        }
+        .cmp-macro-tile.tile-fat {
+            background: linear-gradient(145deg, #faf5ff 0%, #f3e8ff 100%) !important;
+            border: 1.5px solid #d8b4fe !important;
+            color: #6d28d9 !important;
+        }
+        .cmp-macro-banner-state {
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.88rem;
+            text-align: center;
+        }
+
+        /* Chef's Choice Box Styling */
+        .cmp-chef-box {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            min-height: 50px !important;
+            padding: 8px 12px !important;
+            background: #f8fafc !important;
+            border: 2px solid #cbd5e1 !important;
+            border-radius: 10px !important;
+            gap: 10px !important;
+        }
+        .cmp-chefs-choice {
+            width: 22px !important;
+            height: 22px !important;
+            accent-color: #379237 !important;
+            cursor: pointer !important;
+            margin: 0 !important;
+        }
+
+        /* DESKTOP & TABLET CARD GRID LAYOUT (> 768px) */
+        @media (min-width: 769px) {
+            .cmp-mobile-status { display: none !important; }
+
+            .cmp-table tr.cmp-day-row {
+                display: grid !important;
+                grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+                gap: 14px 16px !important;
+                align-items: end !important;
+            }
+            .cmp-table td {
+                display: block !important;
+                padding: 0 !important;
+                border: none !important;
+                width: 100% !important;
+            }
+
+            /* Top Row of Day Card: Day Title (2 cols) | Date (3 cols) | Chef's Choice (2 cols) | Status Box (2 cols) | Action Buttons (3 cols) */
+            .cmp-table td.cmp-cell-day {
+                grid-column: 1 / span 2 !important;
+                 grid-row: 1 !important;
+                align-self: stretch !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                background: #EEF7E3 !important;
+                color: #1B5E20 !important;
+                border: 1.5px solid #DCECC9 !important;
+                border-radius: 12px !important;
+                font-size: 1.15rem !important;
+                font-weight: 800 !important;
+                padding: 10px 14px !important;
+                text-align: center !important;
+            }
+            .cmp-table tr.status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border-color: #fde68a !important; }
+            .cmp-table tr.status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border-color: #fecdd3 !important; }
+
+            .cmp-table td.cmp-cell-date { grid-column: 3 / span 3 !important; grid-row: 1 !important; }
+            .cmp-table td.cmp-cell-chef { grid-column: 6 / span 2 !important; grid-row: 1 !important; }
+            .cmp-table td.cmp-cell-status { grid-column: 8 / span 2 !important; grid-row: 1 !important; }
+            .cmp-table td.cmp-cell-action { grid-column: 10 / span 3 !important; grid-row: 1 !important; }
+
+            /* Divider line between Card Header Controls and Meal Dropdown Grid */
+            .cmp-table td.cmp-cell-meal,
+            .cmp-table td.cmp-cell-snack,
+            .cmp-table td.cmp-cell-macros,
+            .cmp-table td.cmp-cell-juice {
+                padding-top: 12px !important;
+                border-top: 1px dashed #e2e8f0 !important;
+            }
+
+            /* Meal Selection Row: Spacious 2-Column Mobile-Style Dropdowns so Full Meal Names are 100% Visible */
+            .cmp-table td.cmp-cell-meal-1 { grid-column: 1 / span 6 !important; grid-row: 2 !important; }
+            .cmp-table td.cmp-cell-meal-2 { grid-column: 7 / span 6 !important; grid-row: 2 !important; }
+            .cmp-table td.cmp-cell-meal-3 { grid-column: 1 / span 6 !important; grid-row: 3 !important; }
+            .cmp-table td.cmp-cell-snack  { grid-column: 7 / span 6 !important; grid-row: 3 !important; }
+            .cmp-table td.cmp-cell-macros { grid-column: 1 / span 12 !important; grid-row: 4 !important; }
+
+            /* Juice Plan Layout */
+            .cmp-table td.cmp-cell-juice-1 { grid-column: 1 / span 4 !important; grid-row: 2 !important; }
+            .cmp-table td.cmp-cell-juice-2 { grid-column: 5 / span 4 !important; grid-row: 2 !important; }
+            .cmp-table td.cmp-cell-juice-3 { grid-column: 9 / span 4 !important; grid-row: 2 !important; }
+        }
+
+        /* Tablet Adjustments (769px - 1024px) */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .cmp-table td.cmp-cell-day    { grid-column: 1 / span 3 !important; grid-row: 1 !important; }
+            .cmp-table td.cmp-cell-date   { grid-column: 4 / span 5 !important; grid-row: 1 !important; }
+            .cmp-table td.cmp-cell-chef   { grid-column: 9 / span 4 !important; grid-row: 1 !important; }
+            .cmp-table td.cmp-cell-status { grid-column: 1 / span 5 !important; grid-row: 2 !important; }
+            .cmp-table td.cmp-cell-action { grid-column: 6 / span 7 !important; grid-row: 2 !important; }
+
+            .cmp-table td.cmp-cell-meal-1 { grid-column: 1 / span 6 !important; grid-row: 3 !important; }
+            .cmp-table td.cmp-cell-meal-2 { grid-column: 7 / span 6 !important; grid-row: 3 !important; }
+            .cmp-table td.cmp-cell-meal-3 { grid-column: 1 / span 6 !important; grid-row: 4 !important; }
+            .cmp-table td.cmp-cell-snack  { grid-column: 7 / span 6 !important; grid-row: 4 !important; }
+            .cmp-table td.cmp-cell-macros { grid-column: 1 / span 12 !important; grid-row: 5 !important; }
+
+            .cmp-table td.cmp-cell-juice-1 { grid-column: 1 / span 4 !important; grid-row: 3 !important; }
+            .cmp-table td.cmp-cell-juice-2 { grid-column: 5 / span 4 !important; grid-row: 3 !important; }
+            .cmp-table td.cmp-cell-juice-3 { grid-column: 9 / span 4 !important; grid-row: 3 !important; }
+        }
+
+        /* MOBILE ACCORDION CARD VIEW (<= 768px) */
+        @media (max-width: 768px) {
+            .cmp-dashboard-wrap { padding: 0 6px 35px 6px; }
+            .cmp-table tr.cmp-day-row, .cmp-table td { display: block !important; width: 100% !important; }
+            .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; }
+
+            .cmp-table tr.cmp-day-row {
+                margin-bottom: 20px !important;
+                padding: 15px 18px 18px 18px !important;
+            }
+
+            .cmp-table td.cmp-cell-day {
+                border-radius: 10px !important;
+                text-align: left !important;
+                font-size: 1.2em !important;
+                margin-bottom: 10px !important;
+                padding: 14px 18px !important;
+                cursor: pointer;
+                position: relative;
+                transition: all 0.2s ease;
+            }
+            .cmp-table td.cmp-cell-day::after {
+                content: '\25BC';
+                position: absolute;
+                right: 18px;
+                top: 50%;
+                transform: translateY(-50%);
+                font-size: 15px;
+                color: inherit;
+            }
+            .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
+            .cmp-table tr:not(.is-open) td:not(.cmp-cell-day) { display: none !important; }
+
+            .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
+            .cmp-table td.cmp-cell-status { display: none !important; } /* Already shown in mobile header bar */
+
+            .status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
+            .status-saved td.cmp-cell-day { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
+            .status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
+
+            .cmp-macro-tiles-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            }
+            .cmp-action-box {
+                flex-direction: column !important;
+                align-items: stretch !important;
+            }
+            .cmp-save-row {
+                width: 100% !important;
+                min-height: 52px !important;
+                font-size: 17px !important;
+            }
+            .cmp-secondary-actions {
+                width: 100% !important;
+                display: flex !important;
+            }
+            .cmp-clear-row, .cmp-cancel-day-row {
+                flex: 1 !important;
+                height: 46px !important;
+            }
+            .cmp-wa-float { bottom: 20px; right: 20px; padding: 12px; border-radius: 50%; }
+            .cmp-wa-text { display: none; }
+        }
 
         .cmp-wa-float {
             position: fixed; bottom: 30px; right: 30px; background-color: #25d366; color: white; border-radius: 50px;
@@ -668,81 +1150,6 @@ function cmp_render_customer_portal() {
             text-decoration: none; font-weight: bold; font-size: 16px; z-index: 9999; transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
         .cmp-wa-float:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(37, 211, 102, 0.5); color: white; }
-
-        @media (min-width: 769px) {
-            .cmp-table select { width: 100%; padding: 8px; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 42px; border: 1px solid #cbd5e1; border-radius: 6px; }
-            .cmp-table input[type="date"] { width: 100% !important; padding: 6px !important; box-sizing: border-box !important; height: 42px !important; border: 1px solid #cbd5e1; border-radius: 6px; }
-            .cmp-table th:nth-child(1) { width: 55px; }  
-            .cmp-table th:nth-child(2) { width: 145px; } 
-            .cmp-table th:nth-child(3) { width: 100px; } 
-
-            .cmp-table th:last-child { width: 85px; }         
-            .cmp-table th:nth-last-child(2) { width: 105px; } 
-            .cmp-table th:nth-last-child(3) { width: 110px; } 
-            .cmp-table th:nth-last-child(4) { width: 135px; } 
-
-            .cmp-stacked-snack { margin-bottom: 8px; }
-            .cmp-save-row { padding: 10px 5px !important; height: 42px; width: 100%; box-sizing: border-box; border-radius: 6px; }
-        }
-
-        @media (max-width: 768px) {
-            .cmp-dashboard-wrap { padding: 0 5px; }
-            .cmp-table-responsive { overflow: visible !important; border: none !important; box-shadow: none !important; background: transparent !important; }
-            .cmp-table { width: 100% !important; display: block !important; } 
-            .cmp-table tbody, .cmp-table tr, .cmp-table td { display: block !important; width: 100% !important; box-sizing: border-box !important; }
-            .cmp-table thead { display: none !important; }
-            .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; overflow: hidden; }
-
-            .cmp-table tr {
-                margin-bottom: 25px !important; border-radius: 12px !important; padding: 15px 20px 20px 20px !important;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important; background: #fff !important; border: 2px solid #cbd5e1 !important;
-            }
-
-            .cmp-table td:nth-child(1) {
-                border-radius: 8px !important; text-align: left !important; font-size: 1.3em !important; margin-bottom: 15px !important;
-                padding: 15px 20px !important; cursor: pointer; position: relative; transition: all 0.2s ease;
-            }
-
-            .cmp-table td:nth-child(1)::after { content: '\25BC'; position: absolute; right: 20px; top: 50%; transform: translateY(-50%); font-size: 16px; color: inherit; }
-            .cmp-table tr.is-open td:nth-child(1)::after { content: '\25B2'; }
-            .cmp-table tr:not(.is-open) td:not(:first-child) { display: none !important; }
-
-            .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
-
-            .status-pending { border: 2px solid #fde68a !important; }
-            .status-pending td:nth-child(1) { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
-
-            .status-saved { border: 2px solid #bbf7d0 !important; }
-            .status-saved td:nth-child(1) { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
-
-            .status-void { border: 2px solid #fecdd3 !important; opacity: 0.75; }
-            .status-void td:nth-child(1) { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
-
-            .cmp-mobile-label { display: block !important; font-weight: bold !important; color: #1B5E20 !important; margin-bottom: 8px !important; font-size: 1.05em !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; }
-
-            .cmp-table select, .cmp-table input[type="text"], .cmp-table input[type="date"] {
-                -webkit-appearance: none !important; appearance: none !important; width: 100% !important; min-height: 55px !important; padding: 15px 40px 15px 20px !important; font-size: 16px !important; 
-                background-color: #f8fafc !important; border: 2px solid #cbd5e1 !important; border-radius: 10px !important; box-shadow: 0 3px 0 #cbd5e1 !important;
-                font-weight: bold !important; color: #231F20 !important; margin-bottom: 10px !important; box-sizing: border-box !important;
-            }
-            .cmp-table select {
-                background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23379237' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") !important;
-                background-repeat: no-repeat !important; background-position: right 15px center !important; background-size: 18px !important;
-            }
-            .cmp-table select:active { transform: translateY(3px) !important; box-shadow: 0 0 0 #cbd5e1 !important; }
-            .cmp-table input[type="date"], .cmp-table input[type="text"] { padding-right: 15px !important; background-image: none !important; }
-
-            .cmp-chefs-choice { transform: scale(1.8) !important; margin: 5px 15px 5px 5px !important; accent-color: #379237 !important; }
-
-            .macro-mobile { display: block !important; width: 100%; transition: opacity 0.2s; }
-            .cmp-macro-display { display: block !important; margin-top: 10px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px dashed #cbd5e1; font-size: 1.1em !important; }
-            .mob-grid { display: flex; flex-wrap: wrap; justify-content: space-between; }
-            .mob-grid div { width: 48%; margin-bottom: 5px; }
-
-            .cmp-save-row { width: 100% !important; padding: 18px !important; font-size: 20px !important; border-radius: 10px !important; margin-top: 10px !important; }
-            .cmp-wa-float { bottom: 20px; right: 20px; padding: 12px; border-radius: 50%; }
-            .cmp-wa-text { display: none; }
-        }
     </style>
 
     <div class="cmp-dashboard-wrap">
@@ -883,7 +1290,7 @@ function cmp_render_customer_portal() {
         <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
 
             <div style="background:#fff; border:1px solid #DCECC9; border-radius:12px; padding:25px; margin-bottom:20px; box-shadow:0 4px 12px rgba(27,94,32,0.04); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
-                <div style="flex:1; min-width:250px;">
+                <div style="flex:1; min-width:260px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <h3 style="margin:0; color:#379237; font-size:1.3em;">Account Details</h3>
                         <?php if (current_user_can('manage_options')): ?>
@@ -893,9 +1300,15 @@ function cmp_render_customer_portal() {
 
                     <div id="account-view-<?php echo $sub->id; ?>">
                         <p style="margin:0 0 8px 0; color:#231F20;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
-                        <p style="margin:0 0 8px 0; color:#231F20;"><strong>Name:</strong> <span id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($display_name); ?></span></p>
-
-                        <p id="recipient-row-<?php echo $sub->id; ?>" style="margin:0 0 8px 0; color:#231F20; display:<?php echo !empty($recipient_name) ? 'block' : 'none'; ?>"><strong>Recipient:</strong> <span id="recipient-val-<?php echo $sub->id; ?>"><?php echo esc_html($recipient_name); ?></span></p>
+                        
+                        <!-- First Name & Last Name with Recipient Name Label Next to It -->
+                        <p style="margin:0 0 8px 0; color:#231F20; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                            <strong>Name:</strong>
+                            <span id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($display_name); ?></span>
+                            <span id="recipient-row-<?php echo $sub->id; ?>" class="cmp-recipient-label-badge" style="display:<?php echo !empty($recipient_name) ? 'inline-flex' : 'none'; ?>;">
+                                Recipient: <strong id="recipient-val-<?php echo $sub->id; ?>"><?php echo esc_html($recipient_name); ?></strong>
+                            </span>
+                        </p>
 
                         <p style="margin:0 0 8px 0; color:#231F20;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
                         <p style="margin:0 0 8px 0; color:#231F20;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
@@ -904,25 +1317,25 @@ function cmp_render_customer_portal() {
 
                     <?php if (current_user_can('manage_options')): ?>
                     <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
-                        <div style="display:flex; gap:10px; margin-bottom:8px;">
-                            <div style="flex:1;">
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+                            <div style="flex:1; min-width:120px;">
                                 <label style="font-size:0.85em; font-weight:bold; color:#334155;">First Name:</label>
                                 <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
                             </div>
-                            <div style="flex:1;">
+                            <div style="flex:1; min-width:120px;">
                                 <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
                                 <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
                             </div>
-                        </div>
-                        <div style="margin-bottom:8px;">
-                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Recipient Name (Optional):</label>
-                            <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            <div style="flex:1; min-width:140px;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#1B5E20;">Recipient Name:</label>
+                                <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #68B946; background:#EEF7E3; border-radius:4px; box-sizing:border-box;">
+                            </div>
                         </div>
                         <div style="margin-bottom:10px;">
                             <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
                             <input type="text" id="edit-address-<?php echo $sub->id; ?>" value="<?php echo esc_attr($address !== 'Address not provided' ? $address : ''); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
                         </div>
-                        <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
+                        <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
                     </div>
                     <?php endif; ?>
 
@@ -986,11 +1399,11 @@ function cmp_render_customer_portal() {
             </div>
             <?php endif; ?>
 
-            <!-- PHASE 6: ADMIN PLAN MANAGER CONTROLS -->
-            <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
+            <!-- PHASE 6: ADMIN & MENU MANAGER ONLY — PLAN DAYS CONTROLS (FOH EXCLUDED) -->
+            <?php if ( cmp_can_adjust_plan_days() ): ?>
             <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <div>
-                    <strong style="color:#b45309; font-size:1.1em;">Admin Plan Manager</strong><br>
+                    <strong style="color:#b45309; font-size:1.1em;">Admin &amp; Menu Manager Plan Controls</strong><br>
                     <span style="color:#92400e; font-size:0.9em;">Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong></span>
                 </div>
                 <div style="display:flex; gap:10px;">
@@ -1055,9 +1468,10 @@ function cmp_render_customer_portal() {
                             
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1));
                             
+                            // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow
                             $is_time_locked = false;
                             if ($log && !empty($log->target_date)) {
-                                if ($log->target_date < $global_min_date) {
+                                if ( cmp_is_date_locked_for_customer($log->target_date) || $log->delivery_result === 'Successful' ) {
                                     $is_time_locked = true;
                                 }
                             }
@@ -1078,7 +1492,7 @@ function cmp_render_customer_portal() {
                             if ($is_void) { $row_status_class = 'status-void row-void'; } 
                             elseif ($log_id > 0) { $row_status_class = 'status-saved'; }
                             
-                            if ($log && !$is_void) {
+                            if ($log && !$is_void && !empty($log->target_date)) {
                                 $next_day_calc = date('Y-m-d', strtotime('+1 day', strtotime($log->target_date)));
                                 if (empty($active_min_date) || $next_day_calc > $active_min_date) {
                                     if (!$is_admin_override && !$is_chef_override) {
@@ -1087,47 +1501,57 @@ function cmp_render_customer_portal() {
                                 }
                             }
 
-                            $status_badge = '<span style="color:#666; font-size:0.9em; background:#f1f5f9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Pending</span>';
-                            
+                            $status_badge = '<span class="cmp-status-pill pill-pending">Pending</span>';
                             if ($log && $log->delivery_result === 'Successful') {
-                                $status_badge = '<span style="color:#166534; font-size:0.9em; background:#dcfce7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Successful</span>';
+                                $status_badge = '<span class="cmp-status-pill pill-successful">Successful</span>';
                             } elseif ($is_void && $log) {
-                                $status_badge = '<span style="color:#9f1239; font-size:0.9em; background:#ffe4e6; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">' . esc_html($log->delivery_result) . '</span>';
+                                $status_badge = '<span class="cmp-status-pill pill-void">' . esc_html($log->delivery_result) . '</span>';
                             } elseif ($is_paused) {
-                                $status_badge = '<span style="color:#b45309; font-size:0.9em; background:#fef3c7; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Paused</span>';
+                                $status_badge = '<span class="cmp-status-pill pill-paused">Paused</span>';
                             } elseif ($log_id > 0) {
-                                $status_badge = '<span style="color:#1B5E20; font-size:0.9em; background:#EEF7E3; border:1px solid #DCECC9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
+                                $status_badge = '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
                             }
 
-                            $macros_desk = '<strong>Cal:</strong> 0<br><strong>Fat:</strong> 0g<br><strong>Carb:</strong> 0g<br><strong>Pro:</strong> 0g';
-                            $macros_mob = '<div class="mob-grid"><div><strong>Cal:</strong> 0</div><div><strong>Fat:</strong> 0g</div><div><strong>Carb:</strong> 0g</div><div><strong>Pro:</strong> 0g</div></div>';
+                            $default_macro_tiles = '
+                                <div class="cmp-macro-tiles-grid">
+                                    <div class="cmp-macro-tile tile-cal"><span class="tile-label">Calories</span><span class="tile-val">0 kcal</span></div>
+                                    <div class="cmp-macro-tile tile-pro"><span class="tile-label">Protein</span><span class="tile-val">0g</span></div>
+                                    <div class="cmp-macro-tile tile-carb"><span class="tile-label">Carbs</span><span class="tile-val">0g</span></div>
+                                    <div class="cmp-macro-tile tile-fat"><span class="tile-label">Fat</span><span class="tile-val">0g</span></div>
+                                </div>';
                             
                             $min_attr = (!empty($active_min_date) && !$is_admin_override && !$is_chef_override) ? 'min="' . esc_attr($active_min_date) . '"' : '';
 
                         ?>
                             <tr class="cmp-day-row <?php echo $row_status_class; ?>" data-is-flexible="<?php echo $row_is_flexible; ?>" data-allow-custom="<?php echo $row_allow_custom; ?>">
-                                <td>
+                                <td class="cmp-cell-day">
                                     <strong>Day <?php echo $i; ?></strong>
                                     <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                 </td>
-                                <td>
+                                <td class="cmp-cell-date">
+                                    <span class="cmp-mobile-label">Delivery Date</span>
                                     <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" <?php echo $min_attr; ?> value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $date_picker_disabled; ?>>
                                 </td>
-                                <td style="text-align: center;">
-                                    <input type="checkbox" class="cmp-chefs-choice" data-row="<?php echo $i; ?>" <?php echo $chefs_choice_checkbox_disabled; ?> <?php if($saved_chefs_choice) echo 'checked'; ?>>
+                                <td class="cmp-cell-chef">
+                                    <span class="cmp-mobile-label"><?php echo esc_html($label_chefs_choice); ?></span>
+                                    <label class="cmp-chef-box">
+                                        <input type="checkbox" class="cmp-chefs-choice" data-row="<?php echo $i; ?>" <?php echo $chefs_choice_checkbox_disabled; ?> <?php if($saved_chefs_choice) echo 'checked'; ?>>
+                                        <span style="font-size:0.88rem; font-weight:700; color:#231F20;"><?php echo esc_html($label_chefs_choice); ?></span>
+                                    </label>
                                 </td>
                                 
                                 <?php if(!$is_juice): 
                                     $main_cats = [
-                                        'Breakfast' => ['slot' => 'breakfast', 'label' => $row_is_flexible ? 'Meal 1' : 'Breakfast'],
-                                        'Lunch'     => ['slot' => 'lunch',     'label' => $row_is_flexible ? 'Meal 2' : 'Lunch'],
-                                        'Dinner'    => ['slot' => 'dinner',    'label' => $row_is_flexible ? 'Meal 3' : 'Dinner']
+                                        'Breakfast' => ['slot' => 'breakfast', 'idx' => 1, 'label' => $row_is_flexible ? 'Meal 1' : 'Breakfast'],
+                                        'Lunch'     => ['slot' => 'lunch',     'idx' => 2, 'label' => $row_is_flexible ? 'Meal 2' : 'Lunch'],
+                                        'Dinner'    => ['slot' => 'dinner',    'idx' => 3, 'label' => $row_is_flexible ? 'Meal 3' : 'Dinner']
                                     ];
                                 ?>
                                     <?php foreach($main_cats as $cat => $data): ?>
-                                        <td>
+                                        <td class="cmp-cell-meal cmp-cell-meal-<?php echo $data['idx']; ?>">
+                                            <span class="cmp-mobile-label"><?php echo esc_html($data['label']); ?></span>
                                             <?php if($row_allow_custom): ?>
-                                                <input type="text" class="cmp-meal-custom cmp-main-meal" data-slot="<?php echo $data['slot']; ?>" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->{'custom_'.$data['slot']} : ''); ?>" placeholder="Type <?php echo esc_attr($data['label']); ?>..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px;">
+                                                <input type="text" class="cmp-meal-custom cmp-main-meal" data-slot="<?php echo $data['slot']; ?>" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->{'custom_'.$data['slot']} : ''); ?>" placeholder="Type <?php echo esc_attr($data['label']); ?>..." <?php echo $meal_select_disabled; ?>>
                                             <?php else: ?>
                                                 <select class="cmp-meal-select cmp-main-meal" data-cat="<?php echo $row_is_flexible ? 'Any' : $cat; ?>" data-slot="<?php echo $data['slot']; ?>" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->{$data['slot'].'_id'} : ''; ?>" <?php echo $meal_select_disabled; ?>>
                                                     <option value="">- Select <?php echo esc_html($data['label']); ?> -</option>
@@ -1137,11 +1561,12 @@ function cmp_render_customer_portal() {
                                     <?php endforeach; ?>
                                     
                                     <?php if($snack_quota > 0): ?>
-                                    <td>
+                                    <td class="cmp-cell-snack">
+                                        <span class="cmp-mobile-label">Snacks</span>
                                         <?php if($row_allow_custom): ?>
-                                            <input type="text" class="cmp-meal-custom cmp-snack-1 <?php echo ($snack_quota == 2) ? 'cmp-stacked-snack' : ''; ?>" data-slot="snack_1" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->custom_snack_1 : ''); ?>" placeholder="Type Snack 1..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px;">
+                                            <input type="text" class="cmp-meal-custom cmp-snack-1 <?php echo ($snack_quota == 2) ? 'cmp-stacked-snack' : ''; ?>" data-slot="snack_1" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->custom_snack_1 : ''); ?>" placeholder="Type Snack 1..." <?php echo $meal_select_disabled; ?>>
                                             <?php if($snack_quota == 2): ?>
-                                                <input type="text" class="cmp-meal-custom cmp-snack-2" data-slot="snack_2" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->custom_snack_2 : ''); ?>" placeholder="Type Snack 2..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px; margin-top:4px;">
+                                                <input type="text" class="cmp-meal-custom cmp-snack-2" data-slot="snack_2" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->custom_snack_2 : ''); ?>" placeholder="Type Snack 2..." <?php echo $meal_select_disabled; ?>>
                                             <?php endif; ?>
                                         <?php else: ?>
                                             <select class="cmp-meal-select cmp-snack-1 <?php echo ($snack_quota == 2) ? 'cmp-stacked-snack' : ''; ?>" data-cat="Snacks" data-slot="snack_1" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->snack_1_id : ''; ?>" <?php echo $meal_select_disabled; ?>>
@@ -1156,20 +1581,21 @@ function cmp_render_customer_portal() {
                                     </td>
                                     <?php endif; ?>
                                     
-                                    <td>
-                                        <span class="cmp-macro-display" id="macros-row-<?php echo $i; ?>">
-                                            <span class="macro-desktop"><?php echo $macros_desk; ?></span>
-                                            <span class="macro-mobile"><?php echo $macros_mob; ?></span>
-                                        </span>
+                                    <td class="cmp-cell-macros">
+                                        <span class="cmp-mobile-label">Daily Macros</span>
+                                        <div class="cmp-macro-display" id="macros-row-<?php echo $i; ?>">
+                                            <?php echo $default_macro_tiles; ?>
+                                        </div>
                                     </td>
 
                                 <?php else: ?>
                                     <?php for($j=1; $j<=3; $j++): ?>
-                                        <td>
+                                        <td class="cmp-cell-juice cmp-cell-juice-<?php echo $j; ?>">
+                                            <span class="cmp-mobile-label">Juice <?php echo $j; ?></span>
                                             <?php if($row_allow_custom): ?>
-                                                <input type="text" class="cmp-meal-custom cmp-juice-<?php echo $j; ?>" data-slot="juice_<?php echo $j; ?>" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->{'custom_juice_'.$j} : ''); ?>" placeholder="Type Juice <?php echo $j; ?>..." <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box; border:1px solid #cbd5e1; border-radius:4px;">
+                                                <input type="text" class="cmp-meal-custom cmp-juice-<?php echo $j; ?>" data-slot="juice_<?php echo $j; ?>" data-row="<?php echo $i; ?>" value="<?php echo esc_attr($log ? $log->{'custom_juice_'.$j} : ''); ?>" placeholder="Type Juice <?php echo $j; ?>..." <?php echo $meal_select_disabled; ?>>
                                             <?php else: ?>
-                                                <select class="cmp-meal-select cmp-juice-<?php echo $j; ?>" data-cat="Juices" data-slot="juice_<?php echo $j; ?>" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->{'juice_'.$j.'_id'} : ''; ?>" <?php echo $meal_select_disabled; ?> style="width:100%; padding:6px; box-sizing: border-box;">
+                                                <select class="cmp-meal-select cmp-juice-<?php echo $j; ?>" data-cat="Juices" data-slot="juice_<?php echo $j; ?>" data-row="<?php echo $i; ?>" data-saved-val="<?php echo $log ? $log->{'juice_'.$j.'_id'} : ''; ?>" <?php echo $meal_select_disabled; ?>>
                                                     <option value="">- Select Juice <?php echo $j; ?> -</option>
                                                 </select>
                                             <?php endif; ?>
@@ -1177,53 +1603,67 @@ function cmp_render_customer_portal() {
                                     <?php endfor; ?>
                                 <?php endif; ?>
                                 
-                                <td style="text-align:center;">
-                                    <?php echo $status_badge; ?>
+                                <td class="cmp-cell-status">
+                                    <span class="cmp-mobile-label">Status</span>
+                                    <div class="cmp-status-box">
+                                        <?php echo $status_badge; ?>
+                                    </div>
                                 </td>
 
-                                <td style="text-align:center;">
-                                    <?php 
-                                    if ($is_chef_override) {
-                                        if ($saved_chefs_choice) {
-                                            $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
-                                            $chef_btn_color = ($is_chef_assigned) ? '#1B5E20' : '#379237';
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">'.$chef_btn_text.'</button>';
-                                            if ($log_id > 0) {
-                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; padding:6px; border-radius:4px; display:flex; justify-content:center; align-items:center;" title="Reset / Clear Selection">'.$icon_reset.'</button>';
-                                            }
-                                        } else {
-                                            echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Customer Pick)</span>';
-                                        }
-                                    } else {
-                                        if (!$is_time_locked && !$is_void && !$is_paused) {
-                                            $btn_txt = ($log_id > 0) ? 'Update' : 'Save';
-                                            $btn_color = ($log_id > 0) ? '#1B5E20' : '#379237';
-                                            echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.'; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">'.$btn_txt.'</button>';
-                                            
-                                            if ($log_id > 0) {
-                                                echo '<div style="display:flex; gap:5px; margin-top:5px;">';
-                                                echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:4px; display:flex; justify-content:center; align-items:center;" title="Reset Selection">'.$icon_reset.'</button>';
-                                                echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:4px; display:flex; justify-content:center; align-items:center;" title="Cancel Day">'.$icon_cancel.'</button>';
-                                                echo '</div>';
-                                            }
-                                        } else {
-                                            if ($is_admin_override) {
-                                                echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#379237; color:#fff; border:none; font-weight:bold; cursor:pointer; width:100%; margin-bottom:5px;">Update</button>';
-                                                
+                                <td class="cmp-cell-action">
+                                    <span class="cmp-mobile-label">Action</span>
+                                    <div class="cmp-action-box">
+                                        <?php 
+                                        if ($is_chef_override) {
+                                            if ($saved_chefs_choice) {
+                                                $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
+                                                $chef_btn_color = ($is_chef_assigned) ? '#1B5E20' : '#379237';
+                                                echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.';">'.$chef_btn_text.'</button>';
                                                 if ($log_id > 0) {
-                                                    echo '<div style="display:flex; gap:5px; margin-top:5px;">';
-                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#f59e0b; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:4px; display:flex; justify-content:center; align-items:center;" title="Reset Selection">'.$icon_reset.'</button>';
-                                                    echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" style="background:#dc2626; color:#fff; border:none; font-weight:bold; cursor:pointer; flex:1; padding:6px; border-radius:4px; display:flex; justify-content:center; align-items:center;" title="Cancel Day">'.$icon_cancel.'</button>';
+                                                    echo '<div class="cmp-secondary-actions">';
+                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Reset / Clear Selection">'.$icon_reset.'</button>';
                                                     echo '</div>';
                                                 }
                                             } else {
-                                                $lock_reason = $is_paused ? 'Paused' : 'Cutoff Passed';
-                                                $lock_reason = $is_void ? 'Void' : $lock_reason;
-                                                echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>('.$lock_reason.')</span>';
+                                                echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Customer Pick)</span>';
+                                            }
+                                        } else {
+                                            if (!$is_time_locked && !$is_void && !$is_paused) {
+                                                $btn_txt = ($log_id > 0) ? 'Update' : 'Save';
+                                                $btn_color = ($log_id > 0) ? '#1B5E20' : '#379237';
+                                                echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.';">'.$btn_txt.'</button>';
+                                                
+                                                if ($log_id > 0) {
+                                                    echo '<div class="cmp-secondary-actions">';
+                                                    echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Reset Selection">'.$icon_reset.'</button>';
+                                                    echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Cancel Day">'.$icon_cancel.'</button>';
+                                                    echo '</div>';
+                                                }
+                                            } else {
+                                                if ($is_admin_override) {
+                                                    echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#379237;">Update</button>';
+                                                    
+                                                    if ($log_id > 0) {
+                                                        echo '<div class="cmp-secondary-actions">';
+                                                        echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Reset Selection">'.$icon_reset.'</button>';
+                                                        echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Cancel Day">'.$icon_cancel.'</button>';
+                                                        echo '</div>';
+                                                    }
+                                                } else {
+                                                    $lock_reason = 'Cutoff Passed';
+                                                    if ($is_paused) {
+                                                        $lock_reason = 'Paused';
+                                                    } elseif ($is_void) {
+                                                        $lock_reason = 'Void';
+                                                    } elseif ($log && !empty($log->target_date) && $log->target_date <= $today_ymd) {
+                                                        $lock_reason = ($log->target_date === $today_ymd) ? 'Today Locked' : 'Past Date';
+                                                    }
+                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . esc_html($lock_reason) . ')</span>';
+                                                }
                                             }
                                         }
-                                    }
-                                    ?>
+                                        ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php } ?>
@@ -1261,9 +1701,11 @@ function cmp_render_customer_portal() {
     jQuery(document).ready(function($) {
         var isAdminOverride = <?php echo $is_admin_override ? 'true' : 'false'; ?>;
         var isChefOverride  = <?php echo $is_chef_override ? 'true' : 'false'; ?>;
-        var isAdminOrChef = (isAdminOverride || isChefOverride);
+        var isAdminOrChef   = (isAdminOverride || isChefOverride);
         var chefsChoiceLabel = "<?php echo esc_js($label_chefs_choice); ?>";
-        var blackoutDates = <?php echo json_encode($blackout_dates_array); ?>;
+        var blackoutDates    = <?php echo json_encode($blackout_dates_array); ?>;
+        var customerMinDate  = "<?php echo esc_js($customer_min_date); ?>";
+        var todayYmd         = "<?php echo esc_js($today_ymd); ?>";
 
         // FOH INLINE LOGISTICS EDIT LOGIC
         $('.toggle-logistics-edit').on('click', function(e) {
@@ -1383,7 +1825,7 @@ function cmp_render_customer_portal() {
 
                     if (res.data.recipient) {
                         $('#recipient-val-' + subId).text(res.data.recipient);
-                        $('#recipient-row-' + subId).show();
+                        $('#recipient-row-' + subId).css('display', 'inline-flex');
                     } else {
                         $('#recipient-row-' + subId).hide();
                     }
@@ -1407,7 +1849,7 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // ADMIN PLAN MANAGER: ADD / REMOVE DAYS LOGIC
+        // ADMIN & MENU MANAGER PLAN CONTROLS: ADD / REMOVE DAYS LOGIC
         $('.admin-adjust-days-btn').on('click', function(e) {
             e.preventDefault();
             var btn = $(this);
@@ -1440,13 +1882,12 @@ function cmp_render_customer_portal() {
 
         function populateDynamicDropdowns(rowElement) {
             var isCustom = rowElement.data('allow-custom') == 1;
-            
             var dateVal = rowElement.find('.cmp-date-picker').val();
             var selects = rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"]');
             var inputs = rowElement.find('input.cmp-meal-custom');
             
-            var chefChoiceCell = rowElement.find('td:nth-child(3)');
-            var macroCell = rowElement.find('.cmp-macro-display').closest('td');
+            var chefChoiceCell = rowElement.find('.cmp-cell-chef');
+            var macroCell = rowElement.find('.cmp-cell-macros');
             var btn = rowElement.find('.cmp-save-row');
 
             rowElement.find('.boundary-overlay').remove();
@@ -1459,10 +1900,10 @@ function cmp_render_customer_portal() {
             if (!dateVal) {
                 selects.hide();
                 inputs.hide();
-                chefChoiceCell.find('input, .cmp-mobile-label').hide();
-                macroCell.css('opacity', '0'); 
+                chefChoiceCell.find('.cmp-chef-box').hide();
+                macroCell.css('opacity', '0.45'); 
 
-                selectContainer.append('<div class="date-prompt-overlay" style="color:#94a3b8; font-size:0.85em; font-style:italic; text-align:center; padding:10px 0;">&larr; Please pick a date first to view options.</div>');
+                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.88em; font-style:italic; text-align:center; padding:12px;">&larr; Please pick a delivery date first to view meals.</div>');
                 return false;
             }
 
@@ -1470,9 +1911,9 @@ function cmp_render_customer_portal() {
             
             if (isCustom) {
                 inputs.show();
-                chefChoiceCell.find('input, .cmp-mobile-label').show();
+                chefChoiceCell.find('.cmp-chef-box').show();
                 if (btn.text() === 'Menu Pending') {
-                    var btnTxt = isAdminOverride ? 'Update' : 'Save';
+                    var btnTxt = btn.data('log-id') > 0 ? 'Update' : 'Save';
                     btn.text(btnTxt).css({'background':'#379237', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
                 }
                 return true;
@@ -1485,15 +1926,15 @@ function cmp_render_customer_portal() {
 
             if (availableFoods.length === 0) {
                 selects.hide();
-                chefChoiceCell.find('input, .cmp-mobile-label').show(); 
+                chefChoiceCell.find('.cmp-chef-box').show(); 
 
-                selectContainer.append('<div class="boundary-overlay" style="color:#b45309; font-weight:bold; font-size:0.9em; background:#fef3c7; padding:10px; border-radius:4px; text-align:center; line-height:1.4;">Menu Pending Release</div>');
+                selectContainer.append('<div class="boundary-overlay" style="color:#b45309; font-weight:bold; font-size:0.9em; background:#fef3c7; border:1px solid #fde68a; padding:12px; border-radius:8px; text-align:center; line-height:1.4;">Menu Pending Release</div>');
 
                 if (isChefOverride) {
                     btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
                 } else {
                     if (btn.text() === 'Menu Pending') {
-                        var btnTxt = isAdminOverride ? 'Update' : 'Save';
+                        var btnTxt = btn.data('log-id') > 0 ? 'Update' : 'Save';
                         btn.text(btnTxt).css({'background':'#379237', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
                     }
                 }
@@ -1501,10 +1942,10 @@ function cmp_render_customer_portal() {
             }
 
             selects.show();
-            chefChoiceCell.find('input, .cmp-mobile-label').show();
+            chefChoiceCell.find('.cmp-chef-box').show();
 
             if (btn.text() === 'Menu Pending') {
-                var btnTxt = isAdminOverride ? 'Update' : 'Save';
+                var btnTxt = btn.data('log-id') > 0 ? 'Update' : 'Save';
                 btn.text(btnTxt).css({'background':'#379237', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
             }
 
@@ -1549,7 +1990,8 @@ function cmp_render_customer_portal() {
             return true;
         }
 
-        $('.cmp-day-row td:first-child').on('click', function() {
+        // Mobile Accordion Toggle
+        $('.cmp-day-row td.cmp-cell-day').on('click', function() {
             if ($(window).width() <= 768) {
                 $(this).parent('tr').toggleClass('is-open');
             }
@@ -1565,24 +2007,13 @@ function cmp_render_customer_portal() {
             }
         }, 300);
 
-        $('.cmp-table').each(function() {
-            var $table = $(this);
-            var headers = [];
-            $table.find('thead th').each(function() { headers.push($(this).text().trim()); });
-            $table.find('tbody tr').each(function() {
-                $(this).find('td').each(function(index) {
-                    if (index !== 0 && headers[index] && $(this).find('.cmp-mobile-label').length === 0) {
-                        $(this).prepend('<span class="cmp-mobile-label">' + headers[index] + '</span>');
-                    }
-                });
-            });
-        });
-
+        // Unified Colourful Macro Tiles Renderer (Zero Duplication on Mobile/Tablet/Desktop)
         function calculateMacros(rowElement) {
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var macroDisplay = rowElement.find('.cmp-macro-display');
+            if (!macroDisplay.length) return;
+
             var isCustom = rowElement.data('allow-custom') == 1;
-            
             var selects = rowElement.find('select');
             var inputs = rowElement.find('input.cmp-meal-custom');
 
@@ -1591,35 +2022,52 @@ function cmp_render_customer_portal() {
             inputs.each(function() { if ($(this).val().trim() !== "") hasValues = true; });
 
             if (isChefsChoice && !hasValues) {
-                macroDisplay.html('<span class="macro-desktop"><strong>' + chefsChoiceLabel + '</strong><br><span style="color:#d63638; font-size:0.9em;">(Pending)</span></span><span class="macro-mobile"><strong>' + chefsChoiceLabel + '</strong> <span style="color:#d63638;">(Pending)</span></span>');
+                macroDisplay.html(
+                    '<div class="cmp-macro-banner-state" style="background:#fffbeb; border:1px solid #fde68a; color:#b45309;">' +
+                    '<strong>' + chefsChoiceLabel + ' Selected</strong> &mdash; Macros will appear once assigned by the Chef.' +
+                    '</div>'
+                );
                 return;
             }
 
-            var cal=0, fat=0, carbs=0, pro=0;
+            if (isCustom) {
+                macroDisplay.html(
+                    '<div class="cmp-macro-banner-state" style="background:#EEF7E3; border:1px solid #DCECC9; color:#1B5E20;">' +
+                    'Custom Meal Plan &mdash; Standard Macro Calculation N/A' +
+                    '</div>'
+                );
+                return;
+            }
+
+            var cal = 0, fat = 0, carbs = 0, pro = 0;
             selects.each(function() {
                 var selected = $(this).find('option:selected');
                 if (selected.length > 0 && selected.val() !== "") {
-                    cal += parseFloat(selected.data('cal')) || 0;
-                    fat += parseFloat(selected.data('fat')) || 0;
+                    cal   += parseFloat(selected.data('cal'))   || 0;
+                    fat   += parseFloat(selected.data('fat'))   || 0;
                     carbs += parseFloat(selected.data('carbs')) || 0;
-                    pro += parseFloat(selected.data('pro')) || 0;
+                    pro   += parseFloat(selected.data('pro'))   || 0;
                 }
             });
 
-            var deskHtml = '<strong>Cal:</strong> ' + cal + '<br><strong>Fat:</strong> ' + fat + 'g<br><strong>Carb:</strong> ' + carbs + 'g<br><strong>Pro:</strong> ' + pro + 'g';
-            var mobHtml = '<div class="mob-grid"><div><strong>Cal:</strong> '+cal+'</div><div><strong>Fat:</strong> '+fat+'g</div><div><strong>Carb:</strong> '+carbs+'g</div><div><strong>Pro:</strong> '+pro+'g</div></div>';
+            cal   = Math.round(cal);
+            pro   = Math.round(pro * 10) / 10;
+            carbs = Math.round(carbs * 10) / 10;
+            fat   = Math.round(fat * 10) / 10;
 
-            if (isCustom) {
-                 deskHtml = '<strong style="color:#1B5E20;">Custom Macros N/A</strong>';
-                 mobHtml = '<div style="color:#1B5E20; font-weight:bold;">Custom Macros N/A</div>';
-            }
+            var chefPrefix = (isChefsChoice && hasValues)
+                ? '<div class="cmp-macro-chef-tag">Chef Assigned</div>'
+                : '';
 
-            if (isChefsChoice && hasValues) {
-                var badge = '<div style="color:#379237; font-size:0.85em; font-weight:bold; margin-bottom:4px;">(Chef Assigned)</div>';
-                macroDisplay.html('<span class="macro-desktop">' + badge + deskHtml + '</span><span class="macro-mobile">' + badge + mobHtml + '</span>');
-            } else {
-                macroDisplay.html('<span class="macro-desktop">' + deskHtml + '</span><span class="macro-mobile">' + mobHtml + '</span>');
-            }
+            var tilesHtml = chefPrefix +
+                '<div class="cmp-macro-tiles-grid">' +
+                    '<div class="cmp-macro-tile tile-cal"><span class="tile-label">Calories</span><span class="tile-val">' + cal + ' kcal</span></div>' +
+                    '<div class="cmp-macro-tile tile-pro"><span class="tile-label">Protein</span><span class="tile-val">' + pro + 'g</span></div>' +
+                    '<div class="cmp-macro-tile tile-carb"><span class="tile-label">Carbs</span><span class="tile-val">' + carbs + 'g</span></div>' +
+                    '<div class="cmp-macro-tile tile-fat"><span class="tile-label">Fat</span><span class="tile-val">' + fat + 'g</span></div>' +
+                '</div>';
+
+            macroDisplay.html(tilesHtml);
         }
 
         function enforceMealQuota(rowElement) {
@@ -1666,8 +2114,13 @@ function cmp_render_customer_portal() {
         });
 
         $(document).on('change keyup', '.cmp-meal-select, .cmp-meal-custom, select[class^="cmp-juice-"]', function() { 
-            calculateMacros($(this).closest('tr')); 
-            enforceMealQuota($(this).closest('tr'));
+            var rowElement = $(this).closest('tr');
+            calculateMacros(rowElement); 
+            enforceMealQuota(rowElement);
+            var saveBtn = rowElement.find('.cmp-save-row');
+            if (saveBtn.length && saveBtn.text() === '✓ Updated') {
+                saveBtn.text('Update');
+            }
         });
 
         $('.cmp-chefs-choice').on('change', function() {
@@ -1691,6 +2144,11 @@ function cmp_render_customer_portal() {
             var totalDays = parseInt(container.data('total-days'));
 
             if(selectedDate) {
+                if (!isAdminOrChef && (selectedDate <= todayYmd || (customerMinDate && selectedDate < customerMinDate))) {
+                    alert('Past dates, today\'s date, and dates past the cut-off time cannot be selected. Earliest available date: ' + customerMinDate);
+                    rowInput.val('');
+                    return;
+                }
                 if(blackoutDates.includes(selectedDate)) {
                     alert('The kitchen is closed on this date. Please select a different day.');
                     rowInput.val('');
@@ -1742,6 +2200,11 @@ function cmp_render_customer_portal() {
             var isCustom = rowElement.data('allow-custom') == 1;
 
             if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
+
+            if (!isAdminOrChef && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+                alert('This date is locked. You may only save or update selections from ' + customerMinDate + ' onwards.');
+                return;
+            }
 
             var isMenuPending = rowElement.find('.boundary-overlay').length > 0;
 
@@ -1816,7 +2279,8 @@ function cmp_render_customer_portal() {
                 log_id: btn.data('log-id'),
                 sub_id: btn.data('sub-id'),
                 date: dateVal,
-                chefs_choice: isChefsChoice
+                chefs_choice: isChefsChoice,
+                is_override_mode: isAdminOrChef ? 1 : 0
             };
 
             if (isCustom) {
@@ -1841,23 +2305,24 @@ function cmp_render_customer_portal() {
 
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if(response.success) {
-                    if(response.data && response.data.new_log_id) { btn.data('log-id', response.data.new_log_id); }
+                    if(response.data && response.data.new_log_id) {
+                        btn.data('log-id', response.data.new_log_id);
+                    }
                     rowElement.removeClass('status-pending').addClass('status-saved');
 
+                    var newBadge = '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
+                    rowElement.find('.cmp-status-box').html(newBadge);
+                    rowElement.find('.cmp-mobile-status').html(newBadge);
+
                     if (!isAdminOverride && !isChefOverride) {
-                        var globalFloor = "<?php echo esc_js($global_min_date); ?>";
-                        var isTimeLocked = (dateVal < globalFloor);
+                        var isTimeLocked = (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate));
 
                         if (isTimeLocked) {
                             rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select, input.cmp-meal-custom').prop('disabled', true).removeClass('quota-locked');
-                            btn.replaceWith('<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center;">Locked<br>(Cutoff Passed)</span>');
+                            rowElement.find('.cmp-action-box').html('<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Cutoff Passed)</span>');
                         } else {
-                            btn.text('Update').css({'background':'#1B5E20', 'box-shadow':'none'}).prop('disabled', false);
+                            btn.text('✓ Updated').css({'background':'#1B5E20'}).prop('disabled', false);
                         }
-
-                        var newBadge = '<span style="color:#1B5E20; font-size:0.9em; background:#EEF7E3; border:1px solid #DCECC9; padding:4px 8px; border-radius:4px; font-weight:bold; white-space:nowrap;">Confirmed</span>';
-                        rowElement.find('td:nth-last-child(2)').html(newBadge);
-                        rowElement.find('.cmp-mobile-status').html(newBadge);
 
                         if ($(window).width() <= 768) {
                             rowElement.removeClass('is-open'); 
@@ -1868,8 +2333,7 @@ function cmp_render_customer_portal() {
                             }
                         }
                     } else {
-                        var newBtnText = (isAdminOverride || isChefOverride) ? 'Update' : 'Saved';
-                        btn.text(newBtnText).css({'background':'#1B5E20', 'box-shadow':'none'}).prop('disabled', false); 
+                        btn.text('✓ Updated').css({'background':'#1B5E20'}).prop('disabled', false); 
                     }
 
                 } else {
@@ -1879,10 +2343,17 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CLEAR SELECTION LOGIC
-        $('.cmp-clear-row').on('click', function(e) {
+        // CLEAR / RESET SELECTION LOGIC (Restricted from past dates, today, and post-cutoff tomorrow)
+        $(document).on('click', '.cmp-clear-row', function(e) {
             e.preventDefault();
             var btn = $(this);
+            var rowElement = btn.closest('tr');
+            var dateVal = rowElement.find('.cmp-date-picker').val();
+
+            if (!isAdminOrChef && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+                alert('Past dates, today\'s date, and dates past the cut-off time cannot be reset.');
+                return;
+            }
             
             if (!confirm('Are you sure you want to clear this day? This will reset the selection and return the quota so a new date can be picked.')) {
                 return;
@@ -1895,7 +2366,8 @@ function cmp_render_customer_portal() {
                 action: 'cmp_clear_daily_log',
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 log_id: btn.data('log-id'),
-                sub_id: btn.data('sub-id')
+                sub_id: btn.data('sub-id'),
+                is_override_mode: isAdminOrChef ? 1 : 0
             };
             
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
@@ -1911,12 +2383,19 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CUSTOMER/FOH CANCEL DAY LOGIC
-        $('.cmp-cancel-day-row').on('click', function(e) {
+        // CANCEL DAY LOGIC (Restricted from past dates, today, and post-cutoff tomorrow)
+        $(document).on('click', '.cmp-cancel-day-row', function(e) {
             e.preventDefault();
             var btn = $(this);
+            var rowElement = btn.closest('tr');
+            var dateVal = rowElement.find('.cmp-date-picker').val();
+
+            if (!isAdminOrChef && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+                alert('Past dates, today\'s date, and dates past the cut-off time cannot be cancelled.');
+                return;
+            }
             
-            if (!confirm('Are you sure you want to CANCEL this specific day?\n\nThis will permanently void this date, display it as "Cancelled" to the customer, and push a replacement day to the bottom of their plan.')) {
+            if (!confirm('Are you sure you want to CANCEL this specific day?\n\nThis will permanently void this date, display it as "Cancelled", and push a replacement day to the bottom of the plan.')) {
                 return;
             }
             
@@ -1927,7 +2406,8 @@ function cmp_render_customer_portal() {
                 action: 'cmp_cancel_daily_log',
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 log_id: btn.data('log-id'),
-                sub_id: btn.data('sub-id')
+                sub_id: btn.data('sub-id'),
+                is_override_mode: isAdminOrChef ? 1 : 0
             };
             
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
