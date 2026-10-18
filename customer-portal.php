@@ -544,7 +544,7 @@ function cmp_render_customer_portal() {
     $icon_reset  = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
     $icon_cancel = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
     $icon_kbd    = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>';
-    $icon_bolt   = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+    $icon_target = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>';
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
@@ -786,12 +786,50 @@ function cmp_render_customer_portal() {
             border-color: #379237;
         }
         .cmp-util-btn.primary-util {
-            background: #379237;
+            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%);
             color: #ffffff;
             border-color: #1B5E20;
+            box-shadow: 0 3px 10px rgba(27, 94, 32, 0.18);
         }
         .cmp-util-btn.primary-util:hover {
-            background: #1B5E20;
+            filter: brightness(1.08);
+            transform: translateY(-1px);
+        }
+
+        /* Floating Desktop Scroll-to-Pending Button */
+        .cmp-float-pending-btn {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            background: linear-gradient(135deg, #1B5E20 0%, #379237 100%);
+            color: #ffffff !important;
+            border: 1.5px solid #DCECC9;
+            border-radius: 999px;
+            padding: 12px 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 6px 18px rgba(27, 94, 32, 0.32);
+            font-weight: 800;
+            font-size: 14px;
+            cursor: pointer;
+            z-index: 9998;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .cmp-float-pending-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 24px rgba(27, 94, 32, 0.42);
+        }
+
+        /* Pulse Highlight When Scrolling to Pending Row */
+        @keyframes cmpPendingPulse {
+            0%   { box-shadow: 0 0 0 0 rgba(55, 146, 55, 0.55); }
+            50%  { box-shadow: 0 0 0 10px rgba(55, 146, 55, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(55, 146, 55, 0); }
+        }
+        .cmp-table tr.cmp-day-row.cmp-pulse-target {
+            animation: cmpPendingPulse 1.1s ease-out 2;
+            border-color: #379237 !important;
         }
 
         /* =========================================================
@@ -1123,7 +1161,7 @@ function cmp_render_customer_portal() {
             display: none !important;
         }
 
-        /* Collapsed Summary Bar for Confirmed Days on Desktop/Tablet — Strictly Hidden Until Collapsed */
+        /* Collapsed Summary Bar for Cards on Desktop/Tablet — Strictly Hidden Until Collapsed */
         .cmp-table td.cmp-collapsed-summary {
             display: none !important;
             grid-column: 1 / span 12 !important;
@@ -1226,7 +1264,7 @@ function cmp_render_customer_portal() {
             .cmp-table td.cmp-cell-juice-2 { grid-column: 5 / span 4 !important; grid-row: 2 !important; }
             .cmp-table td.cmp-cell-juice-3 { grid-column: 9 / span 4 !important; grid-row: 2 !important; }
 
-            /* Desktop Collapsed State for Confirmed/Saved Cards */
+            /* Desktop Collapsed State (Default for All Cards Until Expanded) */
             .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-meal,
             .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-snack,
             .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-macros,
@@ -1266,6 +1304,7 @@ function cmp_render_customer_portal() {
         @media (max-width: 768px) {
             .cmp-dashboard-wrap { padding: 0 6px 35px 6px; }
             .cmp-kbd-guide { display: none !important; }
+            .cmp-float-pending-btn { display: none !important; }
             .cmp-table tr.cmp-day-row, .cmp-table td:not(.cmp-collapsed-summary) { display: block !important; width: 100% !important; }
             .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; }
 
@@ -1611,13 +1650,11 @@ function cmp_render_customer_portal() {
                     <span><kbd class="cmp-kbd-key">Alt</kbd>+<kbd class="cmp-kbd-key">Up/Down</kbd> Switch Day</span>
                 </div>
                 <div class="cmp-toolbar-actions">
-                    <?php if (!$is_paused && !$is_chef_override): ?>
-                        <button type="button" class="cmp-util-btn primary-util cmp-autofill-dates-btn" title="Automatically fill consecutive valid delivery dates for all empty pending days">
-                            <?php echo $icon_bolt; ?>
-                            <span>Auto-Fill Sequential Dates</span>
-                        </button>
-                    <?php endif; ?>
-                    <button type="button" class="cmp-util-btn cmp-collapse-confirmed-btn">Collapse Confirmed</button>
+                    <button type="button" class="cmp-util-btn primary-util cmp-jump-pending-btn" title="Scroll directly to the first pending meal selection and open it">
+                        <?php echo $icon_target; ?>
+                        <span>Go to Pending Selection</span>
+                    </button>
+                    <button type="button" class="cmp-util-btn cmp-collapse-all-btn">Collapse All</button>
                     <button type="button" class="cmp-util-btn cmp-expand-all-btn">Expand All</button>
                 </div>
             </div>
@@ -1701,7 +1738,10 @@ function cmp_render_customer_portal() {
                             if ($is_void) { $row_status_class = 'status-void row-void'; } 
                             elseif ($log_id > 0) { $row_status_class = 'status-saved'; }
                             
-                            // Start Chef's Choice rows without assigned meals in compact mode immediately
+                            // Keep all Day Cards collapsed by default on Desktop/Tablet
+                            $row_status_class .= ' is-collapsed-desktop';
+
+                            // Keep Chef's Choice rows without assigned meals in compact mode when expanded
                             if ($saved_chefs_choice && !$is_chef_override && !$is_chef_assigned) {
                                 $row_status_class .= ' is-chefs-choice-compact';
                             }
@@ -1888,7 +1928,7 @@ function cmp_render_customer_portal() {
                                     </div>
                                 </td>
 
-                                <!-- Compact 1-Line Summary Bar (Strictly Hidden Unless Card is Collapsed on Desktop/Tablet) -->
+                                <!-- Compact 1-Line Summary Bar (Visible When Card is Collapsed on Desktop/Tablet) -->
                                 <td class="cmp-collapsed-summary" title="Click to expand meal selections">
                                     <span class="cmp-summary-text">Click to view or edit meal selections</span>
                                     <span style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
@@ -1900,6 +1940,12 @@ function cmp_render_customer_portal() {
             </div>
         </div>
         <?php endforeach; ?>
+
+        <!-- Floating Desktop Quick-Scroll Button to Jump to Currently Pending Selection -->
+        <button type="button" class="cmp-float-pending-btn cmp-jump-pending-btn cmp-no-print" title="Scroll to the currently pending meal selection">
+            <?php echo $icon_target; ?>
+            <span>Pending Selection</span>
+        </button>
         
         <?php if (!empty($clean_wa) && !$is_chef_override): ?>
         <a href="https://wa.me/<?php echo esc_attr($clean_wa); ?>?text=Hi,%20I%20need%20help%20with%20my%20meal%20plan." target="_blank" class="cmp-wa-float">
@@ -1935,7 +1981,7 @@ function cmp_render_customer_portal() {
         var customerMinDate  = "<?php echo esc_js($customer_min_date); ?>";
         var todayYmd         = "<?php echo esc_js($today_ymd); ?>";
 
-        // Helper: Calculate next valid non-blackout YYYY-MM-DD date after a given date string
+        // Helper: Calculate next valid non-blackout YYYY-MM-DD date for min attribute enforcement
         function getNextValidDeliveryDate(baseDateStr) {
             var d = new Date(baseDateStr + 'T00:00:00');
             if (isNaN(d.getTime())) return '';
@@ -1992,7 +2038,7 @@ function cmp_render_customer_portal() {
                 } else if (pickedNames.length > 0) {
                     summaryTextEl.html('<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
                 } else {
-                    summaryTextEl.text('No meals selected yet — Click to expand');
+                    summaryTextEl.text('Pending selection — Click to expand and choose meals');
                 }
             }
         }
@@ -2293,48 +2339,16 @@ function cmp_render_customer_portal() {
             }
         });
 
-        // Toolbar Buttons: Collapse Confirmed / Expand All / Auto-Fill Sequential Dates
-        $('.cmp-collapse-confirmed-btn').on('click', function() {
+        // Toolbar Buttons: Collapse All / Expand All
+        $('.cmp-collapse-all-btn').on('click', function() {
             var $container = $(this).closest('.cmp-portal-container');
-            $container.find('tr.cmp-day-row.status-saved, tr.cmp-day-row.status-void').addClass('is-collapsed-desktop');
+            $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop');
         });
 
         $('.cmp-expand-all-btn').on('click', function() {
             var $container = $(this).closest('.cmp-portal-container');
             $container.find('tr.cmp-day-row').removeClass('is-collapsed-desktop');
         });
-
-        $('.cmp-autofill-dates-btn').on('click', function() {
-            var $container = $(this).closest('.cmp-portal-container');
-            var lastDate = '';
-
-            $container.find('tr.cmp-day-row').each(function() {
-                var $row = $(this);
-                var $dp  = $row.find('.cmp-date-picker');
-                if ($dp.val()) {
-                    lastDate = $dp.val();
-                } else if (!$dp.is(':disabled')) {
-                    var nextDate = lastDate ? getNextValidDeliveryDate(lastDate) : (customerMinDate || todayYmd);
-                    if (blackoutDates.includes(nextDate)) {
-                        nextDate = getNextValidDeliveryDate(nextDate);
-                    }
-                    if (nextDate) {
-                        $dp.val(nextDate).trigger('change');
-                        lastDate = nextDate;
-                    }
-                }
-            });
-        });
-
-        setTimeout(function() {
-            if ($(window).width() <= 768) {
-                var $firstPending = $('.cmp-tab-content.active .status-pending').first();
-                if ($firstPending.length) {
-                    $firstPending.addClass('is-open');
-                    $('html, body').animate({ scrollTop: $firstPending.offset().top - 80 }, 800);
-                }
-            }
-        }, 300);
 
         // Unified Colourful Macro Tiles Renderer (Zero Duplication on Mobile/Tablet/Desktop)
         function calculateMacros(rowElement) {
@@ -2472,8 +2486,9 @@ function cmp_render_customer_portal() {
             calculateMacros(rowElement); 
             enforceMealQuota(rowElement);
 
-            // If unchecked, focus the first meal selector for seamless keyboard flow
+            // If unchecked, expand card and focus the first meal selector for seamless keyboard flow
             if (!$(this).is(':checked')) {
+                rowElement.removeClass('is-collapsed-desktop');
                 var firstMeal = rowElement.find('select.cmp-meal-select:visible:enabled, input.cmp-meal-custom:visible:enabled').first();
                 if (firstMeal.length) {
                     setTimeout(function() { firstMeal.focus(); }, 40);
@@ -2517,6 +2532,7 @@ function cmp_render_customer_portal() {
             }
 
             var rowElement = $(this).closest('tr');
+            rowElement.removeClass('is-collapsed-desktop');
             var hasFood = populateDynamicDropdowns(rowElement);
             if (hasFood) {
                 calculateMacros(rowElement); 
@@ -2525,28 +2541,24 @@ function cmp_render_customer_portal() {
         });
 
         // =========================================================
-        // DESKTOP KEYBOARD-FIRST CONTINUOUS INPUT ENGINE
+        // DESKTOP SCROLL-TO-PENDING & KEYBOARD CONTINUOUS INPUT
         // =========================================================
-        function focusRowFirstInput($targetRow, prefillFromDate) {
+        function focusRowFirstInput($targetRow) {
             if (!$targetRow || !$targetRow.length) return;
-            $targetRow.removeClass('is-collapsed-desktop');
+            $targetRow.removeClass('is-collapsed-desktop cmp-pulse-target');
+            void $targetRow[0].offsetWidth; // trigger reflow for pulse animation
+            $targetRow.addClass('cmp-pulse-target');
+
             if ($(window).width() <= 768) {
                 $targetRow.addClass('is-open');
             }
 
-            var $dp = $targetRow.find('.cmp-date-picker');
-            if (prefillFromDate && !$dp.val() && !$dp.is(':disabled')) {
-                var nextValid = getNextValidDeliveryDate(prefillFromDate);
-                if (nextValid) {
-                    $dp.val(nextValid).trigger('change');
-                }
-            }
-
             $('html, body').stop(true).animate({
-                scrollTop: Math.max(0, $targetRow.offset().top - 120)
-            }, 220);
+                scrollTop: Math.max(0, $targetRow.offset().top - 110)
+            }, 320);
 
             setTimeout(function() {
+                var $dp = $targetRow.find('.cmp-date-picker');
                 if (!$dp.is(':disabled') && !$dp.val()) {
                     $dp.focus();
                 } else {
@@ -2559,10 +2571,24 @@ function cmp_render_customer_portal() {
                         $targetRow.find('.cmp-save-row:enabled').focus();
                     }
                 }
-            }, 60);
+            }, 80);
         }
 
-        // Auto-expand collapsed card if user Tabs into it
+        // Scroll to Currently Pending Selection Button Handler (Toolbar & Floating Desktop Pill)
+        $(document).on('click', '.cmp-jump-pending-btn', function(e) {
+            e.preventDefault();
+            var $activeContainer = $('.cmp-tab-content.active');
+            if (!$activeContainer.length) return;
+
+            var $firstPending = $activeContainer.find('tr.cmp-day-row.status-pending').first();
+            if ($firstPending.length) {
+                focusRowFirstInput($firstPending);
+            } else {
+                alert('All days in this meal plan have already been scheduled!');
+            }
+        });
+
+        // Auto-expand collapsed card if user Tabs into its meal/action controls
         $(document).on('focusin', 'tr.cmp-day-row', function() {
             $(this).removeClass('is-collapsed-desktop');
         });
@@ -2576,7 +2602,7 @@ function cmp_render_customer_portal() {
             if (e.altKey && e.key === 'ArrowDown') {
                 e.preventDefault();
                 var $next = $row.nextAll('tr.cmp-day-row').first();
-                focusRowFirstInput($next, $row.find('.cmp-date-picker').val());
+                focusRowFirstInput($next);
                 return;
             }
 
@@ -2584,7 +2610,7 @@ function cmp_render_customer_portal() {
             if (e.altKey && e.key === 'ArrowUp') {
                 e.preventDefault();
                 var $prev = $row.prevAll('tr.cmp-day-row').first();
-                focusRowFirstInput($prev, '');
+                focusRowFirstInput($prev);
                 return;
             }
 
@@ -2733,7 +2759,7 @@ function cmp_render_customer_portal() {
                     if(response.data && response.data.new_log_id) {
                         btn.data('log-id', response.data.new_log_id);
                     }
-                    rowElement.removeClass('status-pending').addClass('status-saved');
+                    rowElement.removeClass('status-pending').addClass('status-saved is-collapsed-desktop');
                     syncRowCompactAndSummary(rowElement);
 
                     var newBadge = '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
@@ -2753,15 +2779,15 @@ function cmp_render_customer_portal() {
                         btn.text('✓ Updated').css({'background':'#1B5E20'}).prop('disabled', false); 
                     }
 
-                    // Advance to Next Row automatically on Mobile or when Keyboard-Saved on Desktop
-                    var $nextRow = rowElement.nextAll('tr.cmp-day-row:not(.status-void)').first();
+                    // Advance to Next Pending Row automatically
+                    var $nextRow = rowElement.nextAll('tr.cmp-day-row.status-pending').first();
                     if ($(window).width() <= 768) {
                         rowElement.removeClass('is-open'); 
                         if ($nextRow.length) {
-                            focusRowFirstInput($nextRow, dateVal);
+                            focusRowFirstInput($nextRow);
                         }
-                    } else if (shouldKeyboardAdvance || ($nextRow.length && $nextRow.hasClass('status-pending'))) {
-                        focusRowFirstInput($nextRow, dateVal);
+                    } else if (shouldKeyboardAdvance || $nextRow.length) {
+                        focusRowFirstInput($nextRow);
                     }
 
                 } else {
