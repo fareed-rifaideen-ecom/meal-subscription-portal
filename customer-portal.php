@@ -540,9 +540,11 @@ function cmp_render_customer_portal() {
     $raw_wa               = get_option('cmp_whatsapp_number', '');
     $clean_wa             = preg_replace('/[^0-9]/', '', $raw_wa);
 
-    // Clean SVG Icons for Action Buttons
-    $icon_reset  = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
-    $icon_cancel = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+    // Clean Fixed-Size SVG Icons (Zero WordPress Twemoji Interference)
+    $icon_reset  = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+    $icon_cancel = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+    $icon_kbd    = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>';
+    $icon_bolt   = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
 
     // OVERRIDE DETECTION
     $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
@@ -635,6 +637,29 @@ function cmp_render_customer_portal() {
     <style>
         .cmp-dashboard-wrap { max-width: 1220px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; overflow-x: hidden; box-sizing: border-box; position: relative; padding: 0 12px 40px 12px; }
         .cmp-dashboard-wrap *, .cmp-dashboard-wrap *::before, .cmp-dashboard-wrap *::after { box-sizing: border-box; }
+
+        /* Ironclad WordPress Twemoji / SVG Size Lock (Prevents Theme CSS from Stretching Icons) */
+        .cmp-dashboard-wrap img.emoji,
+        .cmp-dashboard-wrap img.wp-smiley {
+            width: 16px !important;
+            height: 16px !important;
+            max-width: 16px !important;
+            max-height: 16px !important;
+            display: inline-block !important;
+            vertical-align: middle !important;
+            margin: 0 4px !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        .cmp-dashboard-wrap svg.cmp-fixed-svg {
+            width: 16px !important;
+            height: 16px !important;
+            max-width: 16px !important;
+            max-height: 16px !important;
+            flex-shrink: 0 !important;
+            display: inline-block !important;
+            vertical-align: middle !important;
+        }
 
         /* Desktop Customer Glass Header (> 992px) */
         .cmp-header-banner {
@@ -742,6 +767,9 @@ function cmp_render_customer_portal() {
             gap: 8px;
         }
         .cmp-util-btn {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
             background: #ffffff;
             color: #1B5E20;
             border: 1.5px solid #68B946;
@@ -1095,26 +1123,27 @@ function cmp_render_customer_portal() {
             display: none !important;
         }
 
-        /* Collapsed Summary Bar for Confirmed Days on Desktop/Tablet */
-        .cmp-collapsed-summary {
-            display: none;
-            grid-column: 1 / span 12;
-            background: #f8fafc;
-            border: 1px dashed #cbd5e1;
-            border-radius: 10px;
-            padding: 8px 14px;
-            font-size: 0.85rem;
-            color: #334155;
-            font-weight: 600;
-            cursor: pointer;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
+        /* Collapsed Summary Bar for Confirmed Days on Desktop/Tablet — Strictly Hidden Until Collapsed */
+        .cmp-table td.cmp-collapsed-summary {
+            display: none !important;
+            grid-column: 1 / span 12 !important;
+            background: #f8fafc !important;
+            border: 1px dashed #cbd5e1 !important;
+            border-radius: 10px !important;
+            padding: 9px 14px !important;
+            margin-top: 4px !important;
+            font-size: 0.85rem !important;
+            color: #334155 !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 10px !important;
         }
-        .cmp-collapsed-summary:hover {
-            background: #EEF7E3;
-            border-color: #68B946;
-            color: #1B5E20;
+        .cmp-table td.cmp-collapsed-summary:hover {
+            background: #EEF7E3 !important;
+            border-color: #68B946 !important;
+            color: #1B5E20 !important;
         }
 
         /* DESKTOP & TABLET CARD GRID LAYOUT (> 768px) */
@@ -1127,7 +1156,7 @@ function cmp_render_customer_portal() {
                 gap: 12px 14px !important;
                 align-items: end !important;
             }
-            .cmp-table td {
+            .cmp-table td:not(.cmp-collapsed-summary) {
                 display: block !important;
                 padding: 0 !important;
                 border: none !important;
@@ -1204,7 +1233,7 @@ function cmp_render_customer_portal() {
             .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-juice {
                 display: none !important;
             }
-            .cmp-table tr.cmp-day-row.is-collapsed-desktop .cmp-collapsed-summary {
+            .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-collapsed-summary {
                 display: flex !important;
                 grid-row: 2 !important;
             }
@@ -1228,7 +1257,7 @@ function cmp_render_customer_portal() {
             .cmp-table td.cmp-cell-juice-2 { grid-column: 5 / span 4 !important; grid-row: 3 !important; }
             .cmp-table td.cmp-cell-juice-3 { grid-column: 9 / span 4 !important; grid-row: 3 !important; }
 
-            .cmp-table tr.cmp-day-row.is-collapsed-desktop .cmp-collapsed-summary {
+            .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-collapsed-summary {
                 grid-row: 3 !important;
             }
         }
@@ -1237,7 +1266,7 @@ function cmp_render_customer_portal() {
         @media (max-width: 768px) {
             .cmp-dashboard-wrap { padding: 0 6px 35px 6px; }
             .cmp-kbd-guide { display: none !important; }
-            .cmp-table tr.cmp-day-row, .cmp-table td { display: block !important; width: 100% !important; }
+            .cmp-table tr.cmp-day-row, .cmp-table td:not(.cmp-collapsed-summary) { display: block !important; width: 100% !important; }
             .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; }
 
             .cmp-table tr.cmp-day-row {
@@ -1266,7 +1295,7 @@ function cmp_render_customer_portal() {
             }
             .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
             .cmp-table tr:not(.is-open) td:not(.cmp-cell-day) { display: none !important; }
-            .cmp-collapsed-summary { display: none !important; }
+            .cmp-table td.cmp-collapsed-summary { display: none !important; }
 
             .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
             .cmp-table td.cmp-cell-status { display: none !important; }
@@ -1552,7 +1581,7 @@ function cmp_render_customer_portal() {
 
             <?php if ($is_paused): ?>
             <div class="cmp-no-print" style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:15px; margin-bottom:20px; text-align:center;">
-                <strong style="color:#c2410c; font-size:1.1em;">⏸ This Meal Plan is Currently Paused</strong>
+                <strong style="color:#c2410c; font-size:1.1em;">This Meal Plan is Currently Paused</strong>
                 <p style="color:#9a3412; margin:5px 0 0 0; font-size:0.9em;">Your deliveries have been temporarily halted. Please contact support to resume your plan.</p>
             </div>
             <?php endif; ?>
@@ -1574,15 +1603,19 @@ function cmp_render_customer_portal() {
             <!-- DESKTOP KEYBOARD FAST-ENTRY & SCHEDULE VIEW TOOLBAR -->
             <div class="cmp-schedule-toolbar cmp-no-print">
                 <div class="cmp-kbd-guide">
-                    <span>⌨️ <strong>Keyboard Fast-Entry:</strong></span>
+                    <?php echo $icon_kbd; ?>
+                    <strong>Keyboard Fast-Entry:</strong>
                     <span><kbd class="cmp-kbd-key">Tab</kbd> Next Field</span>
                     <span><kbd class="cmp-kbd-key">Alt</kbd>+<kbd class="cmp-kbd-key">C</kbd> Toggle <?php echo esc_html($label_chefs_choice); ?></span>
-                    <span><kbd class="cmp-kbd-key">Enter</kbd> / <kbd class="cmp-kbd-key">Ctrl+Enter</kbd> Save &amp; Jump to Next Day</span>
-                    <span><kbd class="cmp-kbd-key">Alt</kbd>+<kbd class="cmp-kbd-key">↓/↑</kbd> Switch Day</span>
+                    <span><kbd class="cmp-kbd-key">Enter</kbd> / <kbd class="cmp-kbd-key">Ctrl+Enter</kbd> Save &amp; Next Day</span>
+                    <span><kbd class="cmp-kbd-key">Alt</kbd>+<kbd class="cmp-kbd-key">Up/Down</kbd> Switch Day</span>
                 </div>
                 <div class="cmp-toolbar-actions">
                     <?php if (!$is_paused && !$is_chef_override): ?>
-                        <button type="button" class="cmp-util-btn primary-util cmp-autofill-dates-btn" title="Automatically fill consecutive valid delivery dates for all empty pending days">⚡ Auto-Fill Sequential Dates</button>
+                        <button type="button" class="cmp-util-btn primary-util cmp-autofill-dates-btn" title="Automatically fill consecutive valid delivery dates for all empty pending days">
+                            <?php echo $icon_bolt; ?>
+                            <span>Auto-Fill Sequential Dates</span>
+                        </button>
                     <?php endif; ?>
                     <button type="button" class="cmp-util-btn cmp-collapse-confirmed-btn">Collapse Confirmed</button>
                     <button type="button" class="cmp-util-btn cmp-expand-all-btn">Expand All</button>
@@ -1855,10 +1888,10 @@ function cmp_render_customer_portal() {
                                     </div>
                                 </td>
 
-                                <!-- Compact 1-Line Summary Bar when Card is Collapsed on Desktop/Tablet -->
+                                <!-- Compact 1-Line Summary Bar (Strictly Hidden Unless Card is Collapsed on Desktop/Tablet) -->
                                 <td class="cmp-collapsed-summary" title="Click to expand meal selections">
                                     <span class="cmp-summary-text">Click to view or edit meal selections</span>
-                                    <span style="color:#379237; font-size:0.8rem; font-weight:800;">Expand &#9660;</span>
+                                    <span style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
                                 </td>
                             </tr>
                         <?php } ?>
@@ -1924,7 +1957,7 @@ function cmp_render_customer_portal() {
             return '';
         }
 
-        // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text
+        // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text (Pure Text/Badges — No Twemoji Images)
         function syncRowCompactAndSummary(rowElement) {
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var hasValues = false;
@@ -1955,9 +1988,9 @@ function cmp_render_customer_portal() {
             var summaryTextEl = rowElement.find('.cmp-summary-text');
             if (summaryTextEl.length) {
                 if (isChefsChoice && !hasValues) {
-                    summaryTextEl.html('👨‍🍳 <strong>' + chefsChoiceLabel + '</strong> Selected');
+                    summaryTextEl.html('<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
                 } else if (pickedNames.length > 0) {
-                    summaryTextEl.text('🍽️ ' + pickedNames.join('  •  '));
+                    summaryTextEl.html('<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
                 } else {
                     summaryTextEl.text('No meals selected yet — Click to expand');
                 }
@@ -2251,7 +2284,7 @@ function cmp_render_customer_portal() {
         }
 
         // Card Expand / Collapse Toggle (Mobile & Desktop)
-        $('.cmp-day-row td.cmp-cell-day, .cmp-day-row .cmp-collapsed-summary').on('click', function() {
+        $('.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary').on('click', function() {
             var $row = $(this).closest('tr.cmp-day-row');
             if ($(window).width() <= 768) {
                 $row.toggleClass('is-open');
