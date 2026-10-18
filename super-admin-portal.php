@@ -52,14 +52,12 @@ function cmp_sa_ensure_schema_and_sync( $force = false ) {
             foreach ( $wc_subs as $ws ) {
                 $order = wc_get_order( $ws->wc_order_id );
                 if ( ! $order ) {
-                    // WooCommerce order was permanently deleted
                     $wpdb->update( $table_subs, array( 'status' => 'deleted' ), array( 'id' => intval( $ws->id ) ) );
                     continue;
                 }
 
                 $order_status = $order->get_status();
                 if ( in_array( $order_status, array( 'trash', 'cancelled', 'refunded', 'failed' ), true ) ) {
-                    // WooCommerce order was trashed, cancelled, refunded, or failed
                     $wpdb->update( $table_subs, array( 'status' => 'deleted' ), array( 'id' => intval( $ws->id ) ) );
                     continue;
                 }
@@ -264,11 +262,6 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
     }
 
     // 2. Unrenewed Expired Customers & Cost of Churn SQL Aggregation (Step 2.2)
-    // Strictly requires:
-    // - Valid existing WP User (INNER JOIN wp_users)
-    // - Legitimate non-deleted plan (status IN ('active', 'completed'))
-    // - Customer actually used the plan (used_days > 0) before it expired/finished
-    // - Customer has ZERO currently active or paused plans across their entire history
     $churn_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT 
             COUNT(s.id) AS churned_count,
@@ -471,8 +464,8 @@ function cmp_sa_render_sparkline_svg( $spark_map, $fin_start, $fin_end ) {
         $max_val = 1;
     }
 
-    $width  = 320;
-    $height = 48;
+    $width  = 600;
+    $height = 52;
     $pad_y  = 6;
     $count  = count( $points_data );
     $coords = array();
@@ -518,7 +511,6 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     $paged  = max( 1, intval( $paged ) );
     $offset = ( $paged - 1 ) * $per_page;
 
-    // Build Server-Side Search Clause (Step 4.2)
     $search_sql = '';
     if ( ! empty( $search ) ) {
         $clean_s  = trim( $search );
@@ -562,10 +554,9 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
 
     $limit_sql = ( $per_page > 0 ) ? $wpdb->prepare( " LIMIT %d OFFSET %d", $per_page, $offset ) : '';
 
-    // GROUP A: SUBSCRIPTION-BASED VIEWS (STRICTLY EXCLUDES DELETED PLANS & DELETED USERS)
+    // GROUP A: SUBSCRIPTION-BASED VIEWS
     if ( in_array( $sa_view, array( 'unrenewed_expired', 'active_plans', 'paused_plans', 'expiring_soon', 'period_sales' ), true ) ) {
         if ( $sa_view === 'unrenewed_expired' ) {
-            // Only real customers (INNER JOIN wp_users) who used >= 1 meal on an expired plan and have 0 active/paused plans
             $where_sql = $wpdb->prepare(
                 "s.id IN (
                     SELECT MAX(CASE WHEN s2.status IN ('active', 'completed') AND s2.used_days > 0 AND (s2.used_days >= s2.total_days OR s2.expiry_date < %s) THEN s2.id ELSE 0 END)
@@ -589,7 +580,6 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
             $where_sql = $wpdb->prepare( "s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s AND (s.total_days - s.used_days) BETWEEN 1 AND 3", $today_time );
             $order_by  = "(s.total_days - s.used_days) ASC, s.expiry_date ASC";
         } else {
-            // period_sales uses the dedicated Finance Date Filter and excludes deleted plans
             $where_sql = $wpdb->prepare( "s.status IN ('active', 'paused', 'completed') AND DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s", $fin_start, $fin_end );
             $order_by  = "s.start_date DESC, s.id DESC";
         }
@@ -665,7 +655,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
         );
     }
 
-    // GROUP B: DAILY LOGS-BASED VIEWS (WITH STEP 2.3 AGING BOTTLENECK FLAGS)
+    // GROUP B: DAILY LOGS-BASED VIEWS
     if ( $sa_view === 'pending_pos' ) {
         $where_sql = $wpdb->prepare(
             "s.status IN ('active', 'paused', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result != 'Pending'",
@@ -700,7 +690,6 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
         );
         $order_by = "l.target_date ASC, l.id ASC";
     } else {
-        // delivery_logs
         $where_sql = $wpdb->prepare(
             "s.status IN ('active', 'paused', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1",
             $op_start, $op_end
@@ -869,7 +858,6 @@ function cmp_render_super_admin_portal() {
     $preset_last_m_s   = date( 'Y-m-01', strtotime( 'first day of last month' ) );
     $preset_last_m_e   = date( 'Y-m-t', strtotime( 'last day of last month' ) );
     $preset_90d        = date( 'Y-m-d', strtotime( '-89 days' ) );
-    $preset_ytd        = date( 'Y-01-01' );
 
     // 1. Operational Date Filter (Top Bar)
     $op_start = isset( $_GET['start_date'] ) && ! empty( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : $preset_30d;
@@ -908,17 +896,18 @@ function cmp_render_super_admin_portal() {
         elseif ( $op_start === $preset_90d )        { $op_preset = '90d'; }
     }
 
+    // Finance Date Filter Active Preset: 7D, 30D, This Month, Last Month, 90D
     $fin_preset = 'custom';
-    if ( $fin_start === $preset_this_month && $fin_end === $today_date ) {
+    if ( $fin_start === $preset_7d && $fin_end === $today_date ) {
+        $fin_preset = '7d';
+    } elseif ( $fin_start === $preset_30d && $fin_end === $today_date ) {
+        $fin_preset = '30d';
+    } elseif ( $fin_start === $preset_this_month && $fin_end === $today_date ) {
         $fin_preset = 'this_month';
     } elseif ( $fin_start === $preset_last_m_s && $fin_end === $preset_last_m_e ) {
         $fin_preset = 'last_month';
-    } elseif ( $fin_start === $preset_30d && $fin_end === $today_date ) {
-        $fin_preset = '30d';
     } elseif ( $fin_start === $preset_90d && $fin_end === $today_date ) {
         $fin_preset = '90d';
-    } elseif ( $fin_start === $preset_ytd && $fin_end === $today_date ) {
-        $fin_preset = 'ytd';
     }
 
     $base_args = array(
@@ -931,7 +920,8 @@ function cmp_render_super_admin_portal() {
     ob_start();
     ?>
     <style>
-        .acru-dashboard, .acru-dashboard * { box-sizing: border-box; }
+        .acru-dashboard, .acru-dashboard * { box-sizing: border-box; letter-spacing: normal; }
+        .acru-dashboard button { letter-spacing: normal !important; text-transform: none !important; }
         .acru-dashboard svg.acru-icon,
         .acru-dashboard img.emoji,
         .acru-dashboard img.wp-smiley {
@@ -994,7 +984,7 @@ function cmp_render_super_admin_portal() {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 16px;
-            margin-bottom: 22px;
+            margin-bottom: 20px;
         }
         .acru-priority-card {
             background: #ffffff;
@@ -1116,121 +1106,33 @@ function cmp_render_super_admin_portal() {
             position: relative;
             overflow: hidden;
         }
-        .col-span-7 { grid-column: span 7; }
-        .col-span-5 { grid-column: span 5; }
+        .col-span-12 { grid-column: span 12; }
         .col-span-4 { grid-column: span 4; }
         .col-span-6 { grid-column: span 6; }
-        .col-span-12 { grid-column: span 12; }
 
         .card-label { font-size: 0.82em; font-weight: 800; color: #1B5E20; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
         .card-value { font-size: 2.25em; font-weight: 900; color: #231F20; line-height: 1.1; }
         .card-subtext { font-size: 0.84em; color: #64748b; margin-top: 8px; font-weight: 500; }
 
-        /* Dedicated Finance Filter Bar inside Hero Card */
-        .hero-fin-filter-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 8px;
-            background: rgba(0, 0, 0, 0.18);
-            padding: 6px 10px;
-            border-radius: 10px;
-            border: 1px solid rgba(220, 236, 201, 0.25);
-            margin-bottom: 14px;
-        }
-        .hero-fin-pills { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-        .hero-fin-pill {
-            padding: 4px 9px;
-            border-radius: 6px;
-            font-size: 0.74em;
-            font-weight: 700;
-            color: #DCECC9 !important;
-            text-decoration: none !important;
-            transition: 0.2s;
-            white-space: nowrap;
-        }
-        .hero-fin-pill:hover { background: rgba(255, 255, 255, 0.16); color: #ffffff !important; }
-        .hero-fin-pill.active { background: #EEF7E3; color: #1B5E20 !important; font-weight: 800; }
-
-        .hero-fin-custom-form { display: inline-flex; align-items: center; gap: 5px; margin: 0; }
-        .hero-fin-custom-form input[type="date"] {
-            background: rgba(255, 255, 255, 0.92);
-            border: none;
-            border-radius: 5px;
-            padding: 3px 6px;
-            font-size: 0.75em;
-            color: #1B5E20;
-            font-weight: 700;
-            width: 112px;
-        }
-        .hero-fin-custom-form button {
-            background: #68B946;
-            color: #ffffff;
-            border: none;
-            border-radius: 5px;
-            padding: 4px 9px;
-            font-size: 0.75em;
-            font-weight: 800;
-            cursor: pointer;
-        }
-
-        /* Sparkline Container */
-        .acru-sparkline-wrap { width: 100%; height: 46px; margin: 8px 0 4px 0; overflow: hidden; }
-        .acru-sparkline-svg { width: 100% !important; height: 46px !important; max-width: none !important; max-height: none !important; display: block !important; }
-
-        /* Hero Financial Sub-Grids */
-        .hero-fin-strip {
+        /* Full-Width 4-Portal Quick Launch Bar (Row Above Finance) */
+        .quick-launch-bar-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
+            gap: 14px;
             margin-top: 8px;
-            padding: 12px 14px;
-            background: rgba(0, 0, 0, 0.18);
-            border-radius: 12px;
-            border: 1px solid rgba(220, 236, 201, 0.25);
         }
-        .hero-health-strip {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 10px;
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid rgba(255, 255, 255, 0.22);
-        }
-        .hero-stat-link {
-            text-decoration: none !important;
-            color: #ffffff !important;
-            padding: 4px 6px;
-            border-radius: 8px;
-            transition: background 0.2s;
-            display: block;
-            min-width: 0;
-        }
-        .hero-stat-link:hover { background: rgba(255, 255, 255, 0.14); }
-        .hero-stat-val {
-            font-size: 1.02em;
-            font-weight: 800;
-            color: #ffffff;
-            white-space: nowrap !important;
-            display: block;
-            margin-top: 2px;
-        }
-
-        /* 4-Portal Quick Launch Grid */
-        .quick-launch-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 10px; }
         .ql-btn {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 16px;
+            padding: 15px 18px;
             background: #f8fcf5;
             border: 1.5px solid #DCECC9;
             border-radius: 12px;
             color: #1B5E20 !important;
             font-weight: 800;
             text-decoration: none !important;
-            font-size: 0.92em;
+            font-size: 0.95em;
             transition: all 0.2s ease;
         }
         .ql-btn:hover {
@@ -1239,6 +1141,102 @@ function cmp_render_super_admin_portal() {
             border-color: #1B5E20;
             transform: translateY(-2px);
             box-shadow: 0 6px 14px rgba(55, 146, 55, 0.22);
+        }
+
+        /* Dedicated Finance Filter Bar inside Full-Width Hero Card */
+        .hero-fin-filter-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            background: rgba(0, 0, 0, 0.18);
+            padding: 8px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(220, 236, 201, 0.25);
+            margin-bottom: 16px;
+        }
+        .hero-fin-pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+        .hero-fin-pill {
+            padding: 5px 12px;
+            border-radius: 7px;
+            font-size: 0.8em;
+            font-weight: 700;
+            color: #DCECC9 !important;
+            text-decoration: none !important;
+            transition: 0.2s;
+            white-space: nowrap;
+        }
+        .hero-fin-pill:hover { background: rgba(255, 255, 255, 0.16); color: #ffffff !important; }
+        .hero-fin-pill.active { background: #EEF7E3; color: #1B5E20 !important; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+
+        .hero-fin-custom-form { display: inline-flex; align-items: center; gap: 8px; margin: 0; flex-wrap: wrap; }
+        .hero-fin-custom-form input[type="date"] {
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(220, 236, 201, 0.5);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 0.82em;
+            color: #1B5E20;
+            font-weight: 700;
+            width: 132px;
+        }
+        .hero-fin-custom-form button {
+            background: #68B946;
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-size: 0.82em;
+            font-weight: 800;
+            cursor: pointer;
+            letter-spacing: normal !important;
+            transition: 0.2s;
+        }
+        .hero-fin-custom-form button:hover {
+            background: #82CD47;
+        }
+
+        /* Sparkline Container */
+        .acru-sparkline-wrap { width: 100%; height: 52px; margin: 10px 0 6px 0; overflow: hidden; }
+        .acru-sparkline-svg { width: 100% !important; height: 52px !important; max-width: none !important; max-height: none !important; display: block !important; }
+
+        /* Hero Financial Sub-Grids */
+        .hero-fin-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-top: 10px;
+            padding: 14px 18px;
+            background: rgba(0, 0, 0, 0.18);
+            border-radius: 12px;
+            border: 1px solid rgba(220, 236, 201, 0.25);
+        }
+        .hero-health-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.22);
+        }
+        .hero-stat-link {
+            text-decoration: none !important;
+            color: #ffffff !important;
+            padding: 6px 8px;
+            border-radius: 8px;
+            transition: background 0.2s;
+            display: block;
+            min-width: 0;
+        }
+        .hero-stat-link:hover { background: rgba(255, 255, 255, 0.14); }
+        .hero-stat-val {
+            font-size: 1.15em;
+            font-weight: 800;
+            color: #ffffff;
+            white-space: nowrap !important;
+            display: block;
+            margin-top: 3px;
         }
 
         /* Progress Bars & Metric Rows */
@@ -1252,16 +1250,16 @@ function cmp_render_super_admin_portal() {
 
         @media (max-width: 1120px) {
             .acru-priority-strip { grid-template-columns: repeat(2, 1fr); }
-            .col-span-7, .col-span-5 { grid-column: span 12; }
+            .quick-launch-bar-grid { grid-template-columns: repeat(2, 1fr); }
             .col-span-4 { grid-column: span 6; }
             .acru-bento-grid > .col-span-4:last-child { grid-column: span 12; }
         }
         @media (max-width: 640px) {
             .acru-dashboard { padding: 14px; }
             .acru-priority-strip { grid-template-columns: 1fr; }
-            .col-span-7, .col-span-5, .col-span-4, .col-span-6 { grid-column: span 12; }
+            .quick-launch-bar-grid { grid-template-columns: 1fr; }
+            .col-span-12, .col-span-4, .col-span-6 { grid-column: span 12; }
             .hero-fin-strip, .hero-health-strip { grid-template-columns: repeat(2, 1fr); }
-            .quick-launch-grid { grid-template-columns: 1fr; }
         }
     </style>
 
@@ -1298,7 +1296,7 @@ function cmp_render_super_admin_portal() {
         </div>
 
         <!-- =========================================================
-             TOP PRIORITY HIGHLIGHT ROW: POS CHECKS, DELIVERY STATUS & CHURN COST
+             ROW 1: TOP PRIORITY HIGHLIGHT STRIP (POS, DELIVERY & CHURN COST)
              ========================================================= -->
         <div class="acru-priority-strip">
             <!-- Priority 1: Pending POS Checks -->
@@ -1369,7 +1367,7 @@ function cmp_render_super_admin_portal() {
                 </div>
             </a>
 
-            <!-- Priority 4: Unrenewed Expired Customers & Cost of Churn (Step 2.2) -->
+            <!-- Priority 4: Unrenewed Expired Customers & Cost of Churn -->
             <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'unrenewed_expired' ) ) ) ); ?>" class="acru-priority-card retarget-purple">
                 <div>
                     <div class="priority-badge-row">
@@ -1393,23 +1391,50 @@ function cmp_render_super_admin_portal() {
              ========================================================= -->
         <div class="acru-bento-grid">
 
-            <!-- Card 1: Net Financial Turnover with Separate Date Filter Pills, PP Delta & SVG Sparkline -->
-            <div class="acru-card col-span-7" style="background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; border-color: #1B5E20;">
+            <!-- ROW 2: 4-PORTAL QUICK LAUNCH BAR (MOVED ONE ROW ABOVE FINANCIAL METRICS) -->
+            <div class="acru-card col-span-12" style="padding: 18px 24px;">
+                <div class="card-label" style="margin-bottom: 4px;">
+                    <span>Quick Launch Portals</span>
+                    <span style="color: #379237;">4 Operational Workstations</span>
+                </div>
+                <div class="quick-launch-bar-grid">
+                    <a href="<?php echo esc_url( site_url( '/foh-admin-portal/' ) ); ?>" target="_blank" class="ql-btn">
+                        <span>FOH Command</span>
+                        <span>&nearr;</span>
+                    </a>
+                    <a href="<?php echo esc_url( site_url( '/kitchen-command-center/' ) ); ?>" target="_blank" class="ql-btn">
+                        <span>Kitchen Report</span>
+                        <span>&nearr;</span>
+                    </a>
+                    <a href="<?php echo esc_url( site_url( '/menu-manager-portal/' ) ); ?>" target="_blank" class="ql-btn">
+                        <span>Menu Manager</span>
+                        <span>&nearr;</span>
+                    </a>
+                    <a href="<?php echo esc_url( site_url( '/admin-tools/' ) ); ?>" target="_blank" class="ql-btn">
+                        <span>Admin Tools</span>
+                        <span>&nearr;</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- ROW 3: FULL-WIDTH FINANCIAL HERO CARD (STRETCHED TO COL-SPAN-12) -->
+            <div class="acru-card col-span-12" style="background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; border-color: #1B5E20;">
                 <div>
-                    <!-- Dedicated Finance Date Filter Pills -->
+                    <!-- Dedicated Finance Date Filter Pills: 7D, 30D, This Month, Last Month, 90D -->
                     <div class="hero-fin-filter-bar">
                         <div class="hero-fin-pills">
-                            <span style="font-size:0.7em; font-weight:800; color:#DCECC9; text-transform:uppercase; margin-right:3px;">Finance:</span>
+                            <span style="font-size:0.75em; font-weight:800; color:#DCECC9; text-transform:uppercase; margin-right:4px;">Finance:</span>
+                            <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_7d, 'fin_end' => $today_date ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === '7d' ? 'active' : ''; ?>">7D</a>
+                            <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_30d, 'fin_end' => $today_date ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === '30d' ? 'active' : ''; ?>">30D</a>
                             <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_this_month, 'fin_end' => $today_date ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === 'this_month' ? 'active' : ''; ?>">This Month</a>
                             <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_last_m_s, 'fin_end' => $preset_last_m_e ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === 'last_month' ? 'active' : ''; ?>">Last Month</a>
-                            <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_30d, 'fin_end' => $today_date ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === '30d' ? 'active' : ''; ?>">30D</a>
                             <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_90d, 'fin_end' => $today_date ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === '90d' ? 'active' : ''; ?>">90D</a>
-                            <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'fin_start' => $preset_ytd, 'fin_end' => $today_date ) ) ) ); ?>" class="hero-fin-pill <?php echo $fin_preset === 'ytd' ? 'active' : ''; ?>">YTD</a>
                         </div>
                         <form method="GET" class="hero-fin-custom-form">
                             <input type="hidden" name="start_date" value="<?php echo esc_attr( $op_start ); ?>">
                             <input type="hidden" name="end_date" value="<?php echo esc_attr( $op_end ); ?>">
                             <input type="date" name="fin_start" value="<?php echo esc_attr( $fin_start ); ?>">
+                            <span style="color:#DCECC9; font-size:0.8em; font-weight:700;">to</span>
                             <input type="date" name="fin_end" value="<?php echo esc_attr( $fin_end ); ?>">
                             <button type="submit">Go</button>
                         </form>
@@ -1420,8 +1445,8 @@ function cmp_render_super_admin_portal() {
                         <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'period_sales' ) ) ) ); ?>" style="color:#EEF7E3; font-size:0.95em; font-weight:700; text-decoration:underline; white-space:nowrap;">Sales Breakdown &rarr;</a>
                     </div>
 
-                    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:12px; margin-top: 2px;">
-                        <div class="card-value" style="color: #fff; font-size: 2.55em; white-space: nowrap;">AED <?php echo number_format( $summary['net_turnover'], 2 ); ?></div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:12px; margin-top: 4px;">
+                        <div class="card-value" style="color: #fff; font-size: 2.8em; white-space: nowrap;">AED <?php echo number_format( $summary['net_turnover'], 2 ); ?></div>
                         
                         <?php
                         $delta_val   = $summary['fin_delta_pct'];
@@ -1430,7 +1455,7 @@ function cmp_render_super_admin_portal() {
                         $delta_bg    = $is_positive ? 'rgba(220, 252, 231, 0.22)' : 'rgba(254, 226, 226, 0.25)';
                         $delta_col   = $is_positive ? '#bbf7d0' : '#fecaca';
                         ?>
-                        <div style="background: <?php echo $delta_bg; ?>; color: <?php echo $delta_col; ?>; border: 1px solid rgba(255,255,255,0.28); padding: 4px 10px; border-radius: 999px; font-size: 0.8em; font-weight: 800; white-space: nowrap;" title="Compared against Previous Period (<?php echo esc_attr( $summary['pp_start'] . ' to ' . $summary['pp_end'] ); ?>: AED <?php echo number_format( $summary['pp_net_turnover'], 2 ); ?>)">
+                        <div style="background: <?php echo $delta_bg; ?>; color: <?php echo $delta_col; ?>; border: 1px solid rgba(255,255,255,0.28); padding: 5px 12px; border-radius: 999px; font-size: 0.85em; font-weight: 800; white-space: nowrap;" title="Compared against Previous Period (<?php echo esc_attr( $summary['pp_start'] . ' to ' . $summary['pp_end'] ); ?>: AED <?php echo number_format( $summary['pp_net_turnover'], 2 ); ?>)">
                             <?php echo esc_html( $delta_arrow . $delta_val . '% vs prev period' ); ?>
                         </div>
                     </div>
@@ -1439,19 +1464,19 @@ function cmp_render_super_admin_portal() {
                     
                     <div class="hero-fin-strip">
                         <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'period_sales' ) ) ) ); ?>" class="hero-stat-link">
-                            <span style="font-size: 0.74em; color: #DCECC9; display: block;">New Plans Sold</span>
+                            <span style="font-size: 0.78em; color: #DCECC9; display: block;">New Plans Sold</span>
                             <span class="hero-stat-val"><?php echo number_format( $summary['period_new_plans'] ); ?> &rarr;</span>
                         </a>
                         <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'period_sales' ) ) ) ); ?>" class="hero-stat-link">
-                            <span style="font-size: 0.74em; color: #DCECC9; display: block;">Gross Value</span>
+                            <span style="font-size: 0.78em; color: #DCECC9; display: block;">Gross Value</span>
                             <span class="hero-stat-val">AED <?php echo number_format( $summary['gross_turnover'], 2 ); ?></span>
                         </a>
                         <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'period_sales' ) ) ) ); ?>" class="hero-stat-link">
-                            <span style="font-size: 0.74em; color: #DCECC9; display: block;">Discounts Given</span>
+                            <span style="font-size: 0.78em; color: #DCECC9; display: block;">Discounts Given</span>
                             <span class="hero-stat-val" style="color: #fde68a;">AED <?php echo number_format( $summary['total_discounts'], 2 ); ?></span>
                         </a>
                         <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'period_sales' ) ) ) ); ?>" class="hero-stat-link">
-                            <span style="font-size: 0.74em; color: #DCECC9; display: block;">Avg Plan Value</span>
+                            <span style="font-size: 0.78em; color: #DCECC9; display: block;">Avg Plan Value</span>
                             <span class="hero-stat-val">AED <?php echo number_format( $summary['avg_plan_value'], 2 ); ?></span>
                         </a>
                     </div>
@@ -1459,53 +1484,25 @@ function cmp_render_super_admin_portal() {
 
                 <div class="hero-health-strip">
                     <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'active_plans' ) ) ) ); ?>" class="hero-stat-link">
-                        <span style="font-size: 0.76em; color: #DCECC9; display: block;">Live Active Plans</span>
-                        <strong style="font-size: 1.3em; color: #fff; white-space: nowrap;"><?php echo number_format( $summary['live_active_count'] ); ?> &rarr;</strong>
+                        <span style="font-size: 0.8em; color: #DCECC9; display: block;">Live Active Plans</span>
+                        <strong style="font-size: 1.4em; color: #fff; white-space: nowrap;"><?php echo number_format( $summary['live_active_count'] ); ?> &rarr;</strong>
                     </a>
-                    <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'paused_plans' ) ) ) ); ?>" class="hero-stat-link" style="border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px;">
-                        <span style="font-size: 0.76em; color: #DCECC9; display: block;">Live Paused</span>
-                        <strong style="font-size: 1.3em; color: #fde68a; white-space: nowrap;"><?php echo number_format( $summary['live_paused_count'] ); ?> &rarr;</strong>
+                    <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'paused_plans' ) ) ) ); ?>" class="hero-stat-link" style="border-left: 1px solid rgba(255,255,255,0.2); padding-left: 14px;">
+                        <span style="font-size: 0.8em; color: #DCECC9; display: block;">Live Paused</span>
+                        <strong style="font-size: 1.4em; color: #fde68a; white-space: nowrap;"><?php echo number_format( $summary['live_paused_count'] ); ?> &rarr;</strong>
                     </a>
-                    <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'expiring_soon' ) ) ) ); ?>" class="hero-stat-link" style="border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px;">
-                        <span style="font-size: 0.76em; color: #DCECC9; display: block;">Expiring (&le;3d)</span>
-                        <strong style="font-size: 1.3em; color: #fed7aa; white-space: nowrap;"><?php echo number_format( $summary['expiring_soon_count'] ); ?> &rarr;</strong>
+                    <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'expiring_soon' ) ) ) ); ?>" class="hero-stat-link" style="border-left: 1px solid rgba(255,255,255,0.2); padding-left: 14px;">
+                        <span style="font-size: 0.8em; color: #DCECC9; display: block;">Expiring (&le;3d)</span>
+                        <strong style="font-size: 1.4em; color: #fed7aa; white-space: nowrap;"><?php echo number_format( $summary['expiring_soon_count'] ); ?> &rarr;</strong>
                     </a>
-                    <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'unrenewed_expired' ) ) ) ); ?>" class="hero-stat-link" style="border-left: 1px solid rgba(255,255,255,0.2); padding-left: 10px;">
-                        <span style="font-size: 0.76em; color: #DCECC9; display: block;">Unrenewed Pool</span>
-                        <strong style="font-size: 1.3em; color: #fecaca; white-space: nowrap;"><?php echo number_format( $summary['unrenewed_total_count'] ); ?> &rarr;</strong>
+                    <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'unrenewed_expired' ) ) ) ); ?>" class="hero-stat-link" style="border-left: 1px solid rgba(255,255,255,0.2); padding-left: 14px;">
+                        <span style="font-size: 0.8em; color: #DCECC9; display: block;">Unrenewed Pool</span>
+                        <strong style="font-size: 1.4em; color: #fecaca; white-space: nowrap;"><?php echo number_format( $summary['unrenewed_total_count'] ); ?> &rarr;</strong>
                     </a>
                 </div>
             </div>
 
-            <!-- Card 2: 4-Portal Quick Launch (Strictly Required Portals) -->
-            <div class="acru-card col-span-5">
-                <div>
-                    <div class="card-label">
-                        <span>Quick Launch Portals</span>
-                        <span style="color: #379237;">4 Workstations</span>
-                    </div>
-                    <div class="quick-launch-grid">
-                        <a href="<?php echo esc_url( site_url( '/foh-admin-portal/' ) ); ?>" target="_blank" class="ql-btn">
-                            <span>FOH Command</span>
-                            <span>&nearr;</span>
-                        </a>
-                        <a href="<?php echo esc_url( site_url( '/kitchen-command-center/' ) ); ?>" target="_blank" class="ql-btn">
-                            <span>Kitchen Report</span>
-                            <span>&nearr;</span>
-                        </a>
-                        <a href="<?php echo esc_url( site_url( '/menu-manager-portal/' ) ); ?>" target="_blank" class="ql-btn">
-                            <span>Menu Manager</span>
-                            <span>&nearr;</span>
-                        </a>
-                        <a href="<?php echo esc_url( site_url( '/admin-tools/' ) ); ?>" target="_blank" class="ql-btn">
-                            <span>Admin Tools</span>
-                            <span>&nearr;</span>
-                        </a>
-                    </div>
-                </div>
-                <div class="card-subtext" style="margin-top: 15px;">Direct one-click access to core operational workstations.</div>
-            </div>
-
+            <!-- ROW 4: 3 OPERATIONAL & BOTTLENECK CARDS (COL-SPAN-4 EACH) -->
             <!-- Card 3: Operational Pulse (Period Prep + Live Today Pulse) -->
             <div class="acru-card col-span-4">
                 <div>
@@ -1683,7 +1680,8 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
     ob_start();
     ?>
     <style>
-        .sa-drill-wrap, .sa-drill-wrap * { box-sizing: border-box; }
+        .sa-drill-wrap, .sa-drill-wrap * { box-sizing: border-box; letter-spacing: normal; }
+        .sa-drill-wrap button { letter-spacing: normal !important; text-transform: none !important; }
         .sa-drill-wrap svg.acru-icon { width: 14px !important; height: 14px !important; max-width: 16px !important; max-height: 16px !important; display: inline-block !important; vertical-align: -2px !important; }
         .sa-drill-wrap {
             max-width: 1350px;
@@ -1792,7 +1790,6 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
         <?php else : ?>
             <div style="overflow-x:auto;">
                 <?php if ( $sa_view === 'unrenewed_expired' ) : ?>
-                    <!-- TABLE A: UNRENEWED EXPIRED CUSTOMERS (RETARGETING LIST) -->
                     <table class="sa-drill-table">
                         <thead>
                             <tr>
@@ -1841,7 +1838,6 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                     </table>
 
                 <?php elseif ( in_array( $sa_view, array( 'active_plans', 'paused_plans', 'expiring_soon', 'period_sales' ), true ) ) : ?>
-                    <!-- TABLE B: SUBSCRIPTIONS & FINANCIALS DRILL-DOWN -->
                     <table class="sa-drill-table">
                         <thead>
                             <tr>
@@ -1896,7 +1892,6 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                     </table>
 
                 <?php else : ?>
-                    <!-- TABLE C: DAILY OPERATIONAL, DELIVERY & POS RECONCILIATION LOGS -->
                     <table class="sa-drill-table">
                         <thead>
                             <tr>
