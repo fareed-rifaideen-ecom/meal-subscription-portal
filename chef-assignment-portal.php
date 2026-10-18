@@ -2,24 +2,35 @@
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
+if ( function_exists( 'opcache_invalidate' ) ) {
+    @opcache_invalidate( __FILE__, true );
+}
+
 // ==========================================
 // CHEF ASSIGNMENT DESK DASHBOARD
 // ==========================================
 add_shortcode( 'meal_chef_assignment', 'cmp_render_chef_assignment_desk' );
 
 function cmp_render_chef_assignment_desk() {
-    date_default_timezone_set('Asia/Dubai');
-
-    // 1. Authentication & Login Form
-    if ( ! is_user_logged_in() ) {
-        $login_args = array('echo' => false, 'form_id' => 'cmp-chef-login', 'label_username' => __('Email Address or Username'), 'label_password' => __('Password'));
-        $custom_css = '<style>#cmp-chef-login label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; text-align: left; } #cmp-chef-login input[type="text"], #cmp-chef-login input[type="password"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; } #cmp-chef-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; } #cmp-chef-login .login-remember { text-align: left; margin-bottom: 15px; }</style>';
-        return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">Chef Assignment Desk</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with your Kitchen account.</p>' . wp_login_form( $login_args ) . '</div>';
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+        define( 'DONOTCACHEPAGE', true );
     }
 
-    // 2. Security Check
-    if ( !current_user_can('manage_options') && !current_user_can('kitchen_staff') && !current_user_can('menu_manager') && !current_user_can('foh_manager') ) {
-        return '<p style="padding: 20px; background: #fff; border-left: 4px solid #dc3232;">Access Denied. Kitchen Staff only.</p>';
+    date_default_timezone_set('Asia/Dubai');
+
+    $has_chef_access = current_user_can( 'manage_options' ) || current_user_can( 'kitchen_staff' ) || current_user_can( 'menu_manager' ) || current_user_can( 'foh_manager' );
+
+    // 1. SECURITY & CUSTOM GLASSMORPHISM UI/UX LOGIN SCREEN
+    if ( ! is_user_logged_in() || ! $has_chef_access ) {
+        if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
+            return cmp_render_portal_login_ui( array(
+                'portal_id'      => 'chef_desk',
+                'title'          => 'Chef Assignment Desk',
+                'subtitle'       => "Chef's Choice & Custom Meal Selection",
+                'required_caps'  => array( 'manage_options', 'kitchen_staff', 'menu_manager', 'foh_manager' ),
+                'denied_message' => 'Kitchen Staff, Menu Manager, or FOH clearance is required to access this portal.',
+            ) );
+        }
     }
 
     global $wpdb;
@@ -88,7 +99,7 @@ function cmp_render_chef_assignment_desk() {
         $recipient_badge = '';
         
         if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            $recipient_badge = '<span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span>';
+            $recipient_badge = '<span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span>';
             array_pop($plan_parts);
             $core_plan_name = implode(' - ', $plan_parts);
         } else {
@@ -172,38 +183,85 @@ function cmp_render_chef_assignment_desk() {
     ob_start();
     ?>
     <style>
-        .chef-desk-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; }
-        .chef-tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 20px; overflow-x: auto; }
-        .chef-tab-btn { background: none; border: none; padding: 15px 30px; font-size: 1.1em; font-weight: bold; color: #666; cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; }
-        .chef-tab-btn.active { color: #d63638; border-bottom: 3px solid #d63638; }
+        .chef-desk-wrap { max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px; }
+        
+        /* Desktop Chef Desk Glass Header (> 992px) */
+        .chef-header-banner {
+            background: linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%) !important;
+            backdrop-filter: blur(18px) !important;
+            -webkit-backdrop-filter: blur(18px) !important;
+            color: #fff !important;
+            padding: 25px 28px !important;
+            border-radius: 18px !important;
+            border: 1.5px solid #DCECC9 !important;
+            border-bottom: 4px solid #68B946 !important;
+            box-shadow: 0 14px 34px rgba(27, 94, 32, 0.14) !important;
+            margin-bottom: 24px !important;
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            flex-wrap: wrap !important;
+            gap: 15px !important;
+        }
+        .chef-header-banner h1 { margin: 0 !important; color: #ffffff !important; font-size: 1.9em !important; font-weight: 800 !important; }
+        .chef-header-banner p { margin: 5px 0 0 0 !important; color: #EEF7E3 !important; font-weight: 500 !important; }
+
+        /* Tablet Chef Desk Glass Header (601px - 991px) */
+        @media (min-width: 601px) and (max-width: 991px) {
+            .chef-header-banner {
+                background: linear-gradient(125deg, rgba(220, 236, 201, 0.92) 0%, rgba(104, 185, 70, 0.42) 100%) !important;
+                border: 1.5px solid #379237 !important;
+                padding: 22px 24px !important;
+            }
+            .chef-header-banner h1 { color: #231F20 !important; font-size: 1.65em !important; }
+            .chef-header-banner p { color: #1B5E20 !important; }
+        }
+
+        /* Mobile Chef Desk Glass Header (<= 600px) */
+        @media (max-width: 600px) {
+            .chef-header-banner {
+                background: linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%) !important;
+                border: 1.5px solid #68B946 !important;
+                border-radius: 16px !important;
+                padding: 18px !important;
+            }
+            .chef-header-banner h1 { color: #ffffff !important; font-size: 1.4em !important; }
+            .chef-header-banner p { color: #DCECC9 !important; font-size: 0.9em !important; }
+        }
+
+        .chef-tabs { display: flex; border-bottom: 2px solid #DCECC9; margin-bottom: 20px; overflow-x: auto; gap: 6px; }
+        .chef-tab-btn { background: none; border: none; padding: 14px 26px; font-size: 1.05em; font-weight: 800; color: #64748b; cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; transition: 0.2s; }
+        .chef-tab-btn:hover { color: #1B5E20; }
+        .chef-tab-btn.active { color: #1B5E20; border-bottom: 3px solid #379237; background: rgba(238, 247, 227, 0.5); border-radius: 8px 8px 0 0; }
         .chef-tab-content { display: none; }
         .chef-tab-content.active { display: block; }
         
-        .chef-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; font-size: 0.95em; }
-        .chef-table th { padding: 12px; border-bottom: 2px solid #ddd; text-align: left; background: #f8f9fa; }
+        .chef-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e2e8f0; font-size: 0.95em; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05); }
+        .chef-table th { padding: 12px; border-bottom: 2px solid #DCECC9; text-align: left; background: #EEF7E3; color: #1B5E20; }
         .chef-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: top; }
         
-        .chef-search-bar { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; margin-bottom: 15px; box-sizing: border-box; }
-        .chef-assign-btn { display: inline-block; background: #d63638; color: #fff; padding: 8px 15px; border-radius: 4px; font-weight: bold; text-decoration: none; transition: 0.2s; white-space: nowrap; }
-        .chef-assign-btn:hover { background: #b91c1c; color: #fff; }
+        .chef-search-bar { width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1em; margin-bottom: 15px; box-sizing: border-box; background: #fff; }
+        .chef-search-bar:focus { border-color: #379237; outline: none; box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.15); }
+        .chef-assign-btn { display: inline-block; background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: #fff; padding: 9px 16px; border-radius: 8px; font-weight: bold; text-decoration: none; transition: 0.2s; white-space: nowrap; box-shadow: 0 4px 10px rgba(55, 146, 55, 0.2); }
+        .chef-assign-btn:hover { background: linear-gradient(135deg, #68B946 0%, #379237 100%); color: #fff; transform: translateY(-1px); }
     </style>
 
     <div class="chef-desk-wrap">
-        <div style="background: #222; color: #fff; padding: 25px; border-radius: 8px 8px 0 0; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+        <div class="chef-header-banner">
             <div>
-                <h1 style="margin:0; color:#fff;">Assignment Desk - Chef's Selection</h1>
-                <p style="margin:5px 0 0 0; color:#ccc;">Select meals for "Chef's Choice" customers.</p>
+                <h1>Assignment Desk &mdash; Chef's Selection</h1>
+                <p>Select meals for "Chef's Choice" customers.</p>
             </div>
             
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #0073aa; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Kitchen Preparation Report ⇗</a>
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-weight:bold;">Log Out</a>
+                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #1B5E20; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight:bold; border: 1px solid rgba(220,236,201,0.5);">Kitchen Preparation Report ⇗</a>
+                <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
 
         <div class="chef-tabs">
             <button class="chef-tab-btn active" onclick="switchChefTab(event, 'tab-pending')">
-                Pending Chef's Selections <span style="background:#d63638; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em; margin-left:5px;"><?php echo count($pending_customers); ?></span>
+                Pending Chef's Selections <span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em; margin-left:5px;"><?php echo count($pending_customers); ?></span>
             </button>
             <button class="chef-tab-btn" onclick="switchChefTab(event, 'tab-all')">All Active Customers</button>
         </div>
@@ -219,7 +277,7 @@ function cmp_render_chef_assignment_desk() {
                             <th>Customer Details</th>
                             <th>Logistics</th>
                             <th>Plan / Allergies</th>
-                            <th>Action</th>
+                            <th style="text-align:center;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -229,10 +287,10 @@ function cmp_render_chef_assignment_desk() {
                             $search_str = strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
                         ?>
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
+                                <td><strong style="color:#231F20; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
                                 <td>
                                     <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 4px;">
-                                        <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                        <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                         <?php echo $c['recipient_badge']; ?>
                                     </div>
                                     <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html($c['email']); ?></span>
@@ -270,7 +328,7 @@ function cmp_render_chef_assignment_desk() {
                             <th>Customer Details</th>
                             <th>Logistics</th>
                             <th>Plan / Allergies</th>
-                            <th>Action</th>
+                            <th style="text-align:center;">Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -280,10 +338,10 @@ function cmp_render_chef_assignment_desk() {
                             $search_str = strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
                         ?>
                             <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#334155; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
+                                <td><strong style="color:#231F20; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
                                 <td>
                                     <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 4px;">
-                                        <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                        <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                         <?php echo $c['recipient_badge']; ?>
                                     </div>
                                     <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html($c['email']); ?></span>
