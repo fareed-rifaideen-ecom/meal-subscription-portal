@@ -7,7 +7,7 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 }
 
 // ==========================================
-// 0. ROLE & DATE LOCK HELPER FUNCTIONS
+// 0. ROLE, QUOTA & DATE LOCK HELPER FUNCTIONS
 // ==========================================
 
 /**
@@ -28,9 +28,43 @@ function cmp_can_adjust_plan_days() {
 }
 
 /**
+ * Strictly allow ONLY Administrators to bypass meal/snack/juice quota requirements.
+ * Customers, FOH Managers, Menu Managers, and Kitchen Staff must fulfill exact quotas (unless Chef's Choice is checked).
+ */
+function cmp_can_bypass_meal_quota() {
+    if ( ! is_user_logged_in() ) {
+        return false;
+    }
+    return current_user_can( 'manage_options' );
+}
+
+/**
+ * Allow Administrators, FOH Managers, and Menu Managers to bypass date restrictions and daily cut-off times.
+ */
+function cmp_can_bypass_date_restrictions() {
+    if ( ! is_user_logged_in() ) {
+        return false;
+    }
+    $user  = wp_get_current_user();
+    $roles = (array) $user->roles;
+
+    if (
+        current_user_can( 'manage_options' ) ||
+        current_user_can( 'foh_manager' ) ||
+        current_user_can( 'menu_manager' ) ||
+        in_array( 'administrator', $roles, true ) ||
+        in_array( 'foh_manager', $roles, true ) ||
+        in_array( 'menu_manager', $roles, true )
+    ) {
+        return true;
+    }
+    return false;
+}
+
+/**
  * Returns the earliest allowed YYYY-MM-DD date a customer can modify, reset, or cancel
  * based on Asia/Dubai timezone and the configured daily cut-off hour.
- * Past dates and today's date are ALWAYS locked. Tomorrow is locked if current hour >= cutoff.
+ * Past dates and today's date are ALWAYS locked for customers. Tomorrow is locked if current hour >= cutoff.
  */
 function cmp_get_earliest_customer_allowed_date() {
     $tz           = new DateTimeZone( 'Asia/Dubai' );
@@ -75,12 +109,16 @@ function cmp_ajax_save_daily_log() {
     $target_date       = sanitize_text_field($_POST['date']);
     $is_override_mode  = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
 
-    $is_admin      = current_user_can('manage_options') || current_user_can('foh_manager');
-    $is_chef       = current_user_can('kitchen_staff') || current_user_can('menu_manager');
-    $is_privileged = ($is_admin || $is_chef) && $is_override_mode === 1;
+    if ( empty( $target_date ) ) {
+        wp_send_json_error('Please select a valid delivery date first.');
+    }
 
-    // Cutoff Time Validation (Ironclad Server Rule)
-    if ( ! $is_privileged ) {
+    // Separate Date/Cut-off Privilege from Quota Bypass Privilege
+    $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can('kitchen_staff') && $is_override_mode === 1 );
+    $can_bypass_quota = cmp_can_bypass_meal_quota();
+
+    // Cutoff Time & Past/Today Date Validation (Customers are strictly restricted; Admin, FOH & Menu Manager are exempt)
+    if ( ! $can_bypass_dates ) {
         $cutoff_hour      = intval( get_option('cmp_cutoff_time', '11') );
         $earliest_allowed = cmp_get_earliest_customer_allowed_date();
 
@@ -100,6 +138,11 @@ function cmp_ajax_save_daily_log() {
 
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
+
+    $is_staff_user = cmp_can_bypass_date_restrictions() || current_user_can('kitchen_staff');
+    if ( ! $is_staff_user && intval($sub->user_id) !== get_current_user_id() ) {
+        wp_send_json_error('Unauthorized access to this subscription.');
+    }
 
     // --- LOG-LEVEL SNAPSHOT LOGIC (Phase 7) ---
     if ($log_id > 0) {
@@ -131,6 +174,11 @@ function cmp_ajax_save_daily_log() {
         if ($has_meals && $is_menu_pending) {
             wp_send_json_error('The menu for this date is pending release. Specific meals cannot be selected yet.');
         }
+
+        // Non-admins cannot save an empty Menu Pending date unless Chef's Choice is selected
+        if ($is_menu_pending && !$is_chefs_choice && !$can_bypass_quota) {
+            wp_send_json_error('The specific menu is not available yet for this date. Please select "Chef\'s Choice" to secure this date.');
+        }
     }
 
     // --- ROBUST QUOTA CALCULATION ENGINE ---
@@ -158,45 +206,45 @@ function cmp_ajax_save_daily_log() {
         $snack_quota = ($allowed_quota >= 2) ? 2 : 1;
     }
 
-    // --- STRICT SELECTION QUOTA ENFORCEMENT ---
-    if (!($is_admin && $is_override_mode === 1) && !$is_chefs_choice && !$is_menu_pending) {
+    // --- STRICT SELECTION QUOTA ENFORCEMENT (ONLY ADMINS CAN BYPASS) ---
+    if ( ! $can_bypass_quota && ! $is_chefs_choice && ! $is_menu_pending ) {
         if ($is_juice) {
             if ($row_allow_custom) {
-                if (empty($_POST['custom_juice_1']) || empty($_POST['custom_juice_2']) || empty($_POST['custom_juice_3'])) {
-                    wp_send_json_error("Please provide exactly 3 juices to complete this day.");
+                if (empty(trim($_POST['custom_juice_1'] ?? '')) || empty(trim($_POST['custom_juice_2'] ?? '')) || empty(trim($_POST['custom_juice_3'] ?? ''))) {
+                    wp_send_json_error("Please provide all 3 juices as per the subscription quota to save this day.");
                 }
             } else {
                 if (empty($_POST['juice_1']) || empty($_POST['juice_2']) || empty($_POST['juice_3'])) {
-                    wp_send_json_error("Please select exactly 3 juices to complete this day.");
+                    wp_send_json_error("Please select all 3 juices as per the subscription quota to save this day.");
                 }
             }
         } else {
             $submitted_count = 0;
             if ($row_allow_custom) {
-                if (!empty($_POST['custom_breakfast'])) $submitted_count++;
-                if (!empty($_POST['custom_lunch'])) $submitted_count++;
-                if (!empty($_POST['custom_dinner'])) $submitted_count++;
+                if (!empty(trim($_POST['custom_breakfast'] ?? ''))) $submitted_count++;
+                if (!empty(trim($_POST['custom_lunch'] ?? '')))     $submitted_count++;
+                if (!empty(trim($_POST['custom_dinner'] ?? '')))    $submitted_count++;
             } else {
                 if (!empty($_POST['breakfast'])) $submitted_count++;
-                if (!empty($_POST['lunch'])) $submitted_count++;
-                if (!empty($_POST['dinner'])) $submitted_count++;
+                if (!empty($_POST['lunch']))     $submitted_count++;
+                if (!empty($_POST['dinner']))    $submitted_count++;
             }
 
             if ($submitted_count !== $allowed_quota) {
-                wp_send_json_error("Please select exactly {$allowed_quota} main meal(s).");
+                wp_send_json_error("Quota Requirement: Please select exactly {$allowed_quota} main meal(s) as allocated in this subscription.");
             }
 
             $submitted_snacks = 0;
             if ($row_allow_custom) {
-                if (!empty($_POST['custom_snack_1'])) $submitted_snacks++;
-                if (!empty($_POST['custom_snack_2'])) $submitted_snacks++;
+                if (!empty(trim($_POST['custom_snack_1'] ?? ''))) $submitted_snacks++;
+                if (!empty(trim($_POST['custom_snack_2'] ?? ''))) $submitted_snacks++;
             } else {
                 if (!empty($_POST['snack_1'])) $submitted_snacks++;
                 if (!empty($_POST['snack_2'])) $submitted_snacks++;
             }
 
             if ($submitted_snacks !== $snack_quota) {
-                wp_send_json_error("Please select exactly {$snack_quota} snack(s).");
+                wp_send_json_error("Quota Requirement: Please select exactly {$snack_quota} snack(s) as allocated in this subscription.");
             }
         }
     }
@@ -439,14 +487,13 @@ function cmp_ajax_clear_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    $is_staff_role = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager') || current_user_can('kitchen_staff');
-    $is_privileged = $is_staff_role && $is_override_mode === 1;
+    $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can('kitchen_staff') && $is_override_mode === 1 );
     
-    if (!$is_staff_role && $sub->user_id != get_current_user_id()) {
+    if (!$can_bypass_dates && $sub->user_id != get_current_user_id()) {
         wp_send_json_error('Unauthorized access to this subscription.');
     }
 
-    if ( ! $is_privileged ) {
+    if ( ! $can_bypass_dates ) {
         if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
             wp_send_json_error('Past dates, today\'s date, and dates past the daily cut-off time cannot be reset.');
         }
@@ -477,14 +524,13 @@ function cmp_ajax_cancel_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    $is_staff_role = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager') || current_user_can('kitchen_staff');
-    $is_privileged = $is_staff_role && $is_override_mode === 1;
+    $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can('kitchen_staff') && $is_override_mode === 1 );
     
-    if (!$is_staff_role && $sub->user_id != get_current_user_id()) {
+    if (!$can_bypass_dates && $sub->user_id != get_current_user_id()) {
         wp_send_json_error('Unauthorized access to this subscription.');
     }
 
-    if ( ! $is_privileged ) {
+    if ( ! $can_bypass_dates ) {
         if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
             wp_send_json_error('Past dates, today\'s date, and dates past the daily cut-off time cannot be cancelled.');
         }
@@ -545,10 +591,13 @@ function cmp_render_customer_portal() {
     $icon_cancel = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
     $icon_kbd    = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>';
     $icon_target = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>';
+    $icon_up     = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
 
-    // OVERRIDE DETECTION
-    $is_admin_override = isset($_GET['admin_edit_sub']) && (current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager'));
-    $is_chef_override  = isset($_GET['chef_override_sub']) && (current_user_can('manage_options') || current_user_can('kitchen_staff') || current_user_can('menu_manager') || current_user_can('foh_manager'));
+    // OVERRIDE & PRIVILEGE DETECTION
+    $is_admin_override    = isset($_GET['admin_edit_sub']) && cmp_can_bypass_date_restrictions();
+    $is_chef_override     = isset($_GET['chef_override_sub']) && (cmp_can_bypass_date_restrictions() || current_user_can('kitchen_staff'));
+    $can_bypass_date_lock = cmp_can_bypass_date_restrictions() || $is_chef_override;
+    $can_bypass_quota     = cmp_can_bypass_meal_quota(); // Strictly Admin ONLY
 
     if ($is_admin_override) {
         $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval($_GET['admin_edit_sub'])) );
@@ -598,7 +647,7 @@ function cmp_render_customer_portal() {
         if ($is_chef_override) {
             $greeting_name = "Chef Mode (Managing: " . esc_html($customer_display_name) . ")";
         } else {
-            $greeting_name = esc_html($customer_display_name) . " (Admin Override)";
+            $greeting_name = esc_html($customer_display_name) . " (Staff Override)";
         }
     } else {
         $fname = get_user_meta($current_user->ID, 'first_name', true) ?: get_user_meta($current_user->ID, 'billing_first_name', true);
@@ -613,10 +662,11 @@ function cmp_render_customer_portal() {
     $current_hour      = (int) $now_dubai->format('H');
     $customer_min_date = cmp_get_earliest_customer_allowed_date();
 
-    // --- UNLOCK BACK-DATES FOR ADMINS IN OVERRIDE MODE ---
-    if ($is_admin_override || $is_chef_override) {
+    // --- UNLOCK BACK-DATES FOR ADMIN, FOH & MENU MANAGER ---
+    if ($can_bypass_date_lock) {
         $global_min_date = ''; 
-        $note_text = "Admin/Chef Mode: Date restrictions are disabled. You may assign back-dates.";
+        $quota_note = $can_bypass_quota ? "Admin Mode: Date & meal quota restrictions are disabled." : "Staff Mode (FOH / Menu Manager): Date & cut-off restrictions are disabled. Standard meal quotas apply.";
+        $note_text  = $quota_note;
         $note_color = "#379237"; 
     } elseif ( $current_hour >= $dynamic_cutoff_hour ) {
         $global_min_date = $customer_min_date;
@@ -794,31 +844,6 @@ function cmp_render_customer_portal() {
         .cmp-util-btn.primary-util:hover {
             filter: brightness(1.08);
             transform: translateY(-1px);
-        }
-
-        /* Floating Desktop Scroll-to-Pending Button */
-        .cmp-float-pending-btn {
-            position: fixed;
-            bottom: 30px;
-            left: 30px;
-            background: linear-gradient(135deg, #1B5E20 0%, #379237 100%);
-            color: #ffffff !important;
-            border: 1.5px solid #DCECC9;
-            border-radius: 999px;
-            padding: 12px 20px;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            box-shadow: 0 6px 18px rgba(27, 94, 32, 0.32);
-            font-weight: 800;
-            font-size: 14px;
-            cursor: pointer;
-            z-index: 9998;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .cmp-float-pending-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 24px rgba(27, 94, 32, 0.42);
         }
 
         /* Pulse Highlight When Scrolling to Pending Row */
@@ -1300,11 +1325,45 @@ function cmp_render_customer_portal() {
             }
         }
 
+        /* Floating WhatsApp & Small Back-to-Top Buttons */
+        .cmp-wa-float {
+            position: fixed; bottom: 30px; right: 30px; background-color: #25d366; color: white; border-radius: 50px;
+            padding: 12px 20px; display: flex; align-items: center; gap: 10px; box-shadow: 0 4px 12px rgba(37, 211, 102, 0.4);
+            text-decoration: none; font-weight: bold; font-size: 16px; z-index: 9999; transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .cmp-wa-float:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(37, 211, 102, 0.5); color: white; }
+
+        .cmp-back-to-top {
+            position: fixed;
+            bottom: 92px;
+            right: 30px;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%);
+            color: #ffffff !important;
+            border: 1.5px solid #DCECC9;
+            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.30);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 9999;
+            padding: 0;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+        }
+        .cmp-back-to-top.is-visible {
+            display: inline-flex !important;
+        }
+        .cmp-back-to-top:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 16px rgba(27, 94, 32, 0.42);
+        }
+
         /* MOBILE ACCORDION CARD VIEW (<= 768px) */
         @media (max-width: 768px) {
             .cmp-dashboard-wrap { padding: 0 6px 35px 6px; }
             .cmp-kbd-guide { display: none !important; }
-            .cmp-float-pending-btn { display: none !important; }
             .cmp-table tr.cmp-day-row, .cmp-table td:not(.cmp-collapsed-summary) { display: block !important; width: 100% !important; }
             .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; }
 
@@ -1369,14 +1428,8 @@ function cmp_render_customer_portal() {
             }
             .cmp-wa-float { bottom: 20px; right: 20px; padding: 12px; border-radius: 50%; }
             .cmp-wa-text { display: none; }
+            .cmp-back-to-top { bottom: 80px; right: 25px; width: 40px; height: 40px; }
         }
-
-        .cmp-wa-float {
-            position: fixed; bottom: 30px; right: 30px; background-color: #25d366; color: white; border-radius: 50px;
-            padding: 12px 20px; display: flex; align-items: center; gap: 10px; box-shadow: 0 4px 12px rgba(37, 211, 102, 0.4);
-            text-decoration: none; font-weight: bold; font-size: 16px; z-index: 9999; transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .cmp-wa-float:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(37, 211, 102, 0.5); color: white; }
     </style>
 
     <div class="cmp-dashboard-wrap">
@@ -1570,7 +1623,7 @@ function cmp_render_customer_portal() {
                 <div style="flex:1; min-width:250px; background:#f8fafc; padding:15px; border-radius:8px; border:1px solid #e2e8f0; position:relative;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                         <h3 style="margin:0; color:#1B5E20; font-size:1.1em;">Active Logistics</h3>
-                        <?php if ($is_admin_override): ?>
+                        <?php if ($can_bypass_date_lock): ?>
                             <button class="toggle-logistics-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
                         <?php endif; ?>
                     </div>
@@ -1584,7 +1637,7 @@ function cmp_render_customer_portal() {
                         </div>
                     </div>
 
-                    <?php if ($is_admin_override): ?>
+                    <?php if ($can_bypass_date_lock): ?>
                     <div id="logistics-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
                         <div style="margin-bottom:8px;">
                             <label style="font-size:0.85em; font-weight:bold; color:#334155;">Receive By:</label>
@@ -1714,7 +1767,7 @@ function cmp_render_customer_portal() {
                             
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1));
                             
-                            // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow
+                            // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow (Bypassed for Admin, FOH, Menu Manager)
                             $is_time_locked = false;
                             if ($log && !empty($log->target_date)) {
                                 if ( cmp_is_date_locked_for_customer($log->target_date) || $log->delivery_result === 'Successful' ) {
@@ -1722,7 +1775,7 @@ function cmp_render_customer_portal() {
                                 }
                             }
 
-                            $base_input_disabled = ($is_void || (!$is_admin_override && !$is_chef_override && ($is_time_locked || $is_paused))) ? 'disabled' : '';
+                            $base_input_disabled = ($is_void || (!$can_bypass_date_lock && ($is_time_locked || $is_paused))) ? 'disabled' : '';
                             
                             if ($is_chef_override) {
                                 $chefs_choice_checkbox_disabled = 'disabled';
@@ -1749,7 +1802,7 @@ function cmp_render_customer_portal() {
                             if ($log && !$is_void && !empty($log->target_date)) {
                                 $next_day_calc = date('Y-m-d', strtotime('+1 day', strtotime($log->target_date)));
                                 if (empty($active_min_date) || $next_day_calc > $active_min_date) {
-                                    if (!$is_admin_override && !$is_chef_override) {
+                                    if (!$can_bypass_date_lock) {
                                         $active_min_date = $next_day_calc;
                                     }
                                 }
@@ -1774,7 +1827,7 @@ function cmp_render_customer_portal() {
                                     <div class="cmp-macro-tile tile-fat"><span class="tile-label">Fat</span><span class="tile-val">0g</span></div>
                                 </div>';
                             
-                            $min_attr = (!empty($active_min_date) && !$is_admin_override && !$is_chef_override) ? 'min="' . esc_attr($active_min_date) . '"' : '';
+                            $min_attr = (!empty($active_min_date) && !$can_bypass_date_lock) ? 'min="' . esc_attr($active_min_date) . '"' : '';
 
                         ?>
                             <tr class="cmp-day-row <?php echo esc_attr($row_status_class); ?>" data-row="<?php echo $i; ?>" data-is-flexible="<?php echo $row_is_flexible; ?>" data-allow-custom="<?php echo $row_allow_custom; ?>">
@@ -1890,7 +1943,7 @@ function cmp_render_customer_portal() {
                                                 echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Customer Pick)</span>';
                                             }
                                         } else {
-                                            if (!$is_time_locked && !$is_void && !$is_paused) {
+                                            if ((!$is_time_locked || $can_bypass_date_lock) && !$is_void && (!$is_paused || $can_bypass_date_lock)) {
                                                 $btn_txt = ($log_id > 0) ? 'Update' : 'Save';
                                                 $btn_color = ($log_id > 0) ? '#1B5E20' : '#379237';
                                                 echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.';">'.$btn_txt.'</button>';
@@ -1902,26 +1955,15 @@ function cmp_render_customer_portal() {
                                                     echo '</div>';
                                                 }
                                             } else {
-                                                if ($is_admin_override) {
-                                                    echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:#379237;">Update</button>';
-                                                    
-                                                    if ($log_id > 0) {
-                                                        echo '<div class="cmp-secondary-actions">';
-                                                        echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Reset Selection">'.$icon_reset.'</button>';
-                                                        echo '<button class="cmp-cancel-day-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Cancel Day">'.$icon_cancel.'</button>';
-                                                        echo '</div>';
-                                                    }
-                                                } else {
-                                                    $lock_reason = 'Cutoff Passed';
-                                                    if ($is_paused) {
-                                                        $lock_reason = 'Paused';
-                                                    } elseif ($is_void) {
-                                                        $lock_reason = 'Void';
-                                                    } elseif ($log && !empty($log->target_date) && $log->target_date <= $today_ymd) {
-                                                        $lock_reason = ($log->target_date === $today_ymd) ? 'Today Locked' : 'Past Date';
-                                                    }
-                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . esc_html($lock_reason) . ')</span>';
+                                                $lock_reason = 'Cutoff Passed';
+                                                if ($is_paused) {
+                                                    $lock_reason = 'Paused';
+                                                } elseif ($is_void) {
+                                                    $lock_reason = 'Void';
+                                                } elseif ($log && !empty($log->target_date) && $log->target_date <= $today_ymd) {
+                                                    $lock_reason = ($log->target_date === $today_ymd) ? 'Today Locked' : 'Past Date';
                                                 }
+                                                echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . esc_html($lock_reason) . ')</span>';
                                             }
                                         }
                                         ?>
@@ -1941,10 +1983,9 @@ function cmp_render_customer_portal() {
         </div>
         <?php endforeach; ?>
 
-        <!-- Floating Desktop Quick-Scroll Button to Jump to Currently Pending Selection -->
-        <button type="button" class="cmp-float-pending-btn cmp-jump-pending-btn cmp-no-print" title="Scroll to the currently pending meal selection">
-            <?php echo $icon_target; ?>
-            <span>Pending Selection</span>
+        <!-- Small Back to Top Button (Positioned Directly Above WhatsApp Floating Button) -->
+        <button type="button" id="cmp-back-to-top" class="cmp-back-to-top cmp-no-print" title="Back to Top" aria-label="Back to Top">
+            <?php echo $icon_up; ?>
         </button>
         
         <?php if (!empty($clean_wa) && !$is_chef_override): ?>
@@ -1973,13 +2014,28 @@ function cmp_render_customer_portal() {
     }
 
     jQuery(document).ready(function($) {
-        var isAdminOverride  = <?php echo $is_admin_override ? 'true' : 'false'; ?>;
-        var isChefOverride   = <?php echo $is_chef_override ? 'true' : 'false'; ?>;
-        var isAdminOrChef    = (isAdminOverride || isChefOverride);
-        var chefsChoiceLabel = "<?php echo esc_js($label_chefs_choice); ?>";
-        var blackoutDates    = <?php echo json_encode($blackout_dates_array); ?>;
-        var customerMinDate  = "<?php echo esc_js($customer_min_date); ?>";
-        var todayYmd         = "<?php echo esc_js($today_ymd); ?>";
+        // Privilege Flags: Separate Date Lock Exemption from Meal Quota Exemption
+        var canBypassDateLock = <?php echo $can_bypass_date_lock ? 'true' : 'false'; ?>;
+        var canBypassQuota    = <?php echo $can_bypass_quota ? 'true' : 'false'; ?>; // Strictly Admin ONLY
+        var isChefOverride    = <?php echo $is_chef_override ? 'true' : 'false'; ?>;
+        var chefsChoiceLabel  = "<?php echo esc_js($label_chefs_choice); ?>";
+        var blackoutDates     = <?php echo json_encode($blackout_dates_array); ?>;
+        var customerMinDate   = "<?php echo esc_js($customer_min_date); ?>";
+        var todayYmd          = "<?php echo esc_js($today_ymd); ?>";
+
+        // Small Back to Top Button Visibility & Scroll Action
+        var $backToTopBtn = $('#cmp-back-to-top');
+        $(window).on('scroll', function() {
+            if ($(this).scrollTop() > 280) {
+                $backToTopBtn.addClass('is-visible');
+            } else {
+                $backToTopBtn.removeClass('is-visible');
+            }
+        });
+        $backToTopBtn.on('click', function(e) {
+            e.preventDefault();
+            $('html, body').stop(true).animate({ scrollTop: 0 }, 350);
+        });
 
         // Helper: Calculate next valid non-blackout YYYY-MM-DD date for min attribute enforcement
         function getNextValidDeliveryDate(baseDateStr) {
@@ -1992,7 +2048,7 @@ function cmp_render_customer_portal() {
                 var mm   = String(d.getMonth() + 1).padStart(2, '0');
                 var dd   = String(d.getDate()).padStart(2, '0');
                 var candidate = yyyy + '-' + mm + '-' + dd;
-                if (!isAdminOrChef && customerMinDate && candidate < customerMinDate) {
+                if (!canBypassDateLock && customerMinDate && candidate < customerMinDate) {
                     continue;
                 }
                 if (!blackoutDates.includes(candidate)) {
@@ -2003,7 +2059,7 @@ function cmp_render_customer_portal() {
             return '';
         }
 
-        // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text (Pure Text/Badges — No Twemoji Images)
+        // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text
         function syncRowCompactAndSummary(rowElement) {
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var hasValues = false;
@@ -2043,7 +2099,7 @@ function cmp_render_customer_portal() {
             }
         }
 
-        // FOH INLINE LOGISTICS EDIT LOGIC
+        // FOH / STAFF INLINE LOGISTICS EDIT LOGIC
         $('.toggle-logistics-edit').on('click', function(e) {
             e.preventDefault();
             var subId = $(this).data('sub-id');
@@ -2430,7 +2486,7 @@ function cmp_render_customer_portal() {
             if (isChefsChoice && !isChefOverride) return; 
 
             var mainSelects = rowElement.find('.cmp-main-meal');
-            if (mainSelects.first().is(':disabled') && !mainSelects.first().hasClass('quota-locked') && !isAdminOverride && !isChefOverride) {
+            if (mainSelects.first().is(':disabled') && !mainSelects.first().hasClass('quota-locked') && !canBypassDateLock) {
                 return;
             }
 
@@ -2504,7 +2560,7 @@ function cmp_render_customer_portal() {
             var totalDays = parseInt(container.data('total-days'));
 
             if(selectedDate) {
-                if (!isAdminOrChef && (selectedDate <= todayYmd || (customerMinDate && selectedDate < customerMinDate))) {
+                if (!canBypassDateLock && (selectedDate <= todayYmd || (customerMinDate && selectedDate < customerMinDate))) {
                     alert('Past dates, today\'s date, and dates past the cut-off time cannot be selected. Earliest available date: ' + customerMinDate);
                     rowInput.val('');
                     return;
@@ -2519,7 +2575,7 @@ function cmp_render_customer_portal() {
                 for(var i = rowNumber + 1; i <= (totalDays + 10); i++) { 
                     var targetInput = container.find('.cmp-date-picker[data-row="' + i + '"]');
                     if (targetInput.length) {
-                        if (!isAdminOrChef && nextDateString) {
+                        if (!canBypassDateLock && nextDateString) {
                             targetInput.attr('min', nextDateString);
                             if (targetInput.val() && targetInput.val() < nextDateString) {
                                 targetInput.val('');
@@ -2574,7 +2630,7 @@ function cmp_render_customer_portal() {
             }, 80);
         }
 
-        // Scroll to Currently Pending Selection Button Handler (Toolbar & Floating Desktop Pill)
+        // Scroll to Currently Pending Selection Button Handler (Toolbar Button)
         $(document).on('click', '.cmp-jump-pending-btn', function(e) {
             e.preventDefault();
             var $activeContainer = $('.cmp-tab-content.active');
@@ -2650,22 +2706,28 @@ function cmp_render_customer_portal() {
             var isJuice = container.data('is-juice') === 1;
             var isCustom = rowElement.data('allow-custom') == 1;
 
-            if(!dateVal) { alert('Please select a date from the calendar first.'); return; }
+            if(!dateVal) {
+                rowElement.removeClass('is-collapsed-desktop');
+                alert('Please select a date from the calendar first.');
+                return;
+            }
 
-            if (!isAdminOrChef && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+            if (!canBypassDateLock && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
                 alert('This date is locked. You may only save or update selections from ' + customerMinDate + ' onwards.');
                 return;
             }
 
             var isMenuPending = rowElement.find('.boundary-overlay').length > 0;
 
-            if (!isAdminOverride && !isMenuPending && !isChefsChoice && !isCustom) { 
+            // STRICT MEAL QUOTA ENFORCEMENT (Only Admins with canBypassQuota === true can skip this)
+            if (!canBypassQuota && !isMenuPending && !isChefsChoice && !isCustom) { 
                 if (isJuice) {
                     var juiceSelects = rowElement.find('select[class^="cmp-juice-"]');
                     var missingJuice = false;
                     juiceSelects.each(function() { if ($(this).val() === '') missingJuice = true; });
                     if (missingJuice) {
-                        alert("Please select all 3 juices to complete this day.");
+                        rowElement.removeClass('is-collapsed-desktop');
+                        alert("Quota Requirement: Please select all 3 juices to complete this day.");
                         return;
                     }
                 } else {
@@ -2675,7 +2737,8 @@ function cmp_render_customer_portal() {
                     });
 
                     if (selectedMainCount !== allowedMeals) {
-                        alert('Please select exactly ' + allowedMeals + ' main meal(s) before saving.');
+                        rowElement.removeClass('is-collapsed-desktop');
+                        alert('Quota Requirement: Please select exactly ' + allowedMeals + ' main meal(s) as allocated in this subscription before saving.');
                         return;
                     }
 
@@ -2685,17 +2748,19 @@ function cmp_render_customer_portal() {
                     });
 
                     if (selectedSnackCount !== snackQuota) {
-                        alert('Please select exactly ' + snackQuota + ' snack(s) before saving.');
+                        rowElement.removeClass('is-collapsed-desktop');
+                        alert('Quota Requirement: Please select exactly ' + snackQuota + ' snack(s) as allocated in this subscription before saving.');
                         return;
                     }
                 }
-            } else if (!isAdminOverride && !isChefsChoice && isCustom) {
+            } else if (!canBypassQuota && !isChefsChoice && isCustom) {
                 if (isJuice) {
                     var juiceInputs = rowElement.find('.cmp-juice-1, .cmp-juice-2, .cmp-juice-3');
                     var missingJuice = false;
                     juiceInputs.each(function() { if ($(this).val().trim() === '') missingJuice = true; });
                     if (missingJuice) {
-                        alert("Please complete all 3 juices to complete this day.");
+                        rowElement.removeClass('is-collapsed-desktop');
+                        alert("Quota Requirement: Please complete all 3 juices to complete this day.");
                         return;
                     }
                 } else {
@@ -2704,7 +2769,8 @@ function cmp_render_customer_portal() {
                         if ($(this).val().trim() !== "") selectedMainCount++;
                     });
                     if (selectedMainCount !== allowedMeals) {
-                        alert('Please provide exactly ' + allowedMeals + ' main meal(s) before saving.');
+                        rowElement.removeClass('is-collapsed-desktop');
+                        alert('Quota Requirement: Please provide exactly ' + allowedMeals + ' main meal(s) as allocated in this subscription before saving.');
                         return;
                     }
 
@@ -2713,11 +2779,13 @@ function cmp_render_customer_portal() {
                         if ($(this).val().trim() !== "") selectedSnackCount++;
                     });
                     if (selectedSnackCount !== snackQuota) {
-                        alert('Please provide exactly ' + snackQuota + ' snack(s) before saving.');
+                        rowElement.removeClass('is-collapsed-desktop');
+                        alert('Quota Requirement: Please provide exactly ' + snackQuota + ' snack(s) as allocated in this subscription before saving.');
                         return;
                     }
                 }
-            } else if (isMenuPending && !isChefsChoice && !isAdminOverride && !isCustom) {
+            } else if (isMenuPending && !isChefsChoice && !canBypassQuota && !isCustom) {
+                rowElement.removeClass('is-collapsed-desktop');
                 alert('The specific menu is not available yet. Please select "Chef\'s Choice" to secure this date.');
                 return;
             }
@@ -2731,7 +2799,7 @@ function cmp_render_customer_portal() {
                 sub_id: btn.data('sub-id'),
                 date: dateVal,
                 chefs_choice: isChefsChoice,
-                is_override_mode: isAdminOrChef ? 1 : 0
+                is_override_mode: canBypassDateLock ? 1 : 0
             };
 
             if (isCustom) {
@@ -2766,7 +2834,7 @@ function cmp_render_customer_portal() {
                     rowElement.find('.cmp-status-box').html(newBadge);
                     rowElement.find('.cmp-mobile-status').html(newBadge);
 
-                    if (!isAdminOverride && !isChefOverride) {
+                    if (!canBypassDateLock) {
                         var isTimeLocked = (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate));
 
                         if (isTimeLocked) {
@@ -2797,14 +2865,14 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CLEAR / RESET SELECTION LOGIC (Restricted from past dates, today, and post-cutoff tomorrow)
+        // CLEAR / RESET SELECTION LOGIC (Restricted for Customers on past dates, today, and post-cutoff tomorrow; Exempt for Admin/FOH/Menu Manager)
         $(document).on('click', '.cmp-clear-row', function(e) {
             e.preventDefault();
             var btn = $(this);
             var rowElement = btn.closest('tr');
             var dateVal = rowElement.find('.cmp-date-picker').val();
 
-            if (!isAdminOrChef && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+            if (!canBypassDateLock && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
                 alert('Past dates, today\'s date, and dates past the cut-off time cannot be reset.');
                 return;
             }
@@ -2821,7 +2889,7 @@ function cmp_render_customer_portal() {
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 log_id: btn.data('log-id'),
                 sub_id: btn.data('sub-id'),
-                is_override_mode: isAdminOrChef ? 1 : 0
+                is_override_mode: canBypassDateLock ? 1 : 0
             };
             
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
@@ -2837,14 +2905,14 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CANCEL DAY LOGIC (Restricted from past dates, today, and post-cutoff tomorrow)
+        // CANCEL DAY LOGIC (Restricted for Customers on past dates, today, and post-cutoff tomorrow; Exempt for Admin/FOH/Menu Manager)
         $(document).on('click', '.cmp-cancel-day-row', function(e) {
             e.preventDefault();
             var btn = $(this);
             var rowElement = btn.closest('tr');
             var dateVal = rowElement.find('.cmp-date-picker').val();
 
-            if (!isAdminOrChef && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+            if (!canBypassDateLock && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
                 alert('Past dates, today\'s date, and dates past the cut-off time cannot be cancelled.');
                 return;
             }
@@ -2861,7 +2929,7 @@ function cmp_render_customer_portal() {
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 log_id: btn.data('log-id'),
                 sub_id: btn.data('sub-id'),
-                is_override_mode: isAdminOrChef ? 1 : 0
+                is_override_mode: canBypassDateLock ? 1 : 0
             };
             
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
