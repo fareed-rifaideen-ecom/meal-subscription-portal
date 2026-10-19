@@ -8,57 +8,63 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 
 // ==========================================
 // 0. ROLE, QUOTA & DATE LOCK HELPER FUNCTIONS
+//    (CONNECTED TO WP ADMIN -> MEAL SETTINGS)
 // ==========================================
 
 /**
- * Strictly allow only Administrators and Menu Managers to Add or Remove Plan Days.
- * FOH Managers (foh_manager) are explicitly excluded.
+ * Checks if the current logged-in user belongs to any of the configured role slugs
+ * saved under WP Admin -> Meal Portal -> Meal Settings.
+ */
+function cmp_user_matches_configured_roles( $option_key, $default_roles = array( 'administrator' ) ) {
+    if ( ! is_user_logged_in() ) {
+        return false;
+    }
+    if ( current_user_can( 'manage_options' ) ) {
+        return true;
+    }
+
+    $allowed_roles = get_option( $option_key, $default_roles );
+    if ( ! is_array( $allowed_roles ) || empty( $allowed_roles ) ) {
+        $allowed_roles = $default_roles;
+    }
+
+    $user       = wp_get_current_user();
+    $user_roles = (array) $user->roles;
+
+    foreach ( $allowed_roles as $role_slug ) {
+        if ( in_array( $role_slug, $user_roles, true ) || current_user_can( $role_slug ) ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Dynamically checks WP Admin -> Meal Settings ('cmp_adjust_days_roles')
+ * Default: Administrator & Menu Manager (FOH excluded).
  */
 function cmp_can_adjust_plan_days() {
-    if ( ! is_user_logged_in() ) {
-        return false;
-    }
-    $user  = wp_get_current_user();
-    $roles = (array) $user->roles;
-
-    if ( current_user_can( 'manage_options' ) || in_array( 'administrator', $roles, true ) || in_array( 'menu_manager', $roles, true ) ) {
-        return true;
-    }
-    return false;
+    return cmp_user_matches_configured_roles( 'cmp_adjust_days_roles', array( 'administrator', 'menu_manager' ) );
 }
 
 /**
- * Strictly allow ONLY Administrators to bypass meal/snack/juice quota requirements.
- * Customers, FOH Managers, Menu Managers, and Kitchen Staff must fulfill exact quotas (unless Chef's Choice is checked).
+ * Dynamically checks WP Admin -> Meal Settings ('cmp_strict_quota_enabled' & 'cmp_quota_bypass_roles')
+ * Default: Strict Quota Enabled ('1'); Only Administrator can bypass meal/snack/juice quotas.
  */
 function cmp_can_bypass_meal_quota() {
-    if ( ! is_user_logged_in() ) {
-        return false;
+    $strict_enabled = get_option( 'cmp_strict_quota_enabled', '1' );
+    if ( (string) $strict_enabled === '0' ) {
+        return true; // Global strict quota enforcement is turned off in WP Admin
     }
-    return current_user_can( 'manage_options' );
+    return cmp_user_matches_configured_roles( 'cmp_quota_bypass_roles', array( 'administrator' ) );
 }
 
 /**
- * Allow Administrators, FOH Managers, and Menu Managers to bypass date restrictions and daily cut-off times.
+ * Dynamically checks WP Admin -> Meal Settings ('cmp_date_exempt_roles')
+ * Default: Administrator, FOH Manager & Menu Manager are exempt from date & cut-off locks.
  */
 function cmp_can_bypass_date_restrictions() {
-    if ( ! is_user_logged_in() ) {
-        return false;
-    }
-    $user  = wp_get_current_user();
-    $roles = (array) $user->roles;
-
-    if (
-        current_user_can( 'manage_options' ) ||
-        current_user_can( 'foh_manager' ) ||
-        current_user_can( 'menu_manager' ) ||
-        in_array( 'administrator', $roles, true ) ||
-        in_array( 'foh_manager', $roles, true ) ||
-        in_array( 'menu_manager', $roles, true )
-    ) {
-        return true;
-    }
-    return false;
+    return cmp_user_matches_configured_roles( 'cmp_date_exempt_roles', array( 'administrator', 'foh_manager', 'menu_manager' ) );
 }
 
 /**
@@ -104,20 +110,20 @@ function cmp_ajax_save_daily_log() {
 
     if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
-    $log_id            = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
-    $sub_id            = intval($_POST['sub_id']);
-    $target_date       = sanitize_text_field($_POST['date']);
-    $is_override_mode  = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
+    $log_id           = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
+    $sub_id           = intval($_POST['sub_id']);
+    $target_date      = sanitize_text_field($_POST['date']);
+    $is_override_mode = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
 
     if ( empty( $target_date ) ) {
         wp_send_json_error('Please select a valid delivery date first.');
     }
 
-    // Separate Date/Cut-off Privilege from Quota Bypass Privilege
+    // Separate Date/Cut-off Privilege from Quota Bypass Privilege (Read from WP Admin Settings)
     $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can('kitchen_staff') && $is_override_mode === 1 );
     $can_bypass_quota = cmp_can_bypass_meal_quota();
 
-    // Cutoff Time & Past/Today Date Validation (Customers are strictly restricted; Admin, FOH & Menu Manager are exempt)
+    // Cutoff Time & Past/Today Date Validation
     if ( ! $can_bypass_dates ) {
         $cutoff_hour      = intval( get_option('cmp_cutoff_time', '11') );
         $earliest_allowed = cmp_get_earliest_customer_allowed_date();
@@ -139,7 +145,7 @@ function cmp_ajax_save_daily_log() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_subs WHERE id = %d", $sub_id));
     if (!$sub) wp_send_json_error('Subscription not found.');
 
-    $is_staff_user = cmp_can_bypass_date_restrictions() || current_user_can('kitchen_staff');
+    $is_staff_user = cmp_can_bypass_date_restrictions() || cmp_can_bypass_meal_quota() || current_user_can('kitchen_staff');
     if ( ! $is_staff_user && intval($sub->user_id) !== get_current_user_id() ) {
         wp_send_json_error('Unauthorized access to this subscription.');
     }
@@ -175,7 +181,7 @@ function cmp_ajax_save_daily_log() {
             wp_send_json_error('The menu for this date is pending release. Specific meals cannot be selected yet.');
         }
 
-        // Non-admins cannot save an empty Menu Pending date unless Chef's Choice is selected
+        // Non-bypass users cannot save an empty Menu Pending date unless Chef's Choice is selected
         if ($is_menu_pending && !$is_chefs_choice && !$can_bypass_quota) {
             wp_send_json_error('The specific menu is not available yet for this date. Please select "Chef\'s Choice" to secure this date.');
         }
@@ -206,7 +212,7 @@ function cmp_ajax_save_daily_log() {
         $snack_quota = ($allowed_quota >= 2) ? 2 : 1;
     }
 
-    // --- STRICT SELECTION QUOTA ENFORCEMENT (ONLY ADMINS CAN BYPASS) ---
+    // --- STRICT SELECTION QUOTA ENFORCEMENT (GOVERNED BY WP ADMIN SETTINGS) ---
     if ( ! $can_bypass_quota && ! $is_chefs_choice && ! $is_menu_pending ) {
         if ($is_juice) {
             if ($row_allow_custom) {
@@ -320,7 +326,7 @@ add_action('wp_ajax_cmp_cp_update_customer_logistics', 'cmp_ajax_cp_update_custo
 function cmp_ajax_cp_update_customer_logistics() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
 
-    if ( ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
+    if ( ! cmp_can_bypass_date_restrictions() && ! current_user_can('manage_options') && ! current_user_can('foh_manager') && ! current_user_can('menu_manager') ) {
         wp_send_json_error('Permission Denied');
     }
 
@@ -425,12 +431,12 @@ function cmp_ajax_cp_admin_update_account_details() {
     ));
 }
 
-// 1.7 AJAX HANDLER: ADMIN & MENU MANAGER ONLY — ADD/REMOVE PLAN DAYS
+// 1.7 AJAX HANDLER: ADD/REMOVE PLAN DAYS (GOVERNED BY WP ADMIN SETTINGS)
 add_action('wp_ajax_cmp_cp_admin_adjust_days', 'cmp_ajax_cp_admin_adjust_days');
 function cmp_ajax_cp_admin_adjust_days() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
     if ( ! cmp_can_adjust_plan_days() ) {
-        wp_send_json_error('Permission Denied. Only Administrators and Menu Managers are permitted to add or remove plan days.');
+        wp_send_json_error('Permission Denied. Your role is not authorized to add or remove plan days.');
     }
 
     $sub_id = intval($_POST['sub_id']);
@@ -593,11 +599,11 @@ function cmp_render_customer_portal() {
     $icon_target = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>';
     $icon_up     = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
 
-    // OVERRIDE & PRIVILEGE DETECTION
-    $is_admin_override    = isset($_GET['admin_edit_sub']) && cmp_can_bypass_date_restrictions();
-    $is_chef_override     = isset($_GET['chef_override_sub']) && (cmp_can_bypass_date_restrictions() || current_user_can('kitchen_staff'));
+    // OVERRIDE & PRIVILEGE DETECTION (CONNECTED TO WP ADMIN SETTINGS)
+    $is_admin_override    = isset($_GET['admin_edit_sub']) && ( cmp_can_bypass_date_restrictions() || current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager') );
+    $is_chef_override     = isset($_GET['chef_override_sub']) && ( cmp_can_bypass_date_restrictions() || current_user_can('kitchen_staff') );
     $can_bypass_date_lock = cmp_can_bypass_date_restrictions() || $is_chef_override;
-    $can_bypass_quota     = cmp_can_bypass_meal_quota(); // Strictly Admin ONLY
+    $can_bypass_quota     = cmp_can_bypass_meal_quota();
 
     if ($is_admin_override) {
         $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval($_GET['admin_edit_sub'])) );
@@ -662,10 +668,12 @@ function cmp_render_customer_portal() {
     $current_hour      = (int) $now_dubai->format('H');
     $customer_min_date = cmp_get_earliest_customer_allowed_date();
 
-    // --- UNLOCK BACK-DATES FOR ADMIN, FOH & MENU MANAGER ---
+    // --- DYNAMIC STATUS NOTE BASED ON CONFIGURED WP ADMIN PERMISSIONS ---
     if ($can_bypass_date_lock) {
         $global_min_date = ''; 
-        $quota_note = $can_bypass_quota ? "Admin Mode: Date & meal quota restrictions are disabled." : "Staff Mode (FOH / Menu Manager): Date & cut-off restrictions are disabled. Standard meal quotas apply.";
+        $quota_note = $can_bypass_quota
+            ? "Privilege Mode: Date, cut-off & meal quota restrictions are disabled for your role."
+            : "Staff Mode: Date & cut-off restrictions are disabled for your role. Standard subscription meal quotas apply.";
         $note_text  = $quota_note;
         $note_color = "#379237"; 
     } elseif ( $current_hour >= $dynamic_cutoff_hour ) {
@@ -1678,11 +1686,11 @@ function cmp_render_customer_portal() {
             </div>
             <?php endif; ?>
 
-            <!-- PHASE 6: ADMIN & MENU MANAGER ONLY — PLAN DAYS CONTROLS (FOH EXCLUDED) -->
+            <!-- PHASE 6: PLAN DAYS CONTROLS (GOVERNED BY WP ADMIN -> MEAL SETTINGS) -->
             <?php if ( cmp_can_adjust_plan_days() ): ?>
             <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <div>
-                    <strong style="color:#b45309; font-size:1.1em;">Admin &amp; Menu Manager Plan Controls</strong><br>
+                    <strong style="color:#b45309; font-size:1.1em;">Plan Days Controls</strong><br>
                     <span style="color:#92400e; font-size:0.9em;">Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong></span>
                 </div>
                 <div style="display:flex; gap:10px;">
@@ -1767,7 +1775,7 @@ function cmp_render_customer_portal() {
                             
                             $is_chef_assigned = ($log && ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1));
                             
-                            // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow (Bypassed for Admin, FOH, Menu Manager)
+                            // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow
                             $is_time_locked = false;
                             if ($log && !empty($log->target_date)) {
                                 if ( cmp_is_date_locked_for_customer($log->target_date) || $log->delivery_result === 'Successful' ) {
@@ -2014,9 +2022,9 @@ function cmp_render_customer_portal() {
     }
 
     jQuery(document).ready(function($) {
-        // Privilege Flags: Separate Date Lock Exemption from Meal Quota Exemption
+        // Privilege Flags dynamically injected from WP Admin -> Meal Settings
         var canBypassDateLock = <?php echo $can_bypass_date_lock ? 'true' : 'false'; ?>;
-        var canBypassQuota    = <?php echo $can_bypass_quota ? 'true' : 'false'; ?>; // Strictly Admin ONLY
+        var canBypassQuota    = <?php echo $can_bypass_quota ? 'true' : 'false'; ?>;
         var isChefOverride    = <?php echo $is_chef_override ? 'true' : 'false'; ?>;
         var chefsChoiceLabel  = "<?php echo esc_js($label_chefs_choice); ?>";
         var blackoutDates     = <?php echo json_encode($blackout_dates_array); ?>;
@@ -2241,7 +2249,7 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // ADMIN & MENU MANAGER PLAN CONTROLS: ADD / REMOVE DAYS LOGIC
+        // PLAN DAYS CONTROLS: ADD / REMOVE DAYS LOGIC
         $('.admin-adjust-days-btn').on('click', function(e) {
             e.preventDefault();
             var btn = $(this);
@@ -2719,7 +2727,7 @@ function cmp_render_customer_portal() {
 
             var isMenuPending = rowElement.find('.boundary-overlay').length > 0;
 
-            // STRICT MEAL QUOTA ENFORCEMENT (Only Admins with canBypassQuota === true can skip this)
+            // STRICT MEAL QUOTA ENFORCEMENT (Governed by WP Admin -> Meal Settings)
             if (!canBypassQuota && !isMenuPending && !isChefsChoice && !isCustom) { 
                 if (isJuice) {
                     var juiceSelects = rowElement.find('select[class^="cmp-juice-"]');
@@ -2865,7 +2873,7 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CLEAR / RESET SELECTION LOGIC (Restricted for Customers on past dates, today, and post-cutoff tomorrow; Exempt for Admin/FOH/Menu Manager)
+        // CLEAR / RESET SELECTION LOGIC (Governed by WP Admin -> Meal Settings Date Exemption)
         $(document).on('click', '.cmp-clear-row', function(e) {
             e.preventDefault();
             var btn = $(this);
@@ -2905,7 +2913,7 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CANCEL DAY LOGIC (Restricted for Customers on past dates, today, and post-cutoff tomorrow; Exempt for Admin/FOH/Menu Manager)
+        // CANCEL DAY LOGIC (Governed by WP Admin -> Meal Settings Date Exemption)
         $(document).on('click', '.cmp-cancel-day-row', function(e) {
             e.preventDefault();
             var btn = $(this);
