@@ -131,13 +131,13 @@ function cmp_export_kitchen_csv() {
     $export_type = isset($_GET['type']) ? sanitize_text_field($_GET['type']) : 'meals'; 
     $target_date = date('Y-m-d', strtotime($prep_date . ' + 1 day'));
     
-    // Phase 3: Added "AND s.status != 'paused'" to strictly exclude paused subscriptions from CSV export
+    // Exclude paused subscriptions and cancelled days from CSV export
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.expiry_date, s.foh_remarks, s.is_flexible, s.allow_custom, u.display_name, u.user_email 
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused'", 
+         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused' AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')", 
         $target_date
     ) );
 
@@ -333,13 +333,13 @@ function cmp_render_kitchen_portal() {
     $prev_date = date('Y-m-d', strtotime($selected_date . ' - 1 day'));
     $next_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
 
-    // Phase 3: Added "AND s.status != 'paused'" to strictly exclude paused subscriptions from the Kitchen View
+    // Exclude paused subscriptions and cancelled days from the Kitchen View
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.foh_remarks, s.expiry_date, s.is_flexible, s.allow_custom, u.display_name, u.user_email 
          FROM {$table_logs} l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused' 
+         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused' AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled') 
          ORDER BY l.id ASC", 
         $target_date
     ) );
