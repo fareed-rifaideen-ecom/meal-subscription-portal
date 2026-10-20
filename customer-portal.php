@@ -598,6 +598,7 @@ function cmp_render_customer_portal() {
     $icon_kbd    = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>';
     $icon_target = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>';
     $icon_up     = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
+    $icon_undo   = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>';
 
     // OVERRIDE & PRIVILEGE DETECTION (CONNECTED TO WP ADMIN SETTINGS)
     $is_admin_override    = isset($_GET['admin_edit_sub']) && ( cmp_can_bypass_date_restrictions() || current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager') );
@@ -898,6 +899,105 @@ function cmp_render_customer_portal() {
             color: #92400e !important;
             background: #fef3c7 !important;
             border: 1.5px solid #f59e0b !important;
+        }
+        .cmp-status-pill.pill-meals-pending {
+            color: #9a3412 !important;
+            background: #ffedd5 !important;
+            border: 1.5px solid #fdba74 !important;
+        }
+        .cmp-undo-row {
+            display: none !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 5px !important;
+            height: 48px !important;
+            padding: 0 13px !important;
+            border-radius: 10px !important;
+            border: 1.5px solid #cbd5e1 !important;
+            background: #ffffff !important;
+            color: #334155 !important;
+            font-size: 13px !important;
+            font-weight: 800 !important;
+            cursor: pointer !important;
+            white-space: nowrap !important;
+            transition: all 0.18s ease !important;
+            flex-shrink: 0 !important;
+        }
+        .cmp-undo-row:hover {
+            background: #f1f5f9 !important;
+            color: #0f172a !important;
+            border-color: #94a3b8 !important;
+        }
+        .cmp-table tr.cmp-day-row.is-unsaved .cmp-undo-row {
+            display: inline-flex !important;
+        }
+        .cmp-table tr.cmp-day-row.is-unsaved .cmp-secondary-actions {
+            display: none !important;
+        }
+        .cmp-table tr.cmp-day-row.status-void td.cmp-cell-day {
+            cursor: default !important;
+        }
+        .cmp-table tr.cmp-day-row.status-void td.cmp-cell-day::after {
+            display: none !important;
+        }
+        .cmp-table tr.cmp-day-row.status-void td.cmp-collapsed-summary {
+            background: #fff1f2 !important;
+            border: 1px dashed #fda4af !important;
+            color: #9f1239 !important;
+            cursor: default !important;
+        }
+        .cmp-table tr.cmp-day-row.status-void td.cmp-collapsed-summary .cmp-expand-hint {
+            display: none !important;
+        }
+        .cmp-unsaved-float-bar {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #ffffff;
+            border: 1.5px solid #f59e0b;
+            border-radius: 999px;
+            padding: 10px 18px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+            z-index: 9998;
+            font-size: 0.86rem;
+            font-weight: 700;
+            max-width: 92vw;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .cmp-unsaved-float-bar.is-active {
+            display: inline-flex !important;
+        }
+        .cmp-unsaved-float-bar .cmp-float-btn {
+            background: #f59e0b;
+            color: #0f172a;
+            border: none;
+            border-radius: 999px;
+            padding: 5px 12px;
+            font-size: 0.78rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .cmp-unsaved-float-bar .cmp-float-btn:hover {
+            background: #fbbf24;
+        }
+        .cmp-unsaved-float-bar .cmp-float-btn.cmp-float-undo-all {
+            background: transparent;
+            color: #fde68a;
+            border: 1px solid rgba(253, 230, 138, 0.5);
+        }
+        .cmp-unsaved-float-bar .cmp-float-btn.cmp-float-undo-all:hover {
+            background: rgba(253, 230, 138, 0.15);
+            color: #ffffff;
         }
 
         /* =========================================================
@@ -1469,6 +1569,10 @@ function cmp_render_customer_portal() {
                 flex: 1 !important;
                 height: 46px !important;
             }
+            .cmp-undo-row {
+                width: 100% !important;
+                height: 44px !important;
+            }
             .cmp-wa-float { bottom: 20px; right: 20px; padding: 12px; border-radius: 50%; }
             .cmp-wa-text { display: none; }
             .cmp-back-to-top { bottom: 80px; right: 25px; width: 40px; height: 40px; }
@@ -1858,6 +1962,8 @@ function cmp_render_customer_portal() {
                                 $status_badge = '<span class="cmp-status-pill pill-void">' . esc_html($log->delivery_result) . '</span>';
                             } elseif ($is_paused) {
                                 $status_badge = '<span class="cmp-status-pill pill-paused">Paused</span>';
+                            } elseif ($log_id > 0 && !$saved_chefs_choice && !$is_chef_assigned) {
+                                $status_badge = '<span class="cmp-status-pill pill-meals-pending">Meals Pending</span>';
                             } elseif ($log_id > 0) {
                                 $status_badge = '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
                             }
@@ -1977,6 +2083,7 @@ function cmp_render_customer_portal() {
                                                 $chef_btn_text = ($is_chef_assigned) ? 'Update' : 'Save';
                                                 $chef_btn_color = ($is_chef_assigned) ? '#1B5E20' : '#379237';
                                                 echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$chef_btn_color.';">'.$chef_btn_text.'</button>';
+                                                echo '<button type="button" class="cmp-undo-row" data-row="'.$i.'" title="Discard unsaved changes and restore previous selection (Shortcut: Esc)">'.$icon_undo.' <span>Undo</span></button>';
                                                 if ($log_id > 0) {
                                                     echo '<div class="cmp-secondary-actions">';
                                                     echo '<button class="cmp-clear-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" title="Reset / Clear Selection">'.$icon_reset.'</button>';
@@ -1990,6 +2097,7 @@ function cmp_render_customer_portal() {
                                                 $btn_txt = ($log_id > 0) ? 'Update' : 'Save';
                                                 $btn_color = ($log_id > 0) ? '#1B5E20' : '#379237';
                                                 echo '<button class="cmp-save-row" data-sub-id="'.$sub->id.'" data-log-id="'.$log_id.'" data-row="'.$i.'" style="background:'.$btn_color.';">'.$btn_txt.'</button>';
+                                                echo '<button type="button" class="cmp-undo-row" data-row="'.$i.'" title="Discard unsaved changes and restore previous selection (Shortcut: Esc)">'.$icon_undo.' <span>Undo</span></button>';
                                                 
                                                 if ($log_id > 0) {
                                                     echo '<div class="cmp-secondary-actions">';
@@ -2014,9 +2122,9 @@ function cmp_render_customer_portal() {
                                 </td>
 
                                 <!-- Compact 1-Line Summary Bar (Visible When Card is Collapsed on Desktop/Tablet) -->
-                                <td class="cmp-collapsed-summary" title="Click to expand meal selections">
+                                <td class="cmp-collapsed-summary" title="<?php echo $is_void ? 'This delivery day was cancelled' : 'Click to expand meal selections'; ?>">
                                     <span class="cmp-summary-text">Click to view or edit meal selections</span>
-                                    <span style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
+                                    <span class="cmp-expand-hint" style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
                                 </td>
                             </tr>
                         <?php } ?>
@@ -2025,6 +2133,13 @@ function cmp_render_customer_portal() {
             </div>
         </div>
         <?php endforeach; ?>
+
+        <!-- Floating Unsaved Changes Helper Bar -->
+        <div id="cmp-unsaved-float-bar" class="cmp-unsaved-float-bar cmp-no-print" role="status" aria-live="polite">
+            <span id="cmp-unsaved-float-text">Unsaved changes</span>
+            <button type="button" id="cmp-float-jump-btn" class="cmp-float-btn">Jump to Day</button>
+            <button type="button" id="cmp-float-undo-all-btn" class="cmp-float-btn cmp-float-undo-all">Undo All</button>
+        </div>
 
         <!-- Small Back to Top Button (Positioned Directly Above WhatsApp Floating Button) -->
         <button type="button" id="cmp-back-to-top" class="cmp-back-to-top cmp-no-print" title="Back to Top" aria-label="Back to Top">
@@ -2072,8 +2187,88 @@ function cmp_render_customer_portal() {
         var hasUnsavedChanges   = false;
         var isIntentionalReload = false;
 
+        function captureRowSnapshot(rowElement) {
+            if (!rowElement || !rowElement.length) return;
+            var mealsMap = {};
+            rowElement.find('[data-slot]').each(function() {
+                var slot = $(this).data('slot');
+                mealsMap[slot] = ($(this).val() || '').toString().trim();
+            });
+
+            var saveBtn = rowElement.find('.cmp-save-row');
+            var logId   = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
+            var currentBadgeHtml = rowElement.find('.cmp-status-box').html();
+
+            rowElement.data('cmp-snapshot', {
+                date: (rowElement.find('.cmp-date-picker').val() || '').toString().trim(),
+                chefsChoice: rowElement.find('.cmp-chefs-choice').is(':checked'),
+                meals: mealsMap,
+                logId: logId,
+                btnText: logId > 0 ? 'Update' : 'Save',
+                btnBg: logId > 0 ? '#1B5E20' : '#379237',
+                statusBadgeHtml: currentBadgeHtml
+            });
+        }
+
+        function isRowDifferentFromSnapshot(rowElement) {
+            var snap = rowElement.data('cmp-snapshot');
+            if (!snap) return true;
+
+            var currDate  = (rowElement.find('.cmp-date-picker').val() || '').toString().trim();
+            var currChef  = rowElement.find('.cmp-chefs-choice').is(':checked');
+
+            if (currDate !== snap.date) return true;
+            if (currChef !== snap.chefsChoice) return true;
+
+            var isDiff = false;
+            rowElement.find('[data-slot]').each(function() {
+                var slot = $(this).data('slot');
+                var currVal = ($(this).val() || '').toString().trim();
+                var snapVal = (snap.meals && snap.meals[slot] !== undefined) ? snap.meals[slot] : '';
+                if (currVal !== snapVal) {
+                    isDiff = true;
+                    return false;
+                }
+            });
+            return isDiff;
+        }
+
         function updateGlobalUnsavedState() {
-            hasUnsavedChanges = ($('tr.cmp-day-row.is-unsaved').length > 0);
+            var $unsavedRows = $('tr.cmp-day-row.is-unsaved');
+            hasUnsavedChanges = ($unsavedRows.length > 0);
+
+            var $floatBar = $('#cmp-unsaved-float-bar');
+            if ($unsavedRows.length > 0) {
+                var dayLabels = [];
+                $unsavedRows.each(function() {
+                    dayLabels.push('Day ' + $(this).data('row'));
+                });
+                var labelStr = dayLabels.length <= 3
+                    ? dayLabels.join(', ')
+                    : dayLabels.slice(0, 3).join(', ') + ' (+' + (dayLabels.length - 3) + ' more)';
+                $('#cmp-unsaved-float-text').text('⚠️ Unsaved changes on ' + labelStr);
+                $floatBar.addClass('is-active');
+            } else {
+                $floatBar.removeClass('is-active');
+            }
+        }
+
+        function restoreRowCleanVisuals(rowElement) {
+            if (!rowElement || !rowElement.length) return;
+            rowElement.removeClass('is-unsaved');
+
+            var snap    = rowElement.data('cmp-snapshot');
+            var saveBtn = rowElement.find('.cmp-save-row');
+            if (saveBtn.length && !saveBtn.is(':disabled') && snap) {
+                saveBtn.text(snap.btnText).css('background', snap.btnBg);
+            }
+            if (snap && snap.statusBadgeHtml) {
+                rowElement.find('.cmp-status-box').html(snap.statusBadgeHtml);
+                rowElement.find('.cmp-mobile-status').html(snap.statusBadgeHtml);
+            }
+
+            syncRowCompactAndSummary(rowElement);
+            updateGlobalUnsavedState();
         }
 
         function markRowUnsaved(rowElement) {
@@ -2090,6 +2285,57 @@ function cmp_render_customer_portal() {
 
             syncRowCompactAndSummary(rowElement);
             updateGlobalUnsavedState();
+        }
+
+        function evaluateRowDirtyState(rowElement) {
+            if (!rowElement || !rowElement.length) return;
+            if (isRowDifferentFromSnapshot(rowElement)) {
+                markRowUnsaved(rowElement);
+            } else {
+                restoreRowCleanVisuals(rowElement);
+            }
+        }
+
+        function restoreRowFromSnapshot(rowElement) {
+            if (!rowElement || !rowElement.length) return;
+            var snap = rowElement.data('cmp-snapshot');
+            if (!snap) return;
+
+            rowElement.find('.cmp-date-picker').val(snap.date);
+            rowElement.find('.cmp-chefs-choice').prop('checked', snap.chefsChoice);
+
+            rowElement.find('[data-slot]').each(function() {
+                var slot = $(this).data('slot');
+                var origVal = (snap.meals && snap.meals[slot] !== undefined) ? snap.meals[slot] : '';
+                if ($(this).is('select')) {
+                    $(this).data('saved-val', origVal);
+                } else {
+                    $(this).val(origVal);
+                }
+            });
+
+            var hasFood = populateDynamicDropdowns(rowElement);
+            if (hasFood) {
+                rowElement.find('[data-slot]').each(function() {
+                    var slot = $(this).data('slot');
+                    var origVal = (snap.meals && snap.meals[slot] !== undefined) ? snap.meals[slot] : '';
+                    $(this).val(origVal);
+                });
+
+                var inputs = rowElement.find('select, input.cmp-meal-custom');
+                if (snap.chefsChoice && !isChefOverride) {
+                    inputs.prop('disabled', true).removeClass('quota-locked');
+                } else {
+                    inputs.prop('disabled', false);
+                }
+                calculateMacros(rowElement);
+                enforceMealQuota(rowElement);
+            }
+
+            if (!snap.date) {
+                rowElement.addClass('is-collapsed-desktop');
+            }
+            restoreRowCleanVisuals(rowElement);
         }
 
         function markRowSaved(rowElement) {
@@ -2144,8 +2390,19 @@ function cmp_render_customer_portal() {
 
         // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text
         function syncRowCompactAndSummary(rowElement) {
+            var summaryTextEl = rowElement.find('.cmp-summary-text');
+
+            if (rowElement.hasClass('status-void')) {
+                if (summaryTextEl.length) {
+                    summaryTextEl.html('<span>This delivery was cancelled &mdash; a replacement day has been added to your schedule</span>');
+                }
+                return;
+            }
+
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var isUnsaved     = rowElement.hasClass('is-unsaved');
+            var saveBtn       = rowElement.find('.cmp-save-row');
+            var logId         = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
             var hasValues     = false;
             var pickedNames   = [];
 
@@ -2171,13 +2428,14 @@ function cmp_render_customer_portal() {
                 rowElement.removeClass('is-chefs-choice-compact');
             }
 
-            var summaryTextEl = rowElement.find('.cmp-summary-text');
             if (summaryTextEl.length) {
-                var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required!]</strong> ' : '';
+                var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
                 if (isChefsChoice && !hasValues) {
                     summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
                 } else if (pickedNames.length > 0) {
                     summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
+                } else if (logId > 0 && !isUnsaved) {
+                    summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
                 } else {
                     summaryTextEl.html(unsavedPrefix + 'Pending selection — Click to expand and choose meals');
                 }
@@ -2474,6 +2732,9 @@ function cmp_render_customer_portal() {
         // Card Expand / Collapse Toggle (Mobile & Desktop)
         $('.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary').on('click', function() {
             var $row = $(this).closest('tr.cmp-day-row');
+            if ($row.hasClass('status-void')) {
+                return;
+            }
             if ($(window).width() <= 768) {
                 $row.toggleClass('is-open');
             } else {
@@ -2489,7 +2750,7 @@ function cmp_render_customer_portal() {
 
         $('.cmp-expand-all-btn').on('click', function() {
             var $container = $(this).closest('.cmp-portal-container');
-            $container.find('tr.cmp-day-row').removeClass('is-collapsed-desktop');
+            $container.find('tr.cmp-day-row:not(.status-void)').removeClass('is-collapsed-desktop');
         });
 
         // Unified Colourful Macro Tiles Renderer (Zero Duplication on Mobile/Tablet/Desktop)
@@ -2598,16 +2859,18 @@ function cmp_render_customer_portal() {
 
         // Initial page load population (does not trigger unsaved state)
         $('.cmp-day-row').each(function() {
-            var hasFood = populateDynamicDropdowns($(this));
+            var $row = $(this);
+            var hasFood = populateDynamicDropdowns($row);
             if (hasFood) {
-                calculateMacros($(this));
-                enforceMealQuota($(this));
+                calculateMacros($row);
+                enforceMealQuota($row);
             } else {
-                syncRowCompactAndSummary($(this));
+                syncRowCompactAndSummary($row);
             }
+            captureRowSnapshot($row);
         });
 
-        // Trigger unsaved state & macro/quota calculation when meal dropdown or custom text changes
+        // Trigger smart dirty-state comparison & macro/quota calculation when meal dropdown or custom text changes
         $(document).on('change input', '.cmp-meal-select, .cmp-meal-custom, select[class^="cmp-juice-"]', function() { 
             var rowElement = $(this).closest('tr');
             if ($(this).is('select')) {
@@ -2615,7 +2878,30 @@ function cmp_render_customer_portal() {
             }
             calculateMacros(rowElement); 
             enforceMealQuota(rowElement);
-            markRowUnsaved(rowElement);
+            evaluateRowDirtyState(rowElement);
+        });
+
+        // Dedicated Undo Button Click Handler
+        $(document).on('click', '.cmp-undo-row', function(e) {
+            e.preventDefault();
+            var rowElement = $(this).closest('tr.cmp-day-row');
+            restoreRowFromSnapshot(rowElement);
+        });
+
+        // Floating Unsaved Bar Buttons: Jump to First Unsaved Day & Undo All
+        $('#cmp-float-jump-btn').on('click', function(e) {
+            e.preventDefault();
+            var $firstUnsaved = $('tr.cmp-day-row.is-unsaved').first();
+            if ($firstUnsaved.length) {
+                focusRowFirstInput($firstUnsaved);
+            }
+        });
+
+        $('#cmp-float-undo-all-btn').on('click', function(e) {
+            e.preventDefault();
+            $('tr.cmp-day-row.is-unsaved').each(function() {
+                restoreRowFromSnapshot($(this));
+            });
         });
 
         $('.cmp-chefs-choice').on('change', function() {
@@ -2629,7 +2915,7 @@ function cmp_render_customer_portal() {
             }
             calculateMacros(rowElement); 
             enforceMealQuota(rowElement);
-            markRowUnsaved(rowElement);
+            evaluateRowDirtyState(rowElement);
 
             // If unchecked, expand card and focus the first meal selector for seamless keyboard flow
             if (!$(this).is(':checked')) {
@@ -2683,9 +2969,7 @@ function cmp_render_customer_portal() {
                 calculateMacros(rowElement); 
                 enforceMealQuota(rowElement);
             }
-            if (selectedDate) {
-                markRowUnsaved(rowElement);
-            }
+            evaluateRowDirtyState(rowElement);
         });
 
         // =========================================================
@@ -2745,6 +3029,13 @@ function cmp_render_customer_portal() {
         $(document).on('keydown', 'tr.cmp-day-row', function(e) {
             var $row = $(this);
             var $saveBtn = $row.find('.cmp-save-row:enabled');
+
+            // Esc: Undo / Discard unsaved edits on the active Day Card
+            if (e.key === 'Escape' && $row.hasClass('is-unsaved')) {
+                e.preventDefault();
+                restoreRowFromSnapshot($row);
+                return;
+            }
 
             // Alt + DownArrow: Jump to Next Day Card
             if (e.altKey && e.key === 'ArrowDown') {
@@ -2920,15 +3211,25 @@ function cmp_render_customer_portal() {
                         btn.data('log-id', response.data.new_log_id);
                     }
 
-                    // Clear unsaved state and update global beforeunload guard
-                    markRowSaved(rowElement);
+                    // Determine if any meals were chosen or if only the date was reserved
+                    var hasSavedMeals = false;
+                    rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"], input.cmp-meal-custom').each(function() {
+                        if (($(this).val() || '').toString().trim() !== '') {
+                            hasSavedMeals = true;
+                        }
+                    });
 
-                    rowElement.removeClass('status-pending').addClass('status-saved is-collapsed-desktop');
-                    syncRowCompactAndSummary(rowElement);
-
-                    var newBadge = '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
+                    var newBadge = (!isChefsChoice && !hasSavedMeals)
+                        ? '<span class="cmp-status-pill pill-meals-pending">Meals Pending</span>'
+                        : '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
                     rowElement.find('.cmp-status-box').html(newBadge);
                     rowElement.find('.cmp-mobile-status').html(newBadge);
+
+                    // Clear unsaved state, refresh row snapshot to the newly saved values, and update global guard
+                    markRowSaved(rowElement);
+                    rowElement.removeClass('status-pending').addClass('status-saved is-collapsed-desktop');
+                    captureRowSnapshot(rowElement);
+                    syncRowCompactAndSummary(rowElement);
 
                     if (!canBypassDateLock) {
                         var isTimeLocked = (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate));
