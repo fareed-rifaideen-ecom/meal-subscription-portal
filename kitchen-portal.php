@@ -2,6 +2,10 @@
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
+if ( function_exists( 'opcache_invalidate' ) ) {
+    @opcache_invalidate( __FILE__, true );
+}
+
 // ==========================================
 // 1. AJAX HANDLERS: KITCHEN ACTIONS & EXPORT
 // ==========================================
@@ -304,18 +308,21 @@ add_shortcode( 'meal_kitchen_portal', 'cmp_render_kitchen_portal' );
 function cmp_render_kitchen_portal() {
     date_default_timezone_set('Asia/Dubai');
 
-    if ( ! is_user_logged_in() ) {
-        $login_args = array('echo' => false, 'form_id' => 'cmp-kitchen-login', 'label_username' => __('Email Address or Username'), 'label_password' => __('Password'));
-        $custom_css = '<style>#cmp-kitchen-login label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; text-align: left; } #cmp-kitchen-login input[type="text"], #cmp-kitchen-login input[type="password"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; } #cmp-kitchen-login .login-submit input[type="submit"] { width: 100%; background: #0073aa; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; box-sizing: border-box; } #cmp-kitchen-login .login-remember { text-align: left; margin-bottom: 15px; }</style>';
-        return $custom_css . '<div style="max-width: 400px; margin: 50px auto; padding: 30px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);"><h2 style="text-align: center; margin-top: 0; color: #222;">Kitchen Portal</h2><p style="text-align: center; color: #666; margin-bottom: 20px;">Please log in with your staff account.</p>' . wp_login_form( $login_args ) . '</div>';
-    }
-
     $is_admin = current_user_can('manage_options') || current_user_can('menu_manager');
-    $is_chef = current_user_can('kitchen_staff');
-    $is_foh = current_user_can('foh_manager');
+    $is_chef  = current_user_can('kitchen_staff');
+    $is_foh   = current_user_can('foh_manager');
 
-    if ( !$is_admin && !$is_chef && !$is_foh ) {
-        return '<p style="padding: 20px; background: #fff; border-left: 4px solid #dc3232;">Access Denied. Kitchen Staff or FOH only.</p>';
+    // Security & Custom Glassmorphism UI/UX Login Screen
+    if ( ! is_user_logged_in() || ( ! $is_admin && ! $is_chef && ! $is_foh ) ) {
+        if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
+            return cmp_render_portal_login_ui( array(
+                'portal_id'      => 'kitchen',
+                'title'          => 'Kitchen Portal',
+                'subtitle'       => 'Daily Meal Prep, Chef Assignments & Dispatch',
+                'required_caps'  => array( 'manage_options', 'menu_manager', 'kitchen_staff', 'foh_manager' ),
+                'denied_message' => 'Kitchen Staff, Menu Manager, or FOH clearance is required to access this portal.',
+            ) );
+        }
     }
 
     global $wpdb;
@@ -454,7 +461,7 @@ function cmp_render_kitchen_portal() {
         $potential_recipient = end($plan_parts);
         $recipient_badge = '';
         if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
+            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span></div>';
             array_pop($plan_parts);
             $core_plan_name = implode(' - ', $plan_parts);
         } else {
@@ -496,6 +503,7 @@ function cmp_render_kitchen_portal() {
             'allow_custom' => $allow_custom,
             'allowed_categories' => $log->allowed_categories,
             'target_date' => $log->target_date, 
+            'expiry_date' => $log->expiry_date,
             'is_day_before' => $is_day_before ? 1 : 0,
             'raw_log' => $log
         );
@@ -523,67 +531,69 @@ function cmp_render_kitchen_portal() {
     </script>
 
     <style>
-        .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85em; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .k-table th { background: #222; color: #fff; padding: 12px 8px; text-align: left; }
-        .k-table td { padding: 10px 8px; border-bottom: 1px solid #ddd; vertical-align: middle; }
+        .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85em; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.06); border-radius: 10px; overflow: hidden; }
+        .k-table th { background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; padding: 12px 8px; text-align: left; }
+        .k-table td { padding: 10px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
         
-        .chk-large { transform: scale(3.5); cursor: pointer; margin: 10px; }
+        .chk-large { transform: scale(3.5); cursor: pointer; margin: 10px; accent-color: #379237; }
         .k-customer-meta { margin: 2px 0; color: #555; display: flex; align-items: center; gap: 5px; }
-        .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; }
+        .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; color: #379237; }
         
-        .logistics-box { margin-top: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; line-height: 1.3; }
+        .logistics-box { margin-top: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; line-height: 1.3; }
         
-        .k-tab-btn { background: #f1f1f1; border: 1px solid #ccc; padding: 10px 20px; border-radius: 4px; font-weight: bold; color: #333; cursor: pointer; transition: 0.2s; }
-        .k-tab-btn.active { background: #0073aa !important; color: #fff !important; border-color: #0073aa !important; }
+        .k-tab-btn { background: #ffffff; border: 1px solid #cbd5e1; padding: 10px 20px; border-radius: 8px; font-weight: bold; color: #231F20; cursor: pointer; transition: 0.2s; }
+        .k-tab-btn.active { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; color: #fff !important; border-color: #1B5E20 !important; box-shadow: 0 4px 12px rgba(55, 146, 55, 0.25); }
+
+        .k-glass-toolbar { background: linear-gradient(135deg, rgba(220, 236, 201, 0.78) 0%, rgba(238, 247, 227, 0.72) 100%); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 20px 24px; border-radius: 16px; margin-bottom: 26px; display: flex; justify-content: space-between; align-items: center; border: 1.5px solid #DCECC9; box-shadow: 0 10px 26px rgba(27, 94, 32, 0.08); flex-wrap: wrap; gap: 15px; }
 
         @media print {
             .cmp-no-print { display: none !important; }
             body, html { background: #fff !important; margin: 0 !important; padding: 0 !important; }
             .k-table { box-shadow: none !important; border: 1px solid #000; }
-            .k-table th, .k-table td { border: 1px solid #000; padding: 6px; }
+            .k-table th, .k-table td { border: 1px solid #000; padding: 6px; color: #000 !important; background: transparent !important; }
             select { appearance: none; border: none; background: transparent; }
         }
     </style>
 
-    <div style="max-width: 1400px; margin: 0 auto; font-family: inherit;">
+    <div style="max-width: 1400px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
         
-        <div class="cmp-no-print" style="background: #f1f1f1; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #ddd; flex-wrap: wrap; gap: 15px;">
-            <form method="GET" id="cmp-kitchen-date-form" style="margin: 0; display: flex; align-items: center; gap: 10px;">
-                <label style="font-weight: bold; font-size: 1.1em;">Food Preparation Date:</label>
-                <a href="?prep_date=<?php echo $prev_date; ?>" style="background: #ccc; color: #333; text-decoration: none; padding: 8px 12px; border-radius: 4px; font-weight: bold;">&laquo; Prev</a>
-                <input type="date" name="prep_date" value="<?php echo esc_attr($selected_date); ?>" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;" onchange="document.getElementById('cmp-kitchen-date-form').submit();">
-                <a href="?prep_date=<?php echo $next_date; ?>" style="background: #ccc; color: #333; text-decoration: none; padding: 8px 12px; border-radius: 4px; font-weight: bold;">Next &raquo;</a>
+        <div class="cmp-no-print k-glass-toolbar">
+            <form method="GET" id="cmp-kitchen-date-form" style="margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <label style="font-weight: 800; font-size: 1.05em; color: #1B5E20;">Food Preparation Date:</label>
+                <a href="?prep_date=<?php echo $prev_date; ?>" style="background: #ffffff; color: #1B5E20; border: 1px solid #b7e1a1; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-weight: bold;">&laquo; Prev</a>
+                <input type="date" name="prep_date" value="<?php echo esc_attr($selected_date); ?>" style="padding: 8px 12px; border: 1.5px solid #379237; border-radius: 8px; background: #fff; color: #231F20; font-weight: 600;" onchange="document.getElementById('cmp-kitchen-date-form').submit();">
+                <a href="?prep_date=<?php echo $next_date; ?>" style="background: #ffffff; color: #1B5E20; border: 1px solid #b7e1a1; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-weight: bold;">Next &raquo;</a>
             </form>
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/chef-dashboard/'); ?>" target="_blank" style="background: #0073aa; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
+                <a href="<?php echo site_url('/chef-dashboard/'); ?>" target="_blank" style="background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
                 
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
-                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date)); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date)); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date)); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
                 
-                <button onclick="window.print()" style="background: #46b450; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;">Print PDF</button>
-                <a href="<?php echo wp_logout_url( get_permalink() ); ?>" style="background: #dc3232; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; text-decoration: none;">Log Out</a>
+                <button onclick="window.print()" style="background: #475569; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: bold;">Print PDF</button>
+                <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Log Out</a>
             </div>
         </div>
 
-        <div style="position: sticky; top: 0; z-index: 99; background: #ffffff; text-align: center; border-bottom: 2px solid #222; margin-bottom: 20px; padding: 15px 0 10px 0;">
-            <h1 style="margin: 0; font-size: 2em; color: #222;">Order Preparation Report</h1>
-            <h3 style="margin: 5px 0 0 0; color: #0073aa;">Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
+        <div style="position: sticky; top: 0; z-index: 99; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(10px); text-align: center; border-bottom: 3px solid #379237; margin-bottom: 20px; padding: 15px 0 10px 0;">
+            <h1 style="margin: 0; font-size: 2em; color: #231F20;">Order Preparation Report</h1>
+            <h3 style="margin: 5px 0 0 0; color: #379237;">Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
         </div>
 
-        <div class="cmp-no-print" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px; margin-bottom: 20px; background:#f8fafc; padding:15px; border:1px solid #e2e8f0; border-radius:6px;">
+        <div class="cmp-no-print" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px; margin-bottom: 20px; background:#f8fafc; padding:15px; border:1px solid #DCECC9; border-radius:10px;">
             <div class="k-tabs-container" style="display:flex; gap:10px; flex-wrap:wrap;">
                 <button class="k-tab-btn active" data-filter="all">All Orders (<?php echo $count_all; ?>)</button>
                 <button class="k-tab-btn" data-filter="pending">Pending Chef's Choice <?php if($count_pending > 0) echo '<span style="background:#dc3232; color:#fff; border-radius:10px; padding:2px 8px; font-size:0.8em; margin-left:5px;">'.$count_pending.'</span>'; ?></button>
                 <button class="k-tab-btn" data-filter="assigned">Completed Assignments (<?php echo $count_assigned; ?>)</button>
             </div>
             <div style="flex-grow:1; min-width:200px; max-width:350px;">
-                <input type="text" id="k-search" placeholder="🔍 Search customers by ID, name, email, or phone..." style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; font-size:1em;">
+                <input type="text" id="k-search" placeholder="🔍 Search customers by ID, name, email, or phone..." style="width:100%; padding:10px 12px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:1em;">
             </div>
         </div>
 
         <?php if(empty($customers)): ?>
-            <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc;">No orders found for this prep date.</p>
+            <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc; border-radius: 10px;">No orders found for this prep date.</p>
         <?php else: ?>
             <div style="overflow-x: auto;">
                 <table class="k-table">
@@ -623,12 +633,12 @@ function cmp_render_kitchen_portal() {
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
                                 <div>
-                                    <strong style="color: #0073aa; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                    <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
                                     <?php echo $c['recipient_badge']; ?>
                                 </div>
                                 
                                 <div style="margin-top:6px; font-size:0.95em; line-height:1.4;">
-                                    <span class="k-customer-meta" style="color: #334155; font-weight: bold;">
+                                    <span class="k-customer-meta" style="color: #231F20; font-weight: bold;">
                                         Order: <?php echo $c['order_id']; ?>
                                     </span>
                                     <span class="k-customer-meta">
@@ -654,7 +664,7 @@ function cmp_render_kitchen_portal() {
                                     <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html($c['time_slot']); ?></span>
                                 </div>
                                 <div style="text-align: left;">
-                                    <div style="background: #0284c7; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+                                    <div style="background: #379237; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
                                         Delivery: <?php echo date('D, M j', strtotime($c['delivery_date'])); ?>
                                     </div>
                                     <br>
@@ -700,10 +710,6 @@ function cmp_render_kitchen_portal() {
                                     
                                     $is_flexible = isset($c['is_flexible']) ? intval($c['is_flexible']) : 0;
                                     $allow_custom = isset($c['allow_custom']) ? intval($c['allow_custom']) : 0;
-                                    
-                                    $l_bf = $is_flexible ? 'Meal 1' : 'Breakfast';
-                                    $l_lu = $is_flexible ? 'Meal 2' : 'Lunch';
-                                    $l_di = $is_flexible ? 'Meal 3' : 'Dinner';
                                     ?>
                                     
                                     <div class="chef-assign-form cmp-no-print cmp-portal-container" data-log-id="<?php echo $c['log_id']; ?>" data-target-date="<?php echo esc_attr($c['target_date']); ?>" data-allowed-meals="<?php echo $allowed_meals; ?>" data-snack-quota="<?php echo $snack_count; ?>" data-is-juice="<?php echo $is_juice_plan ? '1' : '0'; ?>" data-allow-custom="<?php echo $allow_custom; ?>" style="display: <?php echo $form_style; ?>; background:#fffbdd; padding:10px; border:1px dashed #eab308; border-radius:5px;">
@@ -769,7 +775,7 @@ function cmp_render_kitchen_portal() {
                                         <span style="color:#64748b; font-size:0.9em;"><?php echo esc_html($plan_meals); ?></span>
                                     </div>
                                     <?php if (!empty($c['foh_remarks'])): ?>
-                                        <div style="background:#e0f2fe; color:#0369a1; padding:6px 8px; border-radius:4px; font-size:0.85em; margin-top:8px; border-left:3px solid #0284c7; line-height:1.3;">
+                                        <div style="background:#EEF7E3; color:#1B5E20; padding:6px 8px; border-radius:4px; font-size:0.85em; margin-top:8px; border-left:3px solid #379237; line-height:1.3;">
                                             <strong>FOH Note:</strong> <?php echo esc_html($c['foh_remarks']); ?>
                                         </div>
                                     <?php endif; ?>
