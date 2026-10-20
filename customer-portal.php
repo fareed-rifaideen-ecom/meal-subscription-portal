@@ -866,6 +866,41 @@ function cmp_render_customer_portal() {
         }
 
         /* =========================================================
+           UNSAVED CHANGES ("DIRTY STATE") UI/UX & PULSE ANIMATION
+           ========================================================= */
+        @keyframes cmpSavePulse {
+            0%   { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.65), 0 4px 10px rgba(217, 119, 6, 0.28); transform: scale(1); }
+            50%  { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0), 0 6px 15px rgba(217, 119, 6, 0.42); transform: scale(1.02); }
+            100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 4px 10px rgba(217, 119, 6, 0.28); transform: scale(1); }
+        }
+        .cmp-table tr.cmp-day-row.is-unsaved {
+            background: #fffbeb !important;
+            border-color: #f59e0b !important;
+            border-left: 6px solid #d97706 !important;
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.16) !important;
+        }
+        .cmp-table tr.cmp-day-row.is-unsaved td.cmp-cell-day {
+            background: #fef3c7 !important;
+            color: #b45309 !important;
+            border-color: #f59e0b !important;
+        }
+        .cmp-table tr.cmp-day-row.is-unsaved .cmp-save-row:not(:disabled) {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+            color: #ffffff !important;
+            border: 1.5px solid #fde68a !important;
+            animation: cmpSavePulse 1.75s infinite ease-in-out !important;
+        }
+        .cmp-table tr.cmp-day-row.is-unsaved .cmp-save-row:hover:not(:disabled) {
+            background: linear-gradient(135deg, #d97706 0%, #b45309 100%) !important;
+            filter: brightness(1.04);
+        }
+        .cmp-status-pill.pill-unsaved {
+            color: #92400e !important;
+            background: #fef3c7 !important;
+            border: 1.5px solid #f59e0b !important;
+        }
+
+        /* =========================================================
            OPTION A: UNIFIED STACKED DAY CARD LAYOUT
            WITH SYMMETRICAL 3+2 GRID & KEYBOARD FOCUS ENGINE
            ========================================================= */
@@ -890,12 +925,12 @@ function cmp_render_customer_portal() {
             box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04) !important;
             transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
         }
-        .cmp-table tr.cmp-day-row.status-pending { border-color: #fde68a !important; }
-        .cmp-table tr.cmp-day-row.status-saved { border-color: #bbf7d0 !important; }
+        .cmp-table tr.cmp-day-row.status-pending:not(.is-unsaved) { border-color: #fde68a !important; }
+        .cmp-table tr.cmp-day-row.status-saved:not(.is-unsaved) { border-color: #bbf7d0 !important; }
         .cmp-table tr.cmp-day-row.status-void { border-color: #fecdd3 !important; opacity: 0.82; }
 
         /* Active Keyboard Focus Highlight on Day Card */
-        .cmp-table tr.cmp-day-row:focus-within {
+        .cmp-table tr.cmp-day-row:focus-within:not(.is-unsaved) {
             border-color: #379237 !important;
             box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.22), 0 10px 25px rgba(27, 94, 32, 0.10) !important;
         }
@@ -1016,7 +1051,7 @@ function cmp_render_customer_portal() {
         .cmp-status-pill.pill-void { color: #9f1239; background: #ffe4e6; border: 1px solid #fda4af; }
         .cmp-status-pill.pill-paused { color: #b45309; background: #fef3c7; border: 1px solid #fde68a; }
 
-        /* Action Buttons — Never Wrap "Update" / "✓ Updated" Text */
+        /* Action Buttons — Never Wrap "Update" / "✓ Updated" / "Save Required!" Text */
         .cmp-action-box {
             display: flex !important;
             align-items: center !important;
@@ -1026,12 +1061,12 @@ function cmp_render_customer_portal() {
             width: 100% !important;
         }
         .cmp-save-row {
-            min-width: 120px !important;
+            min-width: 132px !important;
             width: auto !important;
             flex: 1 1 auto !important;
             min-height: 48px !important;
-            padding: 10px 16px !important;
-            font-size: 14.5px !important;
+            padding: 10px 14px !important;
+            font-size: 14px !important;
             font-weight: 800 !important;
             line-height: 1.2 !important;
             white-space: nowrap !important;
@@ -1048,7 +1083,7 @@ function cmp_render_customer_portal() {
         }
         .cmp-save-row:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
         .cmp-save-row:focus { outline: none !important; box-shadow: 0 0 0 3.5px rgba(55, 146, 55, 0.4) !important; }
-        .cmp-save-row:disabled { opacity: 0.7; cursor: not-allowed !important; transform: none !important; }
+        .cmp-save-row:disabled { opacity: 0.7; cursor: not-allowed !important; transform: none !important; animation: none !important; }
 
         .cmp-secondary-actions {
             display: inline-flex !important;
@@ -2031,6 +2066,46 @@ function cmp_render_customer_portal() {
         var customerMinDate   = "<?php echo esc_js($customer_min_date); ?>";
         var todayYmd          = "<?php echo esc_js($today_ymd); ?>";
 
+        // =========================================================
+        // UNSAVED STATE ("DIRTY STATE") & BEFOREUNLOAD EXIT GUARD
+        // =========================================================
+        var hasUnsavedChanges   = false;
+        var isIntentionalReload = false;
+
+        function updateGlobalUnsavedState() {
+            hasUnsavedChanges = ($('tr.cmp-day-row.is-unsaved').length > 0);
+        }
+
+        function markRowUnsaved(rowElement) {
+            if (!rowElement || !rowElement.length) return;
+            var saveBtn = rowElement.find('.cmp-save-row');
+            if (!saveBtn.length || saveBtn.is(':disabled')) return;
+
+            rowElement.addClass('is-unsaved');
+            saveBtn.text('Save Required!');
+
+            var unsavedBadge = '<span class="cmp-status-pill pill-unsaved">Unsaved!</span>';
+            rowElement.find('.cmp-status-box').html(unsavedBadge);
+            rowElement.find('.cmp-mobile-status').html(unsavedBadge);
+
+            syncRowCompactAndSummary(rowElement);
+            updateGlobalUnsavedState();
+        }
+
+        function markRowSaved(rowElement) {
+            if (!rowElement || !rowElement.length) return;
+            rowElement.removeClass('is-unsaved');
+            updateGlobalUnsavedState();
+        }
+
+        window.addEventListener('beforeunload', function(e) {
+            if (hasUnsavedChanges && !isIntentionalReload) {
+                e.preventDefault();
+                e.returnValue = 'You have unsaved meal selections. Are you sure you want to leave without saving?';
+                return e.returnValue;
+            }
+        });
+
         // Small Back to Top Button Visibility & Scroll Action
         var $backToTopBtn = $('#cmp-back-to-top');
         $(window).on('scroll', function() {
@@ -2070,8 +2145,9 @@ function cmp_render_customer_portal() {
         // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text
         function syncRowCompactAndSummary(rowElement) {
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
-            var hasValues = false;
-            var pickedNames = [];
+            var isUnsaved     = rowElement.hasClass('is-unsaved');
+            var hasValues     = false;
+            var pickedNames   = [];
 
             rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"]').each(function() {
                 var val = $(this).val();
@@ -2097,12 +2173,13 @@ function cmp_render_customer_portal() {
 
             var summaryTextEl = rowElement.find('.cmp-summary-text');
             if (summaryTextEl.length) {
+                var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required!]</strong> ' : '';
                 if (isChefsChoice && !hasValues) {
-                    summaryTextEl.html('<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
+                    summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
                 } else if (pickedNames.length > 0) {
-                    summaryTextEl.html('<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
+                    summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
                 } else {
-                    summaryTextEl.text('Pending selection — Click to expand and choose meals');
+                    summaryTextEl.html(unsavedPrefix + 'Pending selection — Click to expand and choose meals');
                 }
             }
         }
@@ -2269,6 +2346,7 @@ function cmp_render_customer_portal() {
                 operation: op
             }, function(res) {
                 if(res.success) {
+                    isIntentionalReload = true;
                     location.reload();
                 } else {
                     alert('Error: ' + res.data);
@@ -2314,7 +2392,7 @@ function cmp_render_customer_portal() {
                 snacksGrid.show();
                 chefChoiceCell.find('.cmp-chef-box').show();
                 if (btn.text() === 'Menu Pending') {
-                    var btnTxt = btn.data('log-id') > 0 ? 'Update' : 'Save';
+                    var btnTxt = rowElement.hasClass('is-unsaved') ? 'Save Required!' : (btn.data('log-id') > 0 ? 'Update' : 'Save');
                     btn.text(btnTxt).css({'background':'#379237', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
                 }
                 return true;
@@ -2336,7 +2414,7 @@ function cmp_render_customer_portal() {
                     btn.text('Menu Pending').css({'background':'#94a3b8', 'color':'#fff', 'cursor':'not-allowed'}).prop('disabled', true);
                 } else {
                     if (btn.text() === 'Menu Pending') {
-                        var btnTxt = btn.data('log-id') > 0 ? 'Update' : 'Save';
+                        var btnTxt = rowElement.hasClass('is-unsaved') ? 'Save Required!' : (btn.data('log-id') > 0 ? 'Update' : 'Save');
                         btn.text(btnTxt).css({'background':'#379237', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
                     }
                 }
@@ -2348,7 +2426,7 @@ function cmp_render_customer_portal() {
             chefChoiceCell.find('.cmp-chef-box').show();
 
             if (btn.text() === 'Menu Pending') {
-                var btnTxt = btn.data('log-id') > 0 ? 'Update' : 'Save';
+                var btnTxt = rowElement.hasClass('is-unsaved') ? 'Save Required!' : (btn.data('log-id') > 0 ? 'Update' : 'Save');
                 btn.text(btnTxt).css({'background':'#379237', 'color':'#fff', 'cursor':'pointer'}).prop('disabled', false);
             }
 
@@ -2518,6 +2596,7 @@ function cmp_render_customer_portal() {
             }
         }
 
+        // Initial page load population (does not trigger unsaved state)
         $('.cmp-day-row').each(function() {
             var hasFood = populateDynamicDropdowns($(this));
             if (hasFood) {
@@ -2528,14 +2607,15 @@ function cmp_render_customer_portal() {
             }
         });
 
-        $(document).on('change keyup', '.cmp-meal-select, .cmp-meal-custom, select[class^="cmp-juice-"]', function() { 
+        // Trigger unsaved state & macro/quota calculation when meal dropdown or custom text changes
+        $(document).on('change input', '.cmp-meal-select, .cmp-meal-custom, select[class^="cmp-juice-"]', function() { 
             var rowElement = $(this).closest('tr');
+            if ($(this).is('select')) {
+                $(this).data('saved-val', $(this).val());
+            }
             calculateMacros(rowElement); 
             enforceMealQuota(rowElement);
-            var saveBtn = rowElement.find('.cmp-save-row');
-            if (saveBtn.length && saveBtn.text() === '✓ Updated') {
-                saveBtn.text('Update');
-            }
+            markRowUnsaved(rowElement);
         });
 
         $('.cmp-chefs-choice').on('change', function() {
@@ -2549,6 +2629,7 @@ function cmp_render_customer_portal() {
             }
             calculateMacros(rowElement); 
             enforceMealQuota(rowElement);
+            markRowUnsaved(rowElement);
 
             // If unchecked, expand card and focus the first meal selector for seamless keyboard flow
             if (!$(this).is(':checked')) {
@@ -2602,6 +2683,9 @@ function cmp_render_customer_portal() {
                 calculateMacros(rowElement); 
                 enforceMealQuota(rowElement);
             }
+            if (selectedDate) {
+                markRowUnsaved(rowElement);
+            }
         });
 
         // =========================================================
@@ -2644,7 +2728,7 @@ function cmp_render_customer_portal() {
             var $activeContainer = $('.cmp-tab-content.active');
             if (!$activeContainer.length) return;
 
-            var $firstPending = $activeContainer.find('tr.cmp-day-row.status-pending').first();
+            var $firstPending = $activeContainer.find('tr.cmp-day-row.status-pending, tr.cmp-day-row.is-unsaved').first();
             if ($firstPending.length) {
                 focusRowFirstInput($firstPending);
             } else {
@@ -2835,6 +2919,10 @@ function cmp_render_customer_portal() {
                     if(response.data && response.data.new_log_id) {
                         btn.data('log-id', response.data.new_log_id);
                     }
+
+                    // Clear unsaved state and update global beforeunload guard
+                    markRowSaved(rowElement);
+
                     rowElement.removeClass('status-pending').addClass('status-saved is-collapsed-desktop');
                     syncRowCompactAndSummary(rowElement);
 
@@ -2868,8 +2956,11 @@ function cmp_render_customer_portal() {
 
                 } else {
                     alert('Error: ' + response.data);
-                    btn.text(btn.data('log-id') ? 'Update' : 'Save').prop('disabled', false);
+                    btn.text(rowElement.hasClass('is-unsaved') ? 'Save Required!' : (btn.data('log-id') ? 'Update' : 'Save')).prop('disabled', false);
                 }
+            }).fail(function() {
+                alert('Connection error. Please try saving again.');
+                btn.text(rowElement.hasClass('is-unsaved') ? 'Save Required!' : (btn.data('log-id') ? 'Update' : 'Save')).prop('disabled', false);
             });
         });
 
@@ -2902,6 +2993,7 @@ function cmp_render_customer_portal() {
             
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if (response.success) {
+                    markRowSaved(rowElement);
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
@@ -2942,6 +3034,7 @@ function cmp_render_customer_portal() {
             
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if (response.success) {
+                    markRowSaved(rowElement);
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
