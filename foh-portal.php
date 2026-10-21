@@ -179,13 +179,12 @@ function cmp_foh_export_csv() {
         wp_die('Access Denied'); 
     }
 
-    global $wpdb;
     date_default_timezone_set('Asia/Dubai');
+    global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $today = date('Y-m-d H:i:s');
     $today_date = date('Y-m-d');
-    $today_ts = strtotime($today_date);
 
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
 
@@ -195,11 +194,29 @@ function cmp_foh_export_csv() {
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
     fputcsv($output, array(
-        'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 
-        'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 
-        'Status', 'Bag Status', 'Total Days', 'Filled Days', 'Pending to Fill', 'Over-Quota Days', 
-        'Last Scheduled Date', 'Schedule Alert', 'Used Days', 'Balance Days', 
-        'Start Date', 'Expiry Date', 'FOH Remarks'
+        'Order ID',
+        'Customer Name',
+        'Recipient Name',
+        'Email',
+        'Phone',
+        'Plan Details',
+        'Plan Mode',
+        'Base Price (AED)',
+        'Discount (AED)',
+        'Final Paid (AED)',
+        'Status',
+        'Bag Status',
+        'Filled Days',
+        'Total Days',
+        'Pending to Fill',
+        'Over-Quota Days',
+        'Used Days',
+        'Balance Days',
+        'Last Scheduled Date',
+        'Schedule Alert',
+        'Start Date',
+        'Expiry Date',
+        'FOH Remarks'
     ));
 
     foreach ($all_subs as $sub) {
@@ -215,39 +232,14 @@ function cmp_foh_export_csv() {
 
         $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
 
-        $active_logs = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
-            $sub->id
-        ));
-
-        $filled_days = count($active_logs);
-        $usage_days = 0;
-        $last_scheduled_date = '';
-        $unpicked_meals_count = 0;
-
-        foreach ($active_logs as $log_row) {
-            if ($log_row->delivery_result === 'Successful') {
-                $usage_days++;
-            }
-            if (!empty($log_row->target_date) && ($last_scheduled_date === '' || $log_row->target_date > $last_scheduled_date)) {
-                $last_scheduled_date = $log_row->target_date;
-            }
-            if (!empty($log_row->target_date) && $log_row->target_date >= $today_date) {
-                $is_assigned = (
-                    !empty($log_row->breakfast_id) || !empty($log_row->lunch_id) || !empty($log_row->dinner_id) || !empty($log_row->juice_1_id) ||
-                    !empty($log_row->custom_breakfast) || !empty($log_row->custom_lunch) || !empty($log_row->custom_dinner) || !empty($log_row->custom_juice_1) ||
-                    !empty($log_row->is_chefs_choice)
-                );
-                if (!$is_assigned) {
-                    $unpicked_meals_count++;
-                }
-            }
-        }
+        $filled_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+        $usage_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $last_scheduled_date = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
 
         $total_days_int = intval($sub->total_days);
+        $balance = max(0, $total_days_int - $usage_days);
         $pending_fill = max(0, $total_days_int - $filled_days);
         $over_quota = max(0, $filled_days - $total_days_int);
-        $balance = max(0, $total_days_int - $usage_days);
 
         $status_label = 'Active';
         if ($sub->status === 'paused') {
@@ -257,31 +249,24 @@ function cmp_foh_export_csv() {
         }
 
         $schedule_alert = 'OK';
-        if ($status_label === 'Active') {
-            $alerts = array();
-            if ($over_quota > 0) {
-                $alerts[] = "OVER-QUOTA (+{$over_quota} Days)";
-            } elseif ($pending_fill > 0) {
-                if (empty($last_scheduled_date)) {
-                    $alerts[] = "URGENT: No Days Scheduled ({$pending_fill}d Unfilled)";
+        if ($over_quota > 0) {
+            $schedule_alert = 'OVER-QUOTA (+' . $over_quota . 'd)';
+        } elseif ($status_label === 'Active' && $pending_fill > 0) {
+            if (empty($last_scheduled_date)) {
+                $schedule_alert = 'URGENT: No Days Scheduled (' . $pending_fill . 'd unfilled)';
+            } else {
+                $days_until_end = (int) round((strtotime($last_scheduled_date) - strtotime($today_date)) / 86400);
+                if ($days_until_end < 0) {
+                    $schedule_alert = 'URGENT: Schedule Ended (' . $pending_fill . 'd unfilled)';
+                } elseif ($days_until_end === 0) {
+                    $schedule_alert = 'URGENT: Ends Today (' . $pending_fill . 'd unfilled)';
+                } elseif ($days_until_end === 1) {
+                    $schedule_alert = 'URGENT: Ends Tomorrow (' . $pending_fill . 'd unfilled)';
+                } elseif ($days_until_end <= 3) {
+                    $schedule_alert = 'WARNING: Ends in ' . $days_until_end . ' Days (' . $pending_fill . 'd unfilled)';
                 } else {
-                    $days_until_end = (int) round((strtotime($last_scheduled_date) - $today_ts) / 86400);
-                    if ($days_until_end < 0) {
-                        $alerts[] = "URGENT: Schedule Ended ({$pending_fill}d Unfilled)";
-                    } elseif ($days_until_end === 0) {
-                        $alerts[] = "URGENT: Schedule Ends Today ({$pending_fill}d Unfilled)";
-                    } elseif ($days_until_end === 1) {
-                        $alerts[] = "URGENT: Schedule Ends Tomorrow ({$pending_fill}d Unfilled)";
-                    } elseif ($days_until_end <= 3) {
-                        $alerts[] = "WARNING: Ends in {$days_until_end} Days ({$pending_fill}d Unfilled)";
-                    }
+                    $schedule_alert = $pending_fill . 'd Pending Fill';
                 }
-            }
-            if ($unpicked_meals_count > 0) {
-                $alerts[] = "{$unpicked_meals_count} Date(s) Missing Meals";
-            }
-            if (!empty($alerts)) {
-                $schedule_alert = implode(' | ', $alerts);
             }
         }
 
@@ -342,14 +327,14 @@ function cmp_foh_export_csv() {
             $final_price,
             $status_label,
             $bag_status_text,
-            $total_days_int,
             $filled_days,
+            $total_days_int,
             $pending_fill,
             $over_quota,
-            $last_scheduled_date ?: 'None',
-            $schedule_alert,
             $usage_days,
             $balance,
+            !empty($last_scheduled_date) ? $last_scheduled_date : 'None',
+            $schedule_alert,
             date('Y-m-d', strtotime($sub->start_date)),
             date('Y-m-d', strtotime($sub->expiry_date)),
             $remarks
@@ -451,7 +436,6 @@ function cmp_foh_bulk_cancel_days() {
     wp_send_json_success();
 }
 
-
 function cmp_render_foh_portal() {
     date_default_timezone_set('Asia/Dubai');
 
@@ -482,39 +466,34 @@ function cmp_render_foh_portal() {
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
     $today = date('Y-m-d H:i:s');
     $today_date = date('Y-m-d');
-    $today_ts = strtotime($today_date);
     $followup_count = 0;
 
     foreach ($all_subs as $sub) {
-        $active_logs = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
-            $sub->id
-        ));
-
-        $filled_days = count($active_logs);
-        $usage_days = 0;
-        $last_scheduled_date = '';
-        $unpicked_meals_count = 0;
-
-        foreach ($active_logs as $log_row) {
-            if ($log_row->delivery_result === 'Successful') {
-                $usage_days++;
-            }
-            if (!empty($log_row->target_date) && ($last_scheduled_date === '' || $log_row->target_date > $last_scheduled_date)) {
-                $last_scheduled_date = $log_row->target_date;
-            }
-            if (!empty($log_row->target_date) && $log_row->target_date >= $today_date) {
-                $is_assigned = (
-                    !empty($log_row->breakfast_id) || !empty($log_row->lunch_id) || !empty($log_row->dinner_id) || !empty($log_row->juice_1_id) ||
-                    !empty($log_row->custom_breakfast) || !empty($log_row->custom_lunch) || !empty($log_row->custom_dinner) || !empty($log_row->custom_juice_1) ||
-                    !empty($log_row->is_chefs_choice)
-                );
-                if (!$is_assigned) {
-                    $unpicked_meals_count++;
-                }
-            }
-        }
+        $filled_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+        $usage_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $last_scheduled_date = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
         
+        // Check if any upcoming active log has a date reserved but no meals picked yet
+        $unpicked_meals_count = (int) $wpdb->get_var($wpdb->prepare("
+            SELECT COUNT(*) FROM $table_logs 
+            WHERE subscription_id = %d 
+            AND target_date >= %s 
+            AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))
+            AND is_chefs_choice = 0
+            AND (breakfast_id IS NULL OR breakfast_id = 0)
+            AND (lunch_id IS NULL OR lunch_id = 0)
+            AND (dinner_id IS NULL OR dinner_id = 0)
+            AND (snack_1_id IS NULL OR snack_1_id = 0)
+            AND (snack_2_id IS NULL OR snack_2_id = 0)
+            AND (juice_1_id IS NULL OR juice_1_id = 0)
+            AND (juice_2_id IS NULL OR juice_2_id = 0)
+            AND (juice_3_id IS NULL OR juice_3_id = 0)
+            AND (custom_breakfast IS NULL OR custom_breakfast = '')
+            AND (custom_lunch IS NULL OR custom_lunch = '')
+            AND (custom_dinner IS NULL OR custom_dinner = '')
+            AND (custom_juice_1 IS NULL OR custom_juice_1 = '')
+        ", $sub->id, $today_date));
+
         $total_days_int = intval($sub->total_days);
         $sub->filled = $filled_days;
         $sub->usage = $usage_days;
@@ -523,31 +502,46 @@ function cmp_render_foh_portal() {
         $sub->over_quota = max(0, $filled_days - $total_days_int);
         $sub->last_scheduled_date = $last_scheduled_date;
         $sub->unpicked_meals_count = $unpicked_meals_count;
-        $sub->days_until_end = !empty($last_scheduled_date) ? (int) round((strtotime($last_scheduled_date) - $today_ts) / 86400) : -999;
-        $sub->needs_followup = false;
 
-        // Calculate Sort Timestamp for "Schedule Ending Soonest (Urgent Follow-Up)"
-        if ($sub->over_quota > 0) {
-            $sub->sort_end_ts = 1;
-        } elseif ($sub->pending_fill > 0) {
-            $sub->sort_end_ts = !empty($last_scheduled_date) ? strtotime($last_scheduled_date) : 2;
+        if (!empty($last_scheduled_date)) {
+            $sub->days_until_end = (int) round((strtotime($last_scheduled_date) - strtotime($today_date)) / 86400);
         } else {
-            $sub->sort_end_ts = 9999999999 + (!empty($last_scheduled_date) ? strtotime($last_scheduled_date) : 0);
+            $sub->days_until_end = -999;
         }
-        
+
+        $sub->needs_followup = 0;
+        $sub->urgency_score = 9999;
+
         if ($sub->status === 'paused') {
             $tabs['paused'][] = $sub;
         } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
             $tabs['inactive'][] = $sub;
         } else {
-            if (
-                $sub->over_quota > 0 ||
-                ($sub->pending_fill > 0 && (empty($last_scheduled_date) || $sub->days_until_end <= 3)) ||
-                $sub->unpicked_meals_count > 0
-            ) {
-                $sub->needs_followup = true;
+            // Evaluate follow-up urgency for Active subscriptions
+            if ($sub->over_quota > 0) {
+                $sub->needs_followup = 1;
+                $sub->urgency_score = -1000 - $sub->over_quota;
+            } elseif ($sub->pending_fill > 0) {
+                if (empty($last_scheduled_date)) {
+                    $sub->needs_followup = 1;
+                    $sub->urgency_score = -500;
+                } elseif ($sub->days_until_end <= 3) {
+                    $sub->needs_followup = 1;
+                    $sub->urgency_score = $sub->days_until_end;
+                } else {
+                    $sub->urgency_score = 100 + $sub->days_until_end;
+                }
+            }
+
+            if ($sub->unpicked_meals_count > 0 && !$sub->needs_followup) {
+                $sub->needs_followup = 1;
+                $sub->urgency_score = 50;
+            }
+
+            if ($sub->needs_followup) {
                 $followup_count++;
             }
+
             $tabs['active'][] = $sub;
         }
     }
@@ -607,7 +601,7 @@ function cmp_render_foh_portal() {
 
         .foh-tile-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 15px;
             margin-bottom: 25px;
         }
@@ -644,6 +638,7 @@ function cmp_render_foh_portal() {
         .foh-tile.tile-followup.active {
             box-shadow: 0 0 0 2px #ea580c, 0 6px 16px rgba(234, 88, 12, 0.18);
             border-color: #ea580c;
+            background: #fffaf5;
         }
         .foh-tile.tile-paused.active {
             box-shadow: 0 0 0 2px #f59e0b, 0 6px 16px rgba(245, 158, 11, 0.15);
@@ -683,17 +678,37 @@ function cmp_render_foh_portal() {
         .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
         .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
 
+        /* Prevent WordPress wp-emoji from stretching to 100% container width */
+        .foh-tile img.emoji,
+        .foh-tile img.wp-smiley,
+        .sub-table img.emoji,
+        .sub-table img.wp-smiley {
+            width: 1em !important;
+            height: 1em !important;
+            max-width: 16px !important;
+            max-height: 16px !important;
+            display: inline-block !important;
+            vertical-align: -0.15em !important;
+            margin: 0 2px !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
         @keyframes fohPulseUrgent {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.72; }
         }
         .foh-badge-urgent {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
             margin-top: 6px;
-            padding: 4px 8px;
+            padding: 5px 8px;
             border-radius: 6px;
-            font-size: 0.78em;
+            font-size: 0.76em;
             font-weight: 800;
+            line-height: 1.25;
             text-align: center;
             background: #fee2e2;
             color: #991b1b;
@@ -701,24 +716,32 @@ function cmp_render_foh_portal() {
             animation: fohPulseUrgent 2s infinite;
         }
         .foh-badge-warning {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
             margin-top: 6px;
-            padding: 4px 8px;
+            padding: 5px 8px;
             border-radius: 6px;
-            font-size: 0.78em;
+            font-size: 0.76em;
             font-weight: 800;
+            line-height: 1.25;
             text-align: center;
             background: #ffedd5;
             color: #9a3412;
             border: 1px solid #fdba74;
         }
         .foh-badge-meals {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
             margin-top: 5px;
-            padding: 3px 8px;
+            padding: 4px 8px;
             border-radius: 6px;
-            font-size: 0.76em;
+            font-size: 0.75em;
             font-weight: 700;
+            line-height: 1.25;
             text-align: center;
             background: #fef9c3;
             color: #854d0e;
@@ -752,8 +775,11 @@ function cmp_render_foh_portal() {
             </div>
 
             <div class="foh-tile tile-followup" onclick="switchTab(event, 'active-tab', true)" title="Filter Active Customers whose schedule ends within 3 days, have 0 days scheduled, missing meal selections, or over-quota logs">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#c2410c; font-size:0.82em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">&#9888;&#65039; Schedule Ending / Unfilled</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                    <div style="color:#c2410c; font-size:0.82em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; display:inline-flex; align-items:center; gap:5px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px !important; height:14px !important; flex-shrink:0;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                        <span>Schedule Ending / Unfilled</span>
+                    </div>
                     <span class="foh-tile-indicator">Filtered</span>
                 </div>
                 <div style="display:flex; align-items:baseline; gap:8px; margin-top:4px;">
@@ -782,12 +808,12 @@ function cmp_render_foh_portal() {
         <!-- SEARCH AND SORT BAR -->
         <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #DCECC9; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 250px;">
-                <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
+                <input type="text" id="fohSearch" placeholder="Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
             </div>
-            <div style="min-width: 240px;">
+            <div style="min-width: 230px;">
                 <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
                     <option value="default">Sort By: Default (Newest)</option>
-                    <option value="schedule_ending_asc">Schedule Ending Soonest (Urgent Follow-Up)</option>
+                    <option value="ending_soon">Schedule Ending Soonest (Urgent Follow-Up)</option>
                     <option value="pending_fill_desc">Pending Fill Days (High to Low)</option>
                     <option value="balance_asc">Balance Days (Low to High)</option>
                     <option value="balance_desc">Balance Days (High to Low)</option>
@@ -896,25 +922,29 @@ function cmp_render_foh_portal() {
 
                             $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
 
-                            // Build Schedule Urgency Badges
+                            // Build Schedule Urgency Badges with Fixed-Size Inline SVGs
+                            $svg_alert_sm = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px !important; height:13px !important; flex-shrink:0; vertical-align:middle;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+                            $svg_clock_sm = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px !important; height:13px !important; flex-shrink:0; vertical-align:middle;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>';
+                            $svg_meal_sm  = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px !important; height:13px !important; flex-shrink:0; vertical-align:middle;"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"></path><path d="M7 2v20"></path><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"></path></svg>';
+
                             $schedule_badges_html = '';
                             if ($sub->over_quota > 0) {
-                                $schedule_badges_html .= '<span class="foh-badge-urgent" title="Customer has more scheduled rows in database than their current Total Days. Open Customer Portal to reset excess days.">&#9888;&#65039; Over-Quota (+' . intval($sub->over_quota) . 'd) &mdash; Clear in Portal</span>';
+                                $schedule_badges_html .= '<span class="foh-badge-urgent" title="Customer has more scheduled rows in database than their current Total Days. Open Customer Portal to reset excess days.">' . $svg_alert_sm . ' <span>Over-Quota (+' . intval($sub->over_quota) . 'd) &mdash; Clear in Portal</span></span>';
                             } elseif ($tab_key === 'active' && $sub->pending_fill > 0) {
                                 if (empty($sub->last_scheduled_date)) {
-                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; No Days Scheduled (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">' . $svg_alert_sm . ' <span>No Days Scheduled (' . intval($sub->pending_fill) . 'd Unfilled)</span></span>';
                                 } elseif ($sub->days_until_end < 0) {
-                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; Schedule Ended (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">' . $svg_alert_sm . ' <span>Schedule Ended (' . intval($sub->pending_fill) . 'd Unfilled)</span></span>';
                                 } elseif ($sub->days_until_end === 0) {
-                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; Ends Today (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">' . $svg_alert_sm . ' <span>Ends Today (' . intval($sub->pending_fill) . 'd Unfilled)</span></span>';
                                 } elseif ($sub->days_until_end === 1) {
-                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; Ends Tomorrow (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">' . $svg_alert_sm . ' <span>Ends Tomorrow (' . intval($sub->pending_fill) . 'd Unfilled)</span></span>';
                                 } elseif ($sub->days_until_end <= 3) {
-                                    $schedule_badges_html .= '<span class="foh-badge-warning">&#9203; Ends in ' . intval($sub->days_until_end) . ' Days (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                    $schedule_badges_html .= '<span class="foh-badge-warning">' . $svg_clock_sm . ' <span>Ends in ' . intval($sub->days_until_end) . ' Days (' . intval($sub->pending_fill) . 'd Unfilled)</span></span>';
                                 }
                             }
                             if ($tab_key === 'active' && $sub->unpicked_meals_count > 0) {
-                                $schedule_badges_html .= '<span class="foh-badge-meals">&#127869;&#65039; ' . intval($sub->unpicked_meals_count) . ' Date(s) Missing Meals</span>';
+                                $schedule_badges_html .= '<span class="foh-badge-meals">' . $svg_meal_sm . ' <span>' . intval($sub->unpicked_meals_count) . ' Date(s) Missing Meals</span></span>';
                             }
                         ?>
                         <tr class="foh-row" 
@@ -924,8 +954,10 @@ function cmp_render_foh_portal() {
                             data-filled="<?php echo esc_attr($sub->filled); ?>" 
                             data-used="<?php echo esc_attr($sub->usage); ?>" 
                             data-pending-fill="<?php echo esc_attr($sub->pending_fill); ?>"
-                            data-last-scheduled-ts="<?php echo esc_attr($sub->sort_end_ts); ?>"
-                            data-followup="<?php echo $sub->needs_followup ? '1' : '0'; ?>"
+                            data-over-quota="<?php echo esc_attr($sub->over_quota); ?>"
+                            data-days-until-end="<?php echo esc_attr($sub->days_until_end); ?>"
+                            data-needs-followup="<?php echo esc_attr($sub->needs_followup); ?>"
+                            data-urgency-score="<?php echo esc_attr($sub->urgency_score); ?>"
                             id="sub-row-<?php echo $sub->id; ?>">
                             
                             <td style="font-size: 1.1em; font-weight: bold; color: #231F20;">
@@ -981,6 +1013,7 @@ function cmp_render_foh_portal() {
                                 <?php endif; ?>
 
                             </td>
+
                             <td>
                                 <strong style="color: #231F20;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
                                 
@@ -1024,9 +1057,7 @@ function cmp_render_foh_portal() {
                                     <div class="metric-progress-bar">
                                         <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
                                     </div>
-
-                                    <!-- Pending Fill & Last Scheduled Date -->
-                                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8em; color: #475569; margin: 6px 0 4px 0; padding-top: 4px; border-top: 1px dashed #e2e8f0;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78em; color: #475569; margin: 5px 0 3px 0;">
                                         <span>
                                             <?php if ($sub->over_quota > 0): ?>
                                                 <strong style="color:#dc2626;">Over: +<?php echo intval($sub->over_quota); ?>d</strong>
@@ -1040,11 +1071,9 @@ function cmp_render_foh_portal() {
                                             Ends: <strong><?php echo !empty($sub->last_scheduled_date) ? date('M j', strtotime($sub->last_scheduled_date)) : '&mdash;'; ?></strong>
                                         </span>
                                     </div>
-
                                     <div style="color: #1B5E20; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
                                         Balance: <?php echo $sub->balance; ?> Days
                                     </div>
-
                                     <?php echo $schedule_badges_html; ?>
                                 </div>
                             </td>
@@ -1177,9 +1206,11 @@ function cmp_render_foh_portal() {
                             btn.disabled = false;
                         }, 2000);
                     } else {
-                        alert('Error updating expiry.');
-                        btn.innerText = originalText;
-                        btn.disabled = false;
+                        btn.innerText = 'Error';
+                        setTimeout(() => {
+                            btn.innerText = originalText;
+                            btn.disabled = false;
+                        }, 2000);
                     }
                 }).catch(() => {
                     btn.innerText = originalText;
@@ -1224,7 +1255,6 @@ function cmp_render_foh_portal() {
                         btn.style.opacity = '1';
                         btn.disabled = false;
                     } else {
-                        alert('Error updating status.');
                         btn.style.opacity = '1';
                         btn.disabled = false;
                     }
@@ -1289,11 +1319,10 @@ function cmp_render_foh_portal() {
                         });
 
                     } else {
-                        alert('Error updating status.');
                         pill.innerHTML = 'Error &#9662;';
                     }
                 }).catch(() => {
-                    alert('Connection error.');
+                    pill.innerHTML = 'Error &#9662;';
                 }).finally(() => {
                     this.disabled = false;
                 });
@@ -1366,7 +1395,6 @@ function cmp_render_foh_portal() {
                             document.querySelector('.edit-financials-btn[data-target="fin-edit-' + subId + '"]').innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
                         }, 1000);
                     } else {
-                        alert('Error saving financials.');
                         this.innerText = originalText;
                         this.disabled = false;
                     }
@@ -1432,7 +1460,6 @@ function cmp_render_foh_portal() {
                             document.querySelector('.toggle-remark-btn[data-target="remark-box-' + subId + '"]').innerText = 'Edit';
                         }, 1000);
                     } else {
-                        alert('Error saving note.');
                         this.innerText = originalText;
                         this.disabled = false;
                     }
@@ -1468,7 +1495,8 @@ function cmp_render_foh_portal() {
                 const userId = this.getAttribute('data-user-id');
                 const orderId = this.getAttribute('data-order-id');
                 
-                const fName = document.getElementById('edit-fname-' + subId).value.trim();
+                const fNameInput = document.getElementById('edit-fname-' + subId);
+                const fName = fNameInput.value.trim();
                 const lName = document.getElementById('edit-lname-' + subId).value.trim();
                 const recipient = document.getElementById('edit-recipient-' + subId).value.trim();
                 const planMode = document.getElementById('edit-plan-mode-' + subId).value;
@@ -1476,9 +1504,11 @@ function cmp_render_foh_portal() {
                 const originalText = this.innerText;
 
                 if (!fName) {
-                    alert("First Name is required.");
+                    fNameInput.style.borderColor = '#dc2626';
+                    fNameInput.focus();
                     return;
                 }
+                fNameInput.style.borderColor = '#cbd5e1';
 
                 this.innerText = 'Saving...';
                 this.disabled = true;
@@ -1526,7 +1556,6 @@ function cmp_render_foh_portal() {
                             this.disabled = false;
                         }, 1000);
                     } else {
-                        alert('Error: ' + response.data);
                         this.innerText = originalText;
                         this.disabled = false;
                     }
@@ -1550,6 +1579,8 @@ function cmp_render_foh_portal() {
             modal.style.display = 'flex';
             modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">Fetching upcoming schedule...</p>';
             confirmBtn.dataset.subId = subId;
+            confirmBtn.dataset.armed = '0';
+            confirmBtn.textContent = 'Hold Selected Days';
             confirmBtn.style.display = 'none';
 
             var data = {
@@ -1563,7 +1594,8 @@ function cmp_render_foh_portal() {
                     if(res.data.length === 0) {
                         modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">No upcoming scheduled days available to manage.</p>';
                     } else {
-                        let html = '<div style="margin-bottom:10px;"><label style="font-weight:bold; cursor:pointer;"><input type="checkbox" id="modal-select-all"> Select All Dates</label></div>';
+                        let html = '<div id="modal-feedback-msg" style="display:none; margin-bottom:10px; padding:8px 12px; border-radius:6px; font-size:0.9em; font-weight:bold;"></div>';
+                        html += '<div style="margin-bottom:10px;"><label style="font-weight:bold; cursor:pointer;"><input type="checkbox" id="modal-select-all"> Select All Dates</label></div>';
                         html += '<table style="width:100%; border-collapse:collapse; font-size:0.95em;">';
                         html += '<thead><tr style="background:#EEF7E3; color:#1B5E20; border-bottom:2px solid #DCECC9;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
                         
@@ -1582,8 +1614,12 @@ function cmp_render_foh_portal() {
 
                         jQuery('#modal-select-all').on('change', function() {
                             jQuery('.modal-day-checkbox').prop('checked', jQuery(this).is(':checked'));
+                            confirmBtn.dataset.armed = '0';
+                            confirmBtn.textContent = 'Hold Selected Days';
                         });
                         jQuery('.modal-day-checkbox').on('change', function() {
+                            confirmBtn.dataset.armed = '0';
+                            confirmBtn.textContent = 'Hold Selected Days';
                             if (!jQuery(this).is(':checked')) {
                                 jQuery('#modal-select-all').prop('checked', false);
                             } else if (jQuery('.modal-day-checkbox:not(:checked)').length === 0) {
@@ -1608,16 +1644,30 @@ function cmp_render_foh_portal() {
                 selectedIds.push(jQuery(this).val());
             });
 
+            const feedbackBox = document.getElementById('modal-feedback-msg');
             if(selectedIds.length === 0) {
-                alert('Please select at least one day to hold.');
+                if (feedbackBox) {
+                    feedbackBox.style.display = 'block';
+                    feedbackBox.style.background = '#fee2e2';
+                    feedbackBox.style.color = '#991b1b';
+                    feedbackBox.textContent = 'Please select at least one day to hold.';
+                }
                 return;
             }
 
-            if(!confirm('Are you sure you want to HOLD these ' + selectedIds.length + ' day(s)?\n\nThey will be voided and the quota will be shifted to the end of the customer\'s plan.')) {
+            if (this.dataset.armed !== '1') {
+                this.dataset.armed = '1';
+                this.textContent = 'Confirm Hold (' + selectedIds.length + 'd)';
+                if (feedbackBox) {
+                    feedbackBox.style.display = 'block';
+                    feedbackBox.style.background = '#ffedd5';
+                    feedbackBox.style.color = '#9a3412';
+                    feedbackBox.textContent = 'Click "Confirm Hold" again to void these ' + selectedIds.length + ' day(s) and shift quota to the end of the plan.';
+                }
                 return;
             }
 
-            const origText = jQuery(this).text();
+            const origText = 'Hold Selected Days';
             jQuery(this).text('Processing...').prop('disabled', true);
 
             var data = {
@@ -1631,24 +1681,40 @@ function cmp_render_foh_portal() {
                 if(res.success) {
                     location.reload();
                 } else {
-                    alert('Error: ' + res.data);
-                    jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false);
+                    if (feedbackBox) {
+                        feedbackBox.style.display = 'block';
+                        feedbackBox.style.background = '#fee2e2';
+                        feedbackBox.style.color = '#991b1b';
+                        feedbackBox.textContent = 'Error: ' + (res.data || 'Unable to hold days.');
+                    }
+                    jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false).attr('data-armed', '0');
                 }
             }).fail(function() {
-                alert('Connection error.');
-                jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false);
+                jQuery('#foh-confirm-cancel-btn').text(origText).prop('disabled', false).attr('data-armed', '0');
             });
         });
 
-        // SUPER ADMIN PERMANENT SUBSCRIPTION DELETE KILL-SWITCH
+        // SUPER ADMIN PERMANENT SUBSCRIPTION DELETE KILL-SWITCH (Two-step inline confirmation)
         document.querySelectorAll('.delete-sub-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
                 const subId = this.getAttribute('data-sub-id');
-                const orderId = this.getAttribute('data-order-id');
-                
-                const confirmDelete = confirm('⚠️ WARNING: Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will completely delete the subscription and all associated daily meal logs from the database.\n\nThis action CANNOT be undone.');
-                if (!confirmDelete) return;
+
+                if (this.dataset.armed !== '1') {
+                    this.dataset.armed = '1';
+                    this.style.background = '#dc2626';
+                    this.style.color = '#fff';
+                    this.title = 'Click again to permanently delete';
+                    setTimeout(() => {
+                        if (this.dataset.armed === '1') {
+                            this.dataset.armed = '0';
+                            this.style.background = '#fff';
+                            this.style.color = '#dc2626';
+                            this.title = 'Delete Plan';
+                        }
+                    }, 3500);
+                    return;
+                }
 
                 const originalHTML = btn.innerHTML;
                 btn.innerHTML = '...';
@@ -1663,7 +1729,6 @@ function cmp_render_foh_portal() {
                 .then(res => res.json())
                 .then(response => {
                     if (response.success) {
-                        alert('Plan ' + orderId + ' has been permanently deleted.');
                         const row = document.getElementById('sub-row-' + subId);
                         if (row) {
                             row.style.transition = 'opacity 0.3s';
@@ -1673,14 +1738,14 @@ function cmp_render_foh_portal() {
                             location.reload();
                         }
                     } else {
-                        alert('Error: ' + (response.data || 'Could not delete subscription.'));
                         btn.innerHTML = originalHTML;
                         btn.disabled = false;
+                        btn.dataset.armed = '0';
                     }
                 }).catch(() => {
-                    alert('Network or server error.');
                     btn.innerHTML = originalHTML;
                     btn.disabled = false;
+                    btn.dataset.armed = '0';
                 });
             });
         });
@@ -1702,9 +1767,9 @@ function cmp_render_foh_portal() {
     const rowsPerPage = 10;
     let currentPage = 1;
     let currentTab = 'active-tab';
-    let followupFilterOnly = false;
+    let followupFilterActive = false;
 
-    function switchTab(evt, tabId, filterFollowup) {
+    function switchTab(evt, tabId, followupOnly = false) {
         var contents = document.getElementsByClassName("foh-tab-content");
         for (var i = 0; i < contents.length; i++) contents[i].classList.remove("active");
         
@@ -1719,13 +1784,17 @@ function cmp_render_foh_portal() {
         }
         
         currentTab = tabId;
-        followupFilterOnly = Boolean(filterFollowup);
-        currentPage = 1;
+        followupFilterActive = Boolean(followupOnly);
 
-        if (followupFilterOnly) {
-            document.getElementById('fohSort').value = 'schedule_ending_asc';
+        // Automatically switch sort to "Schedule Ending Soonest" when clicking the Follow-Up KPI tile
+        const sortSelect = document.getElementById('fohSort');
+        if (followupFilterActive && sortSelect) {
+            sortSelect.value = 'ending_soon';
+        } else if (!followupFilterActive && sortSelect && sortSelect.value === 'ending_soon') {
+            sortSelect.value = 'default';
         }
 
+        currentPage = 1;
         renderTable();
     }
 
@@ -1737,15 +1806,23 @@ function cmp_render_foh_portal() {
         let allRows = Array.from(tbody.querySelectorAll('.foh-row'));
         
         let filtered = allRows.filter(row => {
-            const searchData = row.getAttribute('data-search');
-            const matchesSearch = query === '' || searchData.includes(query);
-            const matchesFollowup = !followupFilterOnly || row.getAttribute('data-followup') === '1';
-            return matchesSearch && matchesFollowup;
+            const searchData = row.getAttribute('data-search') || '';
+            const matchesQuery = (query === '' || searchData.includes(query));
+            const matchesFollowup = (!followupFilterActive || currentTab !== 'active-tab' || row.getAttribute('data-needs-followup') === '1');
+            return matchesQuery && matchesFollowup;
         });
 
         // Numeric Sorting Engine
         if (sortVal !== 'default') {
             filtered.sort((a, b) => {
+                if (sortVal === 'ending_soon') {
+                    let scoreA = parseInt(a.getAttribute('data-urgency-score'));
+                    let scoreB = parseInt(b.getAttribute('data-urgency-score'));
+                    if (isNaN(scoreA)) scoreA = 9999;
+                    if (isNaN(scoreB)) scoreB = 9999;
+                    return scoreA - scoreB;
+                }
+
                 let valA = 0, valB = 0;
                 
                 if (sortVal === 'balance_asc' || sortVal === 'balance_desc') {
@@ -1760,9 +1837,6 @@ function cmp_render_foh_portal() {
                 } else if (sortVal === 'pending_fill_desc') {
                     valA = parseInt(a.getAttribute('data-pending-fill')) || 0;
                     valB = parseInt(b.getAttribute('data-pending-fill')) || 0;
-                } else if (sortVal === 'schedule_ending_asc') {
-                    valA = parseInt(a.getAttribute('data-last-scheduled-ts')) || 0;
-                    valB = parseInt(b.getAttribute('data-last-scheduled-ts')) || 0;
                 }
 
                 if (sortVal.includes('_asc')) {
