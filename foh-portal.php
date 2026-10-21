@@ -180,9 +180,12 @@ function cmp_foh_export_csv() {
     }
 
     global $wpdb;
+    date_default_timezone_set('Asia/Dubai');
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $today = date('Y-m-d H:i:s');
+    $today_date = date('Y-m-d');
+    $today_ts = strtotime($today_date);
 
     $all_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC");
 
@@ -191,7 +194,13 @@ function cmp_foh_export_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Used Days', 'Balance Days', 'Start Date', 'Expiry Date', 'FOH Remarks'));
+    fputcsv($output, array(
+        'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 
+        'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 
+        'Status', 'Bag Status', 'Total Days', 'Filled Days', 'Pending to Fill', 'Over-Quota Days', 
+        'Last Scheduled Date', 'Schedule Alert', 'Used Days', 'Balance Days', 
+        'Start Date', 'Expiry Date', 'FOH Remarks'
+    ));
 
     foreach ($all_subs as $sub) {
         $order = wc_get_order($sub->wc_order_id);
@@ -206,15 +215,74 @@ function cmp_foh_export_csv() {
 
         $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
 
-        $filled_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result NOT IN ('Cancelled', 'Returned')", $sub->id));
-        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
-        $balance = max(0, $sub->total_days - $usage_days);
+        $active_logs = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $sub->id
+        ));
+
+        $filled_days = count($active_logs);
+        $usage_days = 0;
+        $last_scheduled_date = '';
+        $unpicked_meals_count = 0;
+
+        foreach ($active_logs as $log_row) {
+            if ($log_row->delivery_result === 'Successful') {
+                $usage_days++;
+            }
+            if (!empty($log_row->target_date) && ($last_scheduled_date === '' || $log_row->target_date > $last_scheduled_date)) {
+                $last_scheduled_date = $log_row->target_date;
+            }
+            if (!empty($log_row->target_date) && $log_row->target_date >= $today_date) {
+                $is_assigned = (
+                    !empty($log_row->breakfast_id) || !empty($log_row->lunch_id) || !empty($log_row->dinner_id) || !empty($log_row->juice_1_id) ||
+                    !empty($log_row->custom_breakfast) || !empty($log_row->custom_lunch) || !empty($log_row->custom_dinner) || !empty($log_row->custom_juice_1) ||
+                    !empty($log_row->is_chefs_choice)
+                );
+                if (!$is_assigned) {
+                    $unpicked_meals_count++;
+                }
+            }
+        }
+
+        $total_days_int = intval($sub->total_days);
+        $pending_fill = max(0, $total_days_int - $filled_days);
+        $over_quota = max(0, $filled_days - $total_days_int);
+        $balance = max(0, $total_days_int - $usage_days);
 
         $status_label = 'Active';
         if ($sub->status === 'paused') {
             $status_label = 'Paused';
-        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
+        } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
             $status_label = 'Inactive/Expired';
+        }
+
+        $schedule_alert = 'OK';
+        if ($status_label === 'Active') {
+            $alerts = array();
+            if ($over_quota > 0) {
+                $alerts[] = "OVER-QUOTA (+{$over_quota} Days)";
+            } elseif ($pending_fill > 0) {
+                if (empty($last_scheduled_date)) {
+                    $alerts[] = "URGENT: No Days Scheduled ({$pending_fill}d Unfilled)";
+                } else {
+                    $days_until_end = (int) round((strtotime($last_scheduled_date) - $today_ts) / 86400);
+                    if ($days_until_end < 0) {
+                        $alerts[] = "URGENT: Schedule Ended ({$pending_fill}d Unfilled)";
+                    } elseif ($days_until_end === 0) {
+                        $alerts[] = "URGENT: Schedule Ends Today ({$pending_fill}d Unfilled)";
+                    } elseif ($days_until_end === 1) {
+                        $alerts[] = "URGENT: Schedule Ends Tomorrow ({$pending_fill}d Unfilled)";
+                    } elseif ($days_until_end <= 3) {
+                        $alerts[] = "WARNING: Ends in {$days_until_end} Days ({$pending_fill}d Unfilled)";
+                    }
+                }
+            }
+            if ($unpicked_meals_count > 0) {
+                $alerts[] = "{$unpicked_meals_count} Date(s) Missing Meals";
+            }
+            if (!empty($alerts)) {
+                $schedule_alert = implode(' | ', $alerts);
+            }
         }
 
         $remarks = !empty($sub->foh_remarks) ? wp_strip_all_tags($sub->foh_remarks) : '';
@@ -274,7 +342,12 @@ function cmp_foh_export_csv() {
             $final_price,
             $status_label,
             $bag_status_text,
+            $total_days_int,
             $filled_days,
+            $pending_fill,
+            $over_quota,
+            $last_scheduled_date ?: 'None',
+            $schedule_alert,
             $usage_days,
             $balance,
             date('Y-m-d', strtotime($sub->start_date)),
@@ -408,20 +481,73 @@ function cmp_render_foh_portal() {
     
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
     $today = date('Y-m-d H:i:s');
+    $today_date = date('Y-m-d');
+    $today_ts = strtotime($today_date);
+    $followup_count = 0;
 
     foreach ($all_subs as $sub) {
-        $filled_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result NOT IN ('Cancelled', 'Returned')", $sub->id));
-        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $active_logs = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $sub->id
+        ));
+
+        $filled_days = count($active_logs);
+        $usage_days = 0;
+        $last_scheduled_date = '';
+        $unpicked_meals_count = 0;
+
+        foreach ($active_logs as $log_row) {
+            if ($log_row->delivery_result === 'Successful') {
+                $usage_days++;
+            }
+            if (!empty($log_row->target_date) && ($last_scheduled_date === '' || $log_row->target_date > $last_scheduled_date)) {
+                $last_scheduled_date = $log_row->target_date;
+            }
+            if (!empty($log_row->target_date) && $log_row->target_date >= $today_date) {
+                $is_assigned = (
+                    !empty($log_row->breakfast_id) || !empty($log_row->lunch_id) || !empty($log_row->dinner_id) || !empty($log_row->juice_1_id) ||
+                    !empty($log_row->custom_breakfast) || !empty($log_row->custom_lunch) || !empty($log_row->custom_dinner) || !empty($log_row->custom_juice_1) ||
+                    !empty($log_row->is_chefs_choice)
+                );
+                if (!$is_assigned) {
+                    $unpicked_meals_count++;
+                }
+            }
+        }
         
+        $total_days_int = intval($sub->total_days);
         $sub->filled = $filled_days;
         $sub->usage = $usage_days;
-        $sub->balance = max(0, $sub->total_days - $usage_days);
+        $sub->balance = max(0, $total_days_int - $usage_days);
+        $sub->pending_fill = max(0, $total_days_int - $filled_days);
+        $sub->over_quota = max(0, $filled_days - $total_days_int);
+        $sub->last_scheduled_date = $last_scheduled_date;
+        $sub->unpicked_meals_count = $unpicked_meals_count;
+        $sub->days_until_end = !empty($last_scheduled_date) ? (int) round((strtotime($last_scheduled_date) - $today_ts) / 86400) : -999;
+        $sub->needs_followup = false;
+
+        // Calculate Sort Timestamp for "Schedule Ending Soonest (Urgent Follow-Up)"
+        if ($sub->over_quota > 0) {
+            $sub->sort_end_ts = 1;
+        } elseif ($sub->pending_fill > 0) {
+            $sub->sort_end_ts = !empty($last_scheduled_date) ? strtotime($last_scheduled_date) : 2;
+        } else {
+            $sub->sort_end_ts = 9999999999 + (!empty($last_scheduled_date) ? strtotime($last_scheduled_date) : 0);
+        }
         
         if ($sub->status === 'paused') {
             $tabs['paused'][] = $sub;
-        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
+        } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
             $tabs['inactive'][] = $sub;
         } else {
+            if (
+                $sub->over_quota > 0 ||
+                ($sub->pending_fill > 0 && (empty($last_scheduled_date) || $sub->days_until_end <= 3)) ||
+                $sub->unpicked_meals_count > 0
+            ) {
+                $sub->needs_followup = true;
+                $followup_count++;
+            }
             $tabs['active'][] = $sub;
         }
     }
@@ -481,7 +607,7 @@ function cmp_render_foh_portal() {
 
         .foh-tile-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
             gap: 15px;
             margin-bottom: 25px;
         }
@@ -502,6 +628,7 @@ function cmp_render_foh_portal() {
             box-shadow: 0 8px 18px rgba(27, 94, 32, 0.10);
         }
         .foh-tile.tile-active   { border-left: 5px solid #379237; }
+        .foh-tile.tile-followup { border-left: 5px solid #ea580c; }
         .foh-tile.tile-paused   { border-left: 5px solid #f59e0b; }
         .foh-tile.tile-inactive { border-left: 5px solid #dc2626; }
         
@@ -513,6 +640,10 @@ function cmp_render_foh_portal() {
         .foh-tile.tile-active.active {
             box-shadow: 0 0 0 2px #379237, 0 6px 16px rgba(55, 146, 55, 0.18);
             border-color: #379237;
+        }
+        .foh-tile.tile-followup.active {
+            box-shadow: 0 0 0 2px #ea580c, 0 6px 16px rgba(234, 88, 12, 0.18);
+            border-color: #ea580c;
         }
         .foh-tile.tile-paused.active {
             box-shadow: 0 0 0 2px #f59e0b, 0 6px 16px rgba(245, 158, 11, 0.15);
@@ -534,6 +665,7 @@ function cmp_render_foh_portal() {
         }
         .foh-tile.active .foh-tile-indicator { display: inline-block; }
         .foh-tile.tile-active.active .foh-tile-indicator   { background: #EEF7E3; color: #1B5E20; }
+        .foh-tile.tile-followup.active .foh-tile-indicator { background: #ffedd5; color: #9a3412; }
         .foh-tile.tile-paused.active .foh-tile-indicator   { background: #fef3c7; color: #92400e; }
         .foh-tile.tile-inactive.active .foh-tile-indicator { background: #fee2e2; color: #991b1b; }
 
@@ -550,6 +682,48 @@ function cmp_render_foh_portal() {
         .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
         .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
         .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
+
+        @keyframes fohPulseUrgent {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.72; }
+        }
+        .foh-badge-urgent {
+            display: block;
+            margin-top: 6px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.78em;
+            font-weight: 800;
+            text-align: center;
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+            animation: fohPulseUrgent 2s infinite;
+        }
+        .foh-badge-warning {
+            display: block;
+            margin-top: 6px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.78em;
+            font-weight: 800;
+            text-align: center;
+            background: #ffedd5;
+            color: #9a3412;
+            border: 1px solid #fdba74;
+        }
+        .foh-badge-meals {
+            display: block;
+            margin-top: 5px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.76em;
+            font-weight: 700;
+            text-align: center;
+            background: #fef9c3;
+            color: #854d0e;
+            border: 1px solid #fde047;
+        }
     </style>
 
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
@@ -569,7 +743,7 @@ function cmp_render_foh_portal() {
 
         <!-- INTERACTIVE KPI FILTER TILES -->
         <div class="foh-tile-grid">
-            <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab')">
+            <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab', false)">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="color:#1B5E20; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
@@ -577,7 +751,18 @@ function cmp_render_foh_portal() {
                 <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
             </div>
 
-            <div class="foh-tile tile-paused" onclick="switchTab(event, 'paused-tab')">
+            <div class="foh-tile tile-followup" onclick="switchTab(event, 'active-tab', true)" title="Filter Active Customers whose schedule ends within 3 days, have 0 days scheduled, missing meal selections, or over-quota logs">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="color:#c2410c; font-size:0.82em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">&#9888;&#65039; Schedule Ending / Unfilled</div>
+                    <span class="foh-tile-indicator">Filtered</span>
+                </div>
+                <div style="display:flex; align-items:baseline; gap:8px; margin-top:4px;">
+                    <div style="font-size:2.2em; font-weight:900; color:#ea580c; line-height:1;"><?php echo $followup_count; ?></div>
+                    <span style="font-size:0.78em; color:#9a3412; font-weight:700;">Needs Follow-Up</span>
+                </div>
+            </div>
+
+            <div class="foh-tile tile-paused" onclick="switchTab(event, 'paused-tab', false)">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
@@ -585,7 +770,7 @@ function cmp_render_foh_portal() {
                 <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
             </div>
 
-            <div class="foh-tile tile-inactive" onclick="switchTab(event, 'inactive-tab')">
+            <div class="foh-tile tile-inactive" onclick="switchTab(event, 'inactive-tab', false)">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
                     <span class="foh-tile-indicator">Viewing</span>
@@ -599,9 +784,11 @@ function cmp_render_foh_portal() {
             <div style="flex: 1; min-width: 250px;">
                 <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
             </div>
-            <div style="min-width: 200px;">
+            <div style="min-width: 240px;">
                 <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
                     <option value="default">Sort By: Default (Newest)</option>
+                    <option value="schedule_ending_asc">Schedule Ending Soonest (Urgent Follow-Up)</option>
+                    <option value="pending_fill_desc">Pending Fill Days (High to Low)</option>
                     <option value="balance_asc">Balance Days (Low to High)</option>
                     <option value="balance_desc">Balance Days (High to Low)</option>
                     <option value="filled_desc">Filled Days (High to Low)</option>
@@ -617,9 +804,9 @@ function cmp_render_foh_portal() {
                     <thead>
                         <tr>
                             <th style="width: 8%;">Order ID</th>
-                            <th style="width: 23%;">Customer Info</th>
-                            <th style="width: 23%;">Plan Details</th>
-                            <th style="width: 17%; text-align: center;">Tracking Metrics</th>
+                            <th style="width: 22%;">Customer Info</th>
+                            <th style="width: 22%;">Plan Details</th>
+                            <th style="width: 19%; text-align: center;">Tracking Metrics</th>
                             <th style="width: 13%;">Expiry</th>
                             <th style="width: 16%; text-align: center;">Actions</th>
                         </tr>
@@ -691,7 +878,7 @@ function cmp_render_foh_portal() {
                             $short_remark = mb_strimwidth($remark_text, 0, 32, '...');
                             $preview_html = empty($remark_text) ? '<span style="color:#94a3b8; font-style:italic; font-weight:normal;">No remarks</span>' : esc_html($short_remark);
                             
-                            $usage_percent = ($sub->total_days > 0) ? round(($sub->usage / $sub->total_days) * 100) : 0;
+                            $usage_percent = ($sub->total_days > 0) ? min(100, round(($sub->usage / $sub->total_days) * 100)) : 0;
                             
                             $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
                             if ($deposit_held === '') { $deposit_held = 'yes'; } 
@@ -708,8 +895,38 @@ function cmp_render_foh_portal() {
                             if ($allow_custom) $current_mode = 'custom';
 
                             $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
+
+                            // Build Schedule Urgency Badges
+                            $schedule_badges_html = '';
+                            if ($sub->over_quota > 0) {
+                                $schedule_badges_html .= '<span class="foh-badge-urgent" title="Customer has more scheduled rows in database than their current Total Days. Open Customer Portal to reset excess days.">&#9888;&#65039; Over-Quota (+' . intval($sub->over_quota) . 'd) &mdash; Clear in Portal</span>';
+                            } elseif ($tab_key === 'active' && $sub->pending_fill > 0) {
+                                if (empty($sub->last_scheduled_date)) {
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; No Days Scheduled (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                } elseif ($sub->days_until_end < 0) {
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; Schedule Ended (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                } elseif ($sub->days_until_end === 0) {
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; Ends Today (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                } elseif ($sub->days_until_end === 1) {
+                                    $schedule_badges_html .= '<span class="foh-badge-urgent">&#9888;&#65039; Ends Tomorrow (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                } elseif ($sub->days_until_end <= 3) {
+                                    $schedule_badges_html .= '<span class="foh-badge-warning">&#9203; Ends in ' . intval($sub->days_until_end) . ' Days (' . intval($sub->pending_fill) . 'd Unfilled)</span>';
+                                }
+                            }
+                            if ($tab_key === 'active' && $sub->unpicked_meals_count > 0) {
+                                $schedule_badges_html .= '<span class="foh-badge-meals">&#127869;&#65039; ' . intval($sub->unpicked_meals_count) . ' Date(s) Missing Meals</span>';
+                            }
                         ?>
-                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" data-balance="<?php echo esc_attr($sub->balance); ?>" data-filled="<?php echo esc_attr($sub->filled); ?>" data-used="<?php echo esc_attr($sub->usage); ?>" id="sub-row-<?php echo $sub->id; ?>">
+                        <tr class="foh-row" 
+                            data-search="<?php echo $search_data; ?>" 
+                            data-plan="<?php echo $plan_data; ?>" 
+                            data-balance="<?php echo esc_attr($sub->balance); ?>" 
+                            data-filled="<?php echo esc_attr($sub->filled); ?>" 
+                            data-used="<?php echo esc_attr($sub->usage); ?>" 
+                            data-pending-fill="<?php echo esc_attr($sub->pending_fill); ?>"
+                            data-last-scheduled-ts="<?php echo esc_attr($sub->sort_end_ts); ?>"
+                            data-followup="<?php echo $sub->needs_followup ? '1' : '0'; ?>"
+                            id="sub-row-<?php echo $sub->id; ?>">
                             
                             <td style="font-size: 1.1em; font-weight: bold; color: #231F20;">
                                 <?php echo $display_order_id; ?>
@@ -799,17 +1016,36 @@ function cmp_render_foh_portal() {
                                 </div>
                             </td>
                             <td style="text-align: center;">
-                                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; text-align: left; width: 100%; box-sizing: border-box;">
+                                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid <?php echo $sub->over_quota > 0 ? '#fca5a5' : '#e2e8f0'; ?>; text-align: left; width: 100%; box-sizing: border-box;">
                                     <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
-                                        <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
+                                        <span style="color: <?php echo $sub->over_quota > 0 ? '#dc2626' : '#64748b'; ?>;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
                                         <span style="color: #379237;">Used: <strong><?php echo $sub->usage; ?></strong></span>
                                     </div>
                                     <div class="metric-progress-bar">
                                         <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
                                     </div>
+
+                                    <!-- Pending Fill & Last Scheduled Date -->
+                                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8em; color: #475569; margin: 6px 0 4px 0; padding-top: 4px; border-top: 1px dashed #e2e8f0;">
+                                        <span>
+                                            <?php if ($sub->over_quota > 0): ?>
+                                                <strong style="color:#dc2626;">Over: +<?php echo intval($sub->over_quota); ?>d</strong>
+                                            <?php elseif ($sub->pending_fill > 0): ?>
+                                                Pending Fill: <strong style="color:#d97706;"><?php echo intval($sub->pending_fill); ?>d</strong>
+                                            <?php else: ?>
+                                                <strong style="color:#15803d;">All Filled &#10003;</strong>
+                                            <?php endif; ?>
+                                        </span>
+                                        <span title="Last Scheduled Delivery Date">
+                                            Ends: <strong><?php echo !empty($sub->last_scheduled_date) ? date('M j', strtotime($sub->last_scheduled_date)) : '&mdash;'; ?></strong>
+                                        </span>
+                                    </div>
+
                                     <div style="color: #1B5E20; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
                                         Balance: <?php echo $sub->balance; ?> Days
                                     </div>
+
+                                    <?php echo $schedule_badges_html; ?>
                                 </div>
                             </td>
                             <td>
@@ -1466,8 +1702,9 @@ function cmp_render_foh_portal() {
     const rowsPerPage = 10;
     let currentPage = 1;
     let currentTab = 'active-tab';
+    let followupFilterOnly = false;
 
-    function switchTab(evt, tabId) {
+    function switchTab(evt, tabId, filterFollowup) {
         var contents = document.getElementsByClassName("foh-tab-content");
         for (var i = 0; i < contents.length; i++) contents[i].classList.remove("active");
         
@@ -1482,7 +1719,13 @@ function cmp_render_foh_portal() {
         }
         
         currentTab = tabId;
+        followupFilterOnly = Boolean(filterFollowup);
         currentPage = 1;
+
+        if (followupFilterOnly) {
+            document.getElementById('fohSort').value = 'schedule_ending_asc';
+        }
+
         renderTable();
     }
 
@@ -1495,7 +1738,9 @@ function cmp_render_foh_portal() {
         
         let filtered = allRows.filter(row => {
             const searchData = row.getAttribute('data-search');
-            return query === '' || searchData.includes(query);
+            const matchesSearch = query === '' || searchData.includes(query);
+            const matchesFollowup = !followupFilterOnly || row.getAttribute('data-followup') === '1';
+            return matchesSearch && matchesFollowup;
         });
 
         // Numeric Sorting Engine
@@ -1512,6 +1757,12 @@ function cmp_render_foh_portal() {
                 } else if (sortVal === 'used_desc') {
                     valA = parseInt(a.getAttribute('data-used')) || 0;
                     valB = parseInt(b.getAttribute('data-used')) || 0;
+                } else if (sortVal === 'pending_fill_desc') {
+                    valA = parseInt(a.getAttribute('data-pending-fill')) || 0;
+                    valB = parseInt(b.getAttribute('data-pending-fill')) || 0;
+                } else if (sortVal === 'schedule_ending_asc') {
+                    valA = parseInt(a.getAttribute('data-last-scheduled-ts')) || 0;
+                    valB = parseInt(b.getAttribute('data-last-scheduled-ts')) || 0;
                 }
 
                 if (sortVal.includes('_asc')) {
