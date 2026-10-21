@@ -150,6 +150,38 @@ function cmp_ajax_save_daily_log() {
         wp_send_json_error('Unauthorized access to this subscription.');
     }
 
+    // --- DUPLICATE DATE & OVER-QUOTA PROTECTION ---
+    if ($log_id === 0) {
+        // If a non-void log already exists for this exact date (e.g. double Enter press), convert to update
+        $existing_date_log_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table_logs WHERE subscription_id = %d AND target_date = %s AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned')) LIMIT 1",
+            $sub_id, $target_date
+        ));
+        if ($existing_date_log_id) {
+            $log_id = intval($existing_date_log_id);
+        }
+    } else {
+        // Prevent changing an existing row's date to another active date already scheduled on this plan
+        $conflict_log_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM $table_logs WHERE subscription_id = %d AND target_date = %s AND id != %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned')) LIMIT 1",
+            $sub_id, $target_date, $log_id
+        ));
+        if ($conflict_log_id) {
+            wp_send_json_error('This delivery date (' . date('D, d M Y', strtotime($target_date)) . ') is already scheduled on another day in this plan.');
+        }
+    }
+
+    if ($log_id === 0) {
+        // Strictly prevent inserting new active logs beyond total_days
+        $active_filled_count = intval($wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $sub_id
+        )));
+        if ($active_filled_count >= intval($sub->total_days)) {
+            wp_send_json_error("Plan Quota Reached: All {$sub->total_days} active days for this subscription have already been scheduled.");
+        }
+    }
+
     // --- LOG-LEVEL SNAPSHOT LOGIC (Phase 7) ---
     if ($log_id > 0) {
         $existing_log = $wpdb->get_row($wpdb->prepare("SELECT plan_mode FROM $table_logs WHERE id = %d", $log_id));
@@ -431,7 +463,7 @@ function cmp_ajax_cp_admin_update_account_details() {
     ));
 }
 
-// 1.7 AJAX HANDLER: ADD/REMOVE PLAN DAYS (GOVERNED BY WP ADMIN SETTINGS)
+// 1.7 AJAX HANDLER: ADD/REMOVE PLAN DAYS & AUTO-TRIM EXCESS LOGS (GOVERNED BY WP ADMIN SETTINGS)
 add_action('wp_ajax_cmp_cp_admin_adjust_days', 'cmp_ajax_cp_admin_adjust_days');
 function cmp_ajax_cp_admin_adjust_days() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
@@ -439,37 +471,102 @@ function cmp_ajax_cp_admin_adjust_days() {
         wp_send_json_error('Permission Denied. Your role is not authorized to add or remove plan days.');
     }
 
-    $sub_id = intval($_POST['sub_id']);
+    $sub_id    = intval($_POST['sub_id']);
     $operation = sanitize_text_field($_POST['operation']);
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $sub = $wpdb->get_row($wpdb->prepare("SELECT total_days, expiry_date FROM $table_subs WHERE id = %d", $sub_id));
 
     if (!$sub) wp_send_json_error('Subscription not found.');
 
     $new_days = intval($sub->total_days);
     $current_expiry = new DateTime($sub->expiry_date);
+    $trimmed_logs = 0;
 
     if ($operation === 'add') {
         $new_days++;
         $current_expiry->modify('+1 day');
+        $wpdb->update($table_subs, array(
+            'total_days'  => $new_days,
+            'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
+        ), array('id' => $sub_id));
+
     } elseif ($operation === 'remove') {
         if ($new_days <= 1) {
             wp_send_json_error('Cannot reduce plan below 1 day.');
         }
+
+        // Count active (non-Cancelled, non-Returned) scheduled logs before reducing
+        $active_logs_count = intval($wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $sub_id
+        )));
+
         $new_days--;
         $current_expiry->modify('-1 day');
+
+        // If all days (or excess days) were already filled, automatically delete the latest future un-delivered log(s)
+        if ($active_logs_count > $new_days) {
+            $excess_to_remove = $active_logs_count - $new_days;
+            $logs_to_delete = $wpdb->get_col($wpdb->prepare(
+                "SELECT id FROM $table_logs 
+                 WHERE subscription_id = %d 
+                 AND (delivery_result IS NULL OR delivery_result = 'Pending') 
+                 AND dispatch_status = 0 
+                 ORDER BY target_date DESC, id DESC 
+                 LIMIT %d",
+                $sub_id, $excess_to_remove
+            ));
+
+            if (!empty($logs_to_delete)) {
+                foreach ($logs_to_delete as $del_id) {
+                    $wpdb->delete($table_logs, array('id' => intval($del_id)));
+                    $trimmed_logs++;
+                }
+            }
+        }
+
+        $wpdb->update($table_subs, array(
+            'total_days'  => $new_days,
+            'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
+        ), array('id' => $sub_id));
+
+    } elseif ($operation === 'trim_excess') {
+        // Standalone cleanup for legacy over-filled plans (e.g. 19/11 or 20/12) without altering total_days
+        $active_logs_count = intval($wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
+            $sub_id
+        )));
+
+        if ($active_logs_count > $new_days) {
+            $excess_to_remove = $active_logs_count - $new_days;
+            $logs_to_delete = $wpdb->get_col($wpdb->prepare(
+                "SELECT id FROM $table_logs 
+                 WHERE subscription_id = %d 
+                 AND (delivery_result IS NULL OR delivery_result = 'Pending') 
+                 AND dispatch_status = 0 
+                 ORDER BY target_date DESC, id DESC 
+                 LIMIT %d",
+                $sub_id, $excess_to_remove
+            ));
+
+            if (!empty($logs_to_delete)) {
+                foreach ($logs_to_delete as $del_id) {
+                    $wpdb->delete($table_logs, array('id' => intval($del_id)));
+                    $trimmed_logs++;
+                }
+            }
+        }
     } else {
         wp_send_json_error('Invalid operation.');
     }
 
-    $wpdb->update($table_subs, array(
-        'total_days' => $new_days,
-        'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
-    ), array('id' => $sub_id));
-
-    wp_send_json_success(array('new_days' => $new_days));
+    wp_send_json_success(array(
+        'new_days'     => $new_days,
+        'trimmed_logs' => $trimmed_logs
+    ));
 }
 
 // 1.8 AJAX HANDLER: CLEAR/RESET DAILY SELECTION
@@ -905,6 +1002,21 @@ function cmp_render_customer_portal() {
             background: #ffedd5 !important;
             border: 1.5px solid #fdba74 !important;
         }
+        .cmp-status-pill.pill-over-quota {
+            color: #991b1b !important;
+            background: #fee2e2 !important;
+            border: 1.5px solid #f87171 !important;
+        }
+        .cmp-table tr.cmp-day-row.status-over-quota:not(.is-unsaved) {
+            border-color: #f87171 !important;
+            border-left: 6px solid #dc2626 !important;
+            background: #fff5f5 !important;
+        }
+        .cmp-table tr.cmp-day-row.status-over-quota:not(.is-unsaved) td.cmp-cell-day {
+            background: #fee2e2 !important;
+            color: #991b1b !important;
+            border-color: #fca5a5 !important;
+        }
         .cmp-undo-row {
             display: none !important;
             align-items: center !important;
@@ -1026,7 +1138,7 @@ function cmp_render_customer_portal() {
             transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
         }
         .cmp-table tr.cmp-day-row.status-pending:not(.is-unsaved) { border-color: #fde68a !important; }
-        .cmp-table tr.cmp-day-row.status-saved:not(.is-unsaved) { border-color: #bbf7d0 !important; }
+        .cmp-table tr.cmp-day-row.status-saved:not(.is-unsaved):not(.status-over-quota) { border-color: #bbf7d0 !important; }
         .cmp-table tr.cmp-day-row.status-void { border-color: #fecdd3 !important; opacity: 0.82; }
 
         /* Active Keyboard Focus Highlight on Day Card */
@@ -1713,6 +1825,19 @@ function cmp_render_customer_portal() {
                 if ($allowed_quota <= 0) $allowed_quota = 1;
                 $snack_quota = ($allowed_quota >= 2) ? 2 : 1; 
             }
+
+            // Pre-fetch saved logs to evaluate active vs void vs over-filled counts
+            $saved_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC, id ASC", $sub->id));
+            $void_count = 0;
+            $active_filled_count = 0;
+            foreach ($saved_logs as $log_item) {
+                if (in_array($log_item->delivery_result, array('Cancelled', 'Returned'))) {
+                    $void_count++;
+                } else {
+                    $active_filled_count++;
+                }
+            }
+            $excess_filled_days = max(0, $active_filled_count - intval($sub->total_days));
         ?>
         <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
 
@@ -1830,9 +1955,20 @@ function cmp_render_customer_portal() {
             <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <div>
                     <strong style="color:#b45309; font-size:1.1em;">Plan Days Controls</strong><br>
-                    <span style="color:#92400e; font-size:0.9em;">Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong></span>
+                    <span style="color:#92400e; font-size:0.9em;">
+                        Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong> &bull;
+                        Scheduled: <strong><?php echo $active_filled_count; ?>/<?php echo $sub->total_days; ?></strong>
+                        <?php if ($excess_filled_days > 0): ?>
+                            <span style="background:#fee2e2; color:#991b1b; border:1px solid #f87171; padding:2px 8px; border-radius:999px; font-weight:800; font-size:0.85em; margin-left:6px;">
+                                +<?php echo $excess_filled_days; ?> Excess Filled Day(s)
+                            </span>
+                        <?php endif; ?>
+                    </span>
                 </div>
-                <div style="display:flex; gap:10px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <?php if ($excess_filled_days > 0): ?>
+                        <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="trim_excess" style="background:#d97706; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">Auto-Trim <?php echo $excess_filled_days; ?> Excess Day(s)</button>
+                    <?php endif; ?>
                     <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="add" style="background:#379237; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">+ Add Extra Day</button>
                     <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="remove" style="background:#dc2626; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">- Remove Last Day</button>
                 </div>
@@ -1887,19 +2023,19 @@ function cmp_render_customer_portal() {
                     </thead>
                     <tbody>
                         <?php 
-                        $saved_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC, id ASC", $sub->id));
-                        
-                        $void_count = 0;
-                        foreach ($saved_logs as $log) {
-                            if (in_array($log->delivery_result, array('Cancelled', 'Returned'))) $void_count++;
-                        }
-                        $display_days = intval($sub->total_days) + $void_count;
-                        $active_min_date = $global_min_date;
+                        $display_days         = intval($sub->total_days) + $void_count;
+                        $total_rows_to_render = max($display_days, count($saved_logs));
+                        $active_min_date      = $global_min_date;
+                        $active_day_counter   = 0;
 
-                        for ($i = 1; $i <= $display_days; $i++) {
+                        for ($i = 1; $i <= $total_rows_to_render; $i++) {
                             $log = isset($saved_logs[$i-1]) ? $saved_logs[$i-1] : null;
                             $log_id = $log ? $log->id : 0;
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
+                            if ($log && !$is_void) {
+                                $active_day_counter++;
+                            }
+                            $is_over_quota_row = ($log && !$is_void && $active_day_counter > intval($sub->total_days));
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
 
                             // --- PHASE 7 LOGIC: Evaluate Plan Mode at the Log Level ---
@@ -1936,6 +2072,7 @@ function cmp_render_customer_portal() {
 
                             $row_status_class = 'status-pending';
                             if ($is_void) { $row_status_class = 'status-void row-void'; } 
+                            elseif ($is_over_quota_row) { $row_status_class = 'status-saved status-over-quota'; }
                             elseif ($log_id > 0) { $row_status_class = 'status-saved'; }
                             
                             // Keep all Day Cards collapsed by default on Desktop/Tablet
@@ -1960,6 +2097,8 @@ function cmp_render_customer_portal() {
                                 $status_badge = '<span class="cmp-status-pill pill-successful">Successful</span>';
                             } elseif ($is_void && $log) {
                                 $status_badge = '<span class="cmp-status-pill pill-void">' . esc_html($log->delivery_result) . '</span>';
+                            } elseif ($is_over_quota_row) {
+                                $status_badge = '<span class="cmp-status-pill pill-over-quota" title="Exceeds plan quota — Reset to remove">Over Quota</span>';
                             } elseif ($is_paused) {
                                 $status_badge = '<span class="cmp-status-pill pill-paused">Paused</span>';
                             } elseif ($log_id > 0 && !$saved_chefs_choice && !$is_chef_assigned) {
@@ -2401,6 +2540,7 @@ function cmp_render_customer_portal() {
 
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var isUnsaved     = rowElement.hasClass('is-unsaved');
+            var isOverQuota   = rowElement.hasClass('status-over-quota');
             var saveBtn       = rowElement.find('.cmp-save-row');
             var logId         = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
             var hasValues     = false;
@@ -2430,12 +2570,15 @@ function cmp_render_customer_portal() {
 
             if (summaryTextEl.length) {
                 var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
+                if (isOverQuota && !isUnsaved) {
+                    unsavedPrefix = '<strong style="color:#dc2626;">[Exceeds Plan Quota &mdash; Click Reset or Auto-Trim]</strong> ';
+                }
                 if (isChefsChoice && !hasValues) {
                     summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
                 } else if (pickedNames.length > 0) {
                     summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
                 } else if (logId > 0 && !isUnsaved) {
-                    summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
+                    summaryTextEl.html(unsavedPrefix + '<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
                 } else {
                     summaryTextEl.html(unsavedPrefix + 'Pending selection — Click to expand and choose meals');
                 }
@@ -2584,14 +2727,19 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // PLAN DAYS CONTROLS: ADD / REMOVE DAYS LOGIC
+        // PLAN DAYS CONTROLS: ADD / REMOVE / AUTO-TRIM EXCESS DAYS LOGIC
         $('.admin-adjust-days-btn').on('click', function(e) {
             e.preventDefault();
             var btn = $(this);
             var subId = btn.data('sub-id');
             var op = btn.data('operation');
             
-            var confirmMsg = op === 'add' ? "Are you sure you want to ADD an extra day to this plan?" : "Are you sure you want to REMOVE a day from this plan?";
+            var confirmMsg = "Are you sure you want to ADD an extra day to this plan?";
+            if (op === 'remove') {
+                confirmMsg = "Are you sure you want to REMOVE a day from this plan? If all days are already filled, the latest future un-delivered log will be automatically deleted.";
+            } else if (op === 'trim_excess') {
+                confirmMsg = "Are you sure you want to automatically delete the excess future un-delivered logs so the filled days match the plan quota?";
+            }
             if(!confirm(confirmMsg)) return;
 
             var origText = btn.text();
@@ -3295,6 +3443,7 @@ function cmp_render_customer_portal() {
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if (response.success) {
                     markRowSaved(rowElement);
+                    isIntentionalReload = true;
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
@@ -3336,6 +3485,7 @@ function cmp_render_customer_portal() {
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if (response.success) {
                     markRowSaved(rowElement);
+                    isIntentionalReload = true;
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
