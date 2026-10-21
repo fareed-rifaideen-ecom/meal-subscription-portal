@@ -3,6 +3,117 @@
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 // ==========================================
+// 0. HELPER FUNCTIONS: ORDER ID, NAMES & TIMING
+// ==========================================
+
+if ( ! function_exists( 'cmp_format_accounts_order_id' ) ) {
+    function cmp_format_accounts_order_id( $wc_order_id, $sub_id = 0 ) {
+        $wc_order_id = intval( $wc_order_id );
+        $sub_id      = intval( $sub_id );
+
+        if ( $wc_order_id > 0 ) {
+            return '#' . $wc_order_id;
+        } elseif ( $wc_order_id < 0 ) {
+            return 'M-' . str_pad( abs( $wc_order_id ), 4, '0', STR_PAD_LEFT );
+        } elseif ( $sub_id > 0 ) {
+            return 'M-' . str_pad( $sub_id, 4, '0', STR_PAD_LEFT );
+        }
+        return 'Manual';
+    }
+}
+
+if ( ! function_exists( 'cmp_resolve_accounts_names' ) ) {
+    function cmp_resolve_accounts_names( $sub_or_row ) {
+        $wc_order_id  = isset( $sub_or_row->wc_order_id ) ? intval( $sub_or_row->wc_order_id ) : 0;
+        $user_id      = isset( $sub_or_row->user_id ) ? intval( $sub_or_row->user_id ) : 0;
+        $plan_name    = isset( $sub_or_row->plan_name ) ? (string) $sub_or_row->plan_name : '';
+        $display_name = isset( $sub_or_row->display_name ) ? trim( (string) $sub_or_row->display_name ) : '';
+
+        $order = ( $wc_order_id > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $wc_order_id ) : false;
+
+        // 1. Resolve Customer (Buyer) Name
+        $customer_name = '';
+        if ( $order ) {
+            $customer_name = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+        }
+        if ( empty( $customer_name ) && $user_id > 0 ) {
+            $customer_name = trim( get_user_meta( $user_id, 'billing_first_name', true ) . ' ' . get_user_meta( $user_id, 'billing_last_name', true ) );
+        }
+        if ( empty( $customer_name ) && $user_id > 0 ) {
+            $customer_name = trim( get_user_meta( $user_id, 'first_name', true ) . ' ' . get_user_meta( $user_id, 'last_name', true ) );
+        }
+        if ( empty( $customer_name ) ) {
+            $customer_name = $display_name ?: 'Customer';
+        }
+
+        // 2. Resolve Recipient Name
+        $recipient_name = '';
+        if ( ! empty( $sub_or_row->recipient_name ) ) {
+            $recipient_name = trim( (string) $sub_or_row->recipient_name );
+        }
+        if ( empty( $recipient_name ) && $order ) {
+            $recipient_name = trim( (string) ( $order->get_meta( '_cmp_recipient_name' ) ?: $order->get_meta( 'recipient_name' ) ) );
+            if ( empty( $recipient_name ) ) {
+                $recipient_name = trim( $order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name() );
+            }
+        }
+        // Check if plan_name has a " - [Recipient Name]" suffix (e.g., "2 Meal Plan (Manual) - Jean Morrison")
+        if ( empty( $recipient_name ) && ! empty( $plan_name ) ) {
+            if ( preg_match( '/\s-\s([^-]+)$/', $plan_name, $matches ) ) {
+                $candidate = trim( $matches[1] );
+                if ( ! empty( $candidate ) && ! preg_match( '/\d|meal|day|juice|cleanse|plan|snack|week|month/i', $candidate ) ) {
+                    $recipient_name = $candidate;
+                }
+            }
+        }
+        if ( empty( $recipient_name ) && $user_id > 0 ) {
+            $recipient_name = trim( (string) get_user_meta( $user_id, 'recipient_name', true ) );
+            if ( empty( $recipient_name ) ) {
+                $recipient_name = trim( get_user_meta( $user_id, 'shipping_first_name', true ) . ' ' . get_user_meta( $user_id, 'shipping_last_name', true ) );
+            }
+        }
+        if ( empty( $recipient_name ) ) {
+            $recipient_name = $customer_name;
+        }
+
+        // Clean fallback if Customer Name was imported as an email address while Recipient has a proper name
+        if ( strpos( $customer_name, '@' ) !== false && strpos( $recipient_name, '@' ) === false && ! empty( $recipient_name ) ) {
+            $customer_name = $recipient_name;
+        }
+
+        return array(
+            'customer_name'  => $customer_name,
+            'recipient_name' => $recipient_name,
+        );
+    }
+}
+
+if ( ! function_exists( 'cmp_resolve_accounts_timing' ) ) {
+    function cmp_resolve_accounts_timing( $sub_or_row ) {
+        $wc_order_id = isset( $sub_or_row->wc_order_id ) ? intval( $sub_or_row->wc_order_id ) : 0;
+        $user_id     = isset( $sub_or_row->user_id ) ? intval( $sub_or_row->user_id ) : 0;
+
+        $timing = ! empty( $sub_or_row->delivery_timing ) ? (string) $sub_or_row->delivery_timing : '';
+        if ( empty( $timing ) && $wc_order_id > 0 && function_exists( 'wc_get_order' ) ) {
+            $order = wc_get_order( $wc_order_id );
+            if ( $order ) {
+                $timing = (string) ( $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' ) );
+            }
+        }
+        if ( empty( $timing ) && $user_id > 0 ) {
+            $timing = (string) get_user_meta( $user_id, 'delivery_timing', true );
+        }
+
+        $is_day_before = ( stripos( $timing, 'Day Before' ) !== false );
+        return array(
+            'raw'           => $timing,
+            'is_day_before' => $is_day_before,
+            'label'         => $is_day_before ? 'Day Before' : 'Same Day',
+        );
+    }
+}
+
+// ==========================================
 // 1. AJAX EXPORTS FOR ACCOUNTS
 // ==========================================
 
@@ -30,12 +141,14 @@ function cmp_export_accounts_main() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
     
-    fputcsv($output, array('Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Name', 'Status', 'Total Days', 'Days Consumed', 'Balance', 'Start Date', 'Expiry Date'));
+    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Name', 'Delivery Timing', 'Status', 'Total Days', 'Days Consumed', 'Balance', 'Start Date', 'Expiry Date'));
 
     foreach($subs as $s) {
-        $order = wc_get_order($s->wc_order_id);
+        $order = ($s->wc_order_id > 0) ? wc_get_order($s->wc_order_id) : false;
         $phone = $order ? $order->get_billing_phone() : get_user_meta($s->user_id, 'billing_phone', true);
-        $name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $s->display_name;
+        
+        $names  = cmp_resolve_accounts_names($s);
+        $timing = cmp_resolve_accounts_timing($s);
         
         $used = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $s->id));
         $balance = $s->total_days - $used;
@@ -57,15 +170,22 @@ function cmp_export_accounts_main() {
             continue; 
         }
 
-        $display_order_id = 'Manual';
-        if ($s->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($s->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-        elseif ($s->wc_order_id > 0) { $display_order_id = '#' . $s->wc_order_id; }
+        $display_order_id = cmp_format_accounts_order_id($s->wc_order_id, $s->id);
 
         fputcsv($output, array(
             $display_order_id,
-            $name, $s->user_email, $phone, $s->plan_name, $derived_status,
-            $s->total_days, $used, $balance, 
-            date('Y-m-d', strtotime($s->start_date)), date('Y-m-d', strtotime($s->expiry_date))
+            $names['customer_name'],
+            $names['recipient_name'],
+            $s->user_email,
+            $phone,
+            $s->plan_name,
+            $timing['label'],
+            $derived_status,
+            $s->total_days,
+            $used,
+            $balance, 
+            date('Y-m-d', strtotime($s->start_date)),
+            date('Y-m-d', strtotime($s->expiry_date))
         ));
     }
     fclose($output); exit;
@@ -85,28 +205,33 @@ function cmp_export_accounts_sub() {
     $sub = $wpdb->get_row($wpdb->prepare("SELECT s.*, u.display_name, u.user_email FROM {$wpdb->prefix}cmp_subscriptions s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.id = %d", $sub_id));
     if (!$sub) wp_die('Not found');
 
-    $order = wc_get_order($sub->wc_order_id);
-    $name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $sub->display_name;
+    $names  = cmp_resolve_accounts_names($sub);
+    $timing = cmp_resolve_accounts_timing($sub);
     
     $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
+    foreach ($logs as $l) {
+        $l->wc_order_id     = $sub->wc_order_id;
+        $l->delivery_timing = isset($sub->delivery_timing) ? $sub->delivery_timing : '';
+    }
+    $logs = cmp_process_timing_data($logs);
+
     $foods = $wpdb->get_results("SELECT id, food_name FROM $table_foods");
     $fmap = array(); foreach($foods as $f) $fmap[$f->id] = $f->food_name;
 
-    $display_order_id = 'Manual';
-    if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-    elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; }
+    $display_order_id = cmp_format_accounts_order_id($sub->wc_order_id, $sub->id);
 
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="Customer_Record_' . str_replace(' ', '_', $name) . '.csv"');
+    header('Content-Disposition: attachment; filename="Customer_Record_' . str_replace(' ', '_', $names['customer_name']) . '.csv"');
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
     fputcsv($output, array('CUSTOMER RECORD'));
-    fputcsv($output, array('Name:', $name, 'Order:', $display_order_id));
-    fputcsv($output, array('Plan:', $sub->plan_name));
+    fputcsv($output, array('Customer Name:', $names['customer_name'], 'Recipient Name:', $names['recipient_name']));
+    fputcsv($output, array('Order:', $display_order_id, 'Plan:', $sub->plan_name, 'Delivery Timing:', $timing['label']));
     fputcsv($output, array(''));
-    fputcsv($output, array('Date', 'Meals Scheduled', 'Delivery Status', 'POS Reconciled'));
+    fputcsv($output, array('Day', 'Delivery Date', 'Eating Date', 'Meals Scheduled', 'Delivery Status', 'POS Reconciled'));
 
+    $day_counter = 1;
     foreach ($logs as $l) {
         $meals = [];
         if ($l->is_chefs_choice && !$l->breakfast_id && !$l->lunch_id && !$l->dinner_id && !$l->juice_1_id) {
@@ -124,7 +249,14 @@ function cmp_export_accounts_sub() {
         $meal_str = implode(" | ", $meals);
         $pos = $l->pos_updated ? 'Yes' : 'No';
 
-        fputcsv($output, array($l->target_date, $meal_str, $l->delivery_result, $pos));
+        fputcsv($output, array(
+            $day_counter++,
+            $l->computed_delivery_date,
+            $l->target_date,
+            $meal_str,
+            $l->delivery_result,
+            $pos
+        ));
     }
     fclose($output); exit;
 }
@@ -149,17 +281,12 @@ function cmp_acc_toggle_deposit() {
 if(!function_exists('cmp_process_timing_data')){
     function cmp_process_timing_data($log_array) {
         foreach($log_array as $p) {
-            $order = wc_get_order($p->wc_order_id);
-            $timing = '';
-            if ($order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
-            if (empty($timing)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
-            
-            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], $timing);
-            $is_day_before = (stripos($timing, 'Day Before') !== false);
+            $timing_info = cmp_resolve_accounts_timing($p);
+            $is_day_before = $timing_info['is_day_before'];
             
             $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
             $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
-            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
+            $p->timing_label = $timing_info['label'];
         }
         return $log_array;
     }
@@ -284,7 +411,7 @@ function cmp_render_accounts_dashboard() {
             .acc-header .acc-logout-btn { background: rgba(220, 236, 201, 0.2) !important; border: 1px solid #DCECC9 !important; padding: 8px 16px !important; font-size: 0.9em !important; }
         }
         .acc-section-title { font-size: 1.4em; color: #231F20; margin: 0 0 20px 0; border-bottom: 2px solid #DCECC9; padding-bottom: 10px; font-weight: 800; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px; }
-        .acc-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
+        .acc-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 25px; }
         .acc-kpi-card { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); padding: 25px; border-radius: 14px; border: 1px solid #DCECC9; border-left: 5px solid #379237; box-shadow: 0 6px 16px rgba(27, 94, 32, 0.06); cursor: pointer; transition: 0.2s; position: relative; text-decoration:none; display:block; }
         .acc-kpi-card:hover { transform: translateY(-3px); box-shadow: 0 10px 22px rgba(27, 94, 32, 0.12); }
         .acc-kpi-card.active-tab { box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.22); border-color:#379237; background: #f8fcf5; }
@@ -295,6 +422,16 @@ function cmp_render_accounts_dashboard() {
         .acc-filter { display: flex; gap: 10px; align-items: center; font-size: 0.85em; font-weight: normal; flex-wrap: wrap; }
         .acc-filter input[type="date"] { padding: 6px 10px; border: 1px solid #b7e1a1; border-radius: 6px; color: #231F20; background: #fff; }
         .acc-filter button { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: white; border: none; padding: 7px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        
+        /* Live Search Bar Styling */
+        .acc-search-bar-wrap { background: #fff; border: 1.5px solid #DCECC9; border-radius: 12px; padding: 14px 18px; margin-bottom: 25px; display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 12px rgba(27, 94, 32, 0.04); flex-wrap: wrap; }
+        .acc-search-input-box { position: relative; flex: 1; min-width: 240px; display: flex; align-items: center; }
+        .acc-search-input-box input { width: 100%; padding: 10px 38px 10px 38px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.95em; color: #231F20; background: #f8fafc; outline: none; transition: 0.2s; box-sizing: border-box; }
+        .acc-search-input-box input:focus { border-color: #379237; background: #fff; box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.14); }
+        .acc-search-icon { position: absolute; left: 12px; color: #64748b; pointer-events: none; font-size: 1em; }
+        .acc-search-clear { position: absolute; right: 10px; background: #e2e8f0; color: #475569; border: none; border-radius: 50%; width: 22px; height: 22px; line-height: 20px; text-align: center; font-size: 14px; font-weight: bold; cursor: pointer; display: none; padding: 0; }
+        .acc-search-clear:hover { background: #cbd5e1; color: #0f172a; }
+
         .acc-table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.06); font-size: 0.9em; border-radius:12px; overflow:hidden; }
         .acc-table th { background: #EEF7E3; color: #1B5E20; padding: 12px; text-align: left; border-bottom: 2px solid #DCECC9; }
         .acc-table td { padding: 12px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
@@ -329,7 +466,7 @@ function cmp_render_accounts_dashboard() {
             </form>
         </div>
 
-        <div class="acc-kpi-grid cmp-no-print">
+        <div class="acc-kpi-grid cmp-no-print" style="margin-bottom: 40px;">
             <a href="?view=kitchen_audit&kit_start=<?php echo esc_attr($kit_start); ?>&kit_end=<?php echo esc_attr($kit_end); ?>" class="acc-kpi-card <?php echo $pending_kitchen_count > 0 ? 'red' : 'green'; ?>">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase;">Kitchen Compliance</div>
                 <div class="acc-kpi-val"><?php echo number_format($pending_kitchen_count); ?></div>
@@ -358,6 +495,7 @@ function cmp_render_accounts_dashboard() {
                 <button type="submit">Apply</button>
             </form>
         </div>
+
         <div class="acc-kpi-grid cmp-no-print">
             <div class="acc-kpi-card green active-tab" onclick="switchAccTab('acc-active', this)">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase; pointer-events:none;">Active Plans</div>
@@ -374,6 +512,16 @@ function cmp_render_accounts_dashboard() {
                 <div class="acc-kpi-val"><?php echo count($completed_subs); ?></div>
                 <div style="font-size:0.85em; color:#64748b; margin-top:5px; pointer-events:none;">Fully consumed or expired</div>
             </div>
+        </div>
+
+        <!-- LIVE SEARCH BAR FOR SUBSCRIPTION METRICS -->
+        <div class="acc-search-bar-wrap cmp-no-print">
+            <div class="acc-search-input-box">
+                <span class="acc-search-icon">&#128269;</span>
+                <input type="text" id="accSubSearchInput" placeholder="Search by Order ID (e.g. M-0176, #2970), Customer Name, Recipient Name, Email, Phone, or Plan..." oninput="filterAccSubTables()">
+                <button type="button" id="accSubSearchClear" class="acc-search-clear" onclick="clearAccSubSearch()" title="Clear Search">&times;</button>
+            </div>
+            <div id="accSubSearchCount" style="font-size:0.85em; color:#1B5E20; font-weight:700;"></div>
         </div>
 
         <!-- HELPER FUNCTION FOR TABLES -->
@@ -395,21 +543,25 @@ function cmp_render_accounts_dashboard() {
                     <thead>
                         <tr>
                             <th style='width:10%;'>Order ID</th>
-                            <th style='width:25%;'>Customer Info</th>
-                            <th style='width:25%;'>Plan Details</th>
+                            <th style='width:27%;'>Customer &amp; Recipient Info</th>
+                            <th style='width:23%;'>Plan Details</th>
                             <th style='width:25%;'>Tracking Metrics</th>
                             <th style='width:15%; text-align:center;' class='cmp-no-print'>Action</th>
                         </tr>
                     </thead>
                     <tbody>";
             if(empty($subs_array)) {
-                echo "<tr><td colspan='5' style='text-align:center; padding:30px; color:#64748b;'>No plans found in this category.</td></tr>";
+                echo "<tr class='acc-empty-default'><td colspan='5' style='text-align:center; padding:30px; color:#64748b;'>No plans found in this category.</td></tr>";
             } else {
                 foreach($subs_array as $sub) {
-                    $order = wc_get_order($sub->wc_order_id);
+                    $order = ($sub->wc_order_id > 0) ? wc_get_order($sub->wc_order_id) : false;
                     $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
-                    $name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $sub->display_name;
                     
+                    $names          = cmp_resolve_accounts_names($sub);
+                    $customer_name  = $names['customer_name'];
+                    $recipient_name = $names['recipient_name'];
+                    $timing_info    = cmp_resolve_accounts_timing($sub);
+
                     $used = $sub->used;
                     $balance = $sub->balance;
                     
@@ -417,12 +569,7 @@ function cmp_render_accounts_dashboard() {
                     elseif ($balance <= 0 || $sub->expiry_date < current_time('mysql')) { $status_color = '#ef4444'; $status_label = 'COMPLETED'; }
                     else { $status_color = '#379237'; $status_label = 'ACTIVE'; }
 
-                    $display_order_id = '<span style="color:#ef4444;">Manual</span>';
-                    if ($sub->wc_order_id < 0) {
-                        $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
-                    } elseif ($sub->wc_order_id > 0) {
-                        $display_order_id = '#' . esc_html($sub->wc_order_id);
-                    }
+                    $display_order_id = esc_html( cmp_format_accounts_order_id($sub->wc_order_id, $sub->id) );
 
                     // Deposit Logic for Pill
                     global $wpdb;
@@ -435,16 +582,20 @@ function cmp_render_accounts_dashboard() {
                     if ($deposit_held === 'yes') { $b_color = '#379237'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
                     if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
 
-                    echo "<tr>
+                    $search_blob = strtolower( $display_order_id . ' ' . $customer_name . ' ' . $recipient_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $sub->plan_name . ' ' . $timing_info['label'] );
+
+                    echo "<tr class='acc-sub-row' data-search='" . esc_attr($search_blob) . "'>
                         <td><strong style='color:#231F20; font-size:1.1em;'>{$display_order_id}</strong></td>
-                        <td>
-                            <strong style='color:#379237;'>" . esc_html($name) . "</strong><br>
-                            <span style='color:#64748b; font-size:0.9em;'>" . esc_html($sub->user_email) . "</span><br>
-                            <span style='color:#64748b; font-size:0.9em;'>" . esc_html($phone ?: 'N/A') . "</span>
+                        <td style='line-height:1.45;'>
+                            <div><span style='color:#64748b; font-size:0.82em; font-weight:bold; text-transform:uppercase;'>Customer:</span> <strong style='color:#379237;'>" . esc_html($customer_name) . "</strong></div>
+                            <div><span style='color:#64748b; font-size:0.82em; font-weight:bold; text-transform:uppercase;'>Recipient:</span> <strong style='color:#1B5E20;'>" . esc_html($recipient_name) . "</strong></div>
+                            <span style='color:#64748b; font-size:0.88em;'>" . esc_html($sub->user_email) . "</span><br>
+                            <span style='color:#64748b; font-size:0.88em;'>" . esc_html($phone ?: 'N/A') . "</span>
                         </td>
-                        <td>
+                        <td style='line-height:1.5;'>
                             <strong>" . esc_html($sub->plan_name) . "</strong><br>
-                            <span style='color:#64748b; font-size:0.9em;'>Started: " . date('d M Y', strtotime($sub->start_date)) . "</span>
+                            <span style='color:#64748b; font-size:0.88em;'>Started: " . date('d M Y', strtotime($sub->start_date)) . "</span><br>
+                            <span style='display:inline-block; margin-top:3px; background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:1px 8px; border-radius:10px; font-size:0.8em; font-weight:700;'>Delivery: " . esc_html($timing_info['label']) . "</span>
                         </td>
                         <td>
                             <div style='display:flex; justify-content:space-between; margin-bottom:4px; font-size:0.95em;'>
@@ -475,6 +626,7 @@ function cmp_render_accounts_dashboard() {
                         </td>
                     </tr>";
                 }
+                echo "<tr class='acc-no-search-match' style='display:none;'><td colspan='5' style='text-align:center; padding:30px; color:#64748b;'>No matching customer plans found for your search.</td></tr>";
             }
             echo "</tbody></table></div></div>";
         }
@@ -495,6 +647,60 @@ function cmp_render_accounts_dashboard() {
         for (var i = 0; i < cards.length; i++) { cards[i].classList.remove('active-tab'); }
         document.getElementById(targetId).classList.add('active');
         cardElement.classList.add('active-tab');
+        filterAccSubTables();
+    }
+
+    function filterAccSubTables() {
+        var input = document.getElementById('accSubSearchInput');
+        var clearBtn = document.getElementById('accSubSearchClear');
+        var countLabel = document.getElementById('accSubSearchCount');
+        if (!input) return;
+
+        var query = input.value.toLowerCase().trim();
+        clearBtn.style.display = query.length > 0 ? 'block' : 'none';
+
+        var activeTab = document.querySelector('.acc-tab-content.active');
+        var activeVisibleCount = 0;
+        var activeTotalCount = 0;
+
+        document.querySelectorAll('.acc-tab-content').forEach(function(tab) {
+            var rows = tab.querySelectorAll('tr.acc-sub-row');
+            var visibleInTab = 0;
+            rows.forEach(function(row) {
+                var searchData = row.getAttribute('data-search') || '';
+                if (query === '' || searchData.indexOf(query) !== -1) {
+                    row.style.display = '';
+                    visibleInTab++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            var emptySearchRow = tab.querySelector('tr.acc-no-search-match');
+            if (emptySearchRow) {
+                emptySearchRow.style.display = (rows.length > 0 && visibleInTab === 0) ? '' : 'none';
+            }
+
+            if (tab === activeTab) {
+                activeVisibleCount = visibleInTab;
+                activeTotalCount = rows.length;
+            }
+        });
+
+        if (query !== '') {
+            countLabel.textContent = 'Showing ' + activeVisibleCount + ' of ' + activeTotalCount + ' in current tab';
+        } else {
+            countLabel.textContent = '';
+        }
+    }
+
+    function clearAccSubSearch() {
+        var input = document.getElementById('accSubSearchInput');
+        if (input) {
+            input.value = '';
+            filterAccSubTables();
+            input.focus();
+        }
     }
     </script>
     <?php
@@ -564,7 +770,7 @@ function cmp_render_kitchen_audit_view() {
                             <th style="padding:12px;">Meal Date (Eating)</th>
                             <th style="padding:12px; border-right:2px solid #fdba74;">Delivery Date</th>
                             <th style="padding:12px;">Order ID</th>
-                            <th style="padding:12px;">Customer</th>
+                            <th style="padding:12px;">Customer &amp; Recipient</th>
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Missing Step(s)</th>
                         </tr>
@@ -574,18 +780,20 @@ function cmp_render_kitchen_audit_view() {
                             if (!$k->dispatch_status) $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
                             if ($k->delivery_result === 'Pending') $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
                             
-                            $display_order_id = 'Manual';
-                            if ($k->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($k->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-                            elseif ($k->wc_order_id > 0) { $display_order_id = '#' . $k->wc_order_id; }
+                            $display_order_id = esc_html( cmp_format_accounts_order_id($k->wc_order_id, $k->subscription_id) );
+                            $names = cmp_resolve_accounts_names($k);
                         ?>
                         <tr style="border-bottom:1px solid #fed7aa;">
                             <td style="padding:12px;">
                                 <strong><?php echo date('d M Y', strtotime($k->target_date)); ?></strong><br>
-                                <span style="font-size:0.85em; color:#c2410c;">(<?php echo $k->timing_label; ?>)</span>
+                                <span style="font-size:0.85em; color:#c2410c;">(<?php echo esc_html($k->timing_label); ?>)</span>
                             </td>
                             <td style="padding:12px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date('d M Y', strtotime($k->computed_delivery_date)); ?></td>
-                            <td style="padding:12px;"><?php echo $display_order_id; ?></td>
-                            <td style="padding:12px;"><?php echo esc_html($k->display_name); ?></td>
+                            <td style="padding:12px;"><strong><?php echo $display_order_id; ?></strong></td>
+                            <td style="padding:12px; line-height:1.4;">
+                                <strong><?php echo esc_html($names['customer_name']); ?></strong><br>
+                                <span style="font-size:0.85em; color:#7c2d12;">Recipient: <?php echo esc_html($names['recipient_name']); ?></span>
+                            </td>
                             <td style="padding:12px;"><?php echo esc_html($k->plan_name); ?></td>
                             <td style="padding:12px;">
                                 <div style="display:flex; gap:5px; flex-wrap:wrap;">
@@ -671,23 +879,25 @@ function cmp_render_pos_audit_view() {
                             <th style="padding:12px;">Meal Date (Eating)</th>
                             <th style="padding:12px; border-right:2px solid #fcd34d;">Delivery Date</th>
                             <th style="padding:12px;">Order ID</th>
-                            <th style="padding:12px;">Customer</th>
+                            <th style="padding:12px;">Customer &amp; Recipient</th>
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Delivery Logged As</th>
                         </tr>
                         <?php foreach($pending_pos as $p): 
-                            $display_order_id = 'Manual';
-                            if ($p->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($p->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-                            elseif ($p->wc_order_id > 0) { $display_order_id = '#' . $p->wc_order_id; }
+                            $display_order_id = esc_html( cmp_format_accounts_order_id($p->wc_order_id, $p->subscription_id) );
+                            $names = cmp_resolve_accounts_names($p);
                         ?>
                         <tr style="border-bottom:1px solid #fde68a;">
                             <td style="padding:12px;">
                                 <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
-                                <span style="font-size:0.85em; color:#b45309;">(<?php echo $p->timing_label; ?>)</span>
+                                <span style="font-size:0.85em; color:#b45309;">(<?php echo esc_html($p->timing_label); ?>)</span>
                             </td>
                             <td style="padding:12px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                            <td style="padding:12px;"><?php echo $display_order_id; ?></td>
-                            <td style="padding:12px;"><?php echo esc_html($p->display_name); ?></td>
+                            <td style="padding:12px;"><strong><?php echo $display_order_id; ?></strong></td>
+                            <td style="padding:12px; line-height:1.4;">
+                                <strong><?php echo esc_html($names['customer_name']); ?></strong><br>
+                                <span style="font-size:0.85em; color:#92400e;">Recipient: <?php echo esc_html($names['recipient_name']); ?></span>
+                            </td>
                             <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
                             <td style="padding:12px;">
                                 <span style="background:#fecdd3; color:#9f1239; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
@@ -708,23 +918,25 @@ function cmp_render_pos_audit_view() {
                             <th style="padding:12px;">Meal Date (Eating)</th>
                             <th style="padding:12px; border-right:2px solid #86efac;">Delivery Date</th>
                             <th style="padding:12px;">Order ID</th>
-                            <th style="padding:12px;">Customer</th>
+                            <th style="padding:12px;">Customer &amp; Recipient</th>
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Delivery Logged As</th>
                         </tr>
                         <?php foreach($completed_pos as $p): 
-                            $display_order_id = 'Manual';
-                            if ($p->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($p->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-                            elseif ($p->wc_order_id > 0) { $display_order_id = '#' . $p->wc_order_id; }
+                            $display_order_id = esc_html( cmp_format_accounts_order_id($p->wc_order_id, $p->subscription_id) );
+                            $names = cmp_resolve_accounts_names($p);
                         ?>
                         <tr style="border-bottom:1px solid #bbf7d0;">
                             <td style="padding:12px;">
                                 <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
-                                <span style="font-size:0.85em; color:#166534;">(<?php echo $p->timing_label; ?>)</span>
+                                <span style="font-size:0.85em; color:#166534;">(<?php echo esc_html($p->timing_label); ?>)</span>
                             </td>
                             <td style="padding:12px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
-                            <td style="padding:12px;"><?php echo $display_order_id; ?></td>
-                            <td style="padding:12px;"><?php echo esc_html($p->display_name); ?></td>
+                            <td style="padding:12px;"><strong><?php echo $display_order_id; ?></strong></td>
+                            <td style="padding:12px; line-height:1.4;">
+                                <strong><?php echo esc_html($names['customer_name']); ?></strong><br>
+                                <span style="font-size:0.85em; color:#166534;">Recipient: <?php echo esc_html($names['recipient_name']); ?></span>
+                            </td>
                             <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
                             <td style="padding:12px;">
                                 <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
@@ -754,11 +966,21 @@ function cmp_render_accounts_sub_view($sub_id) {
     
     if (!$sub) { return "<div style='padding:40px; text-align:center;'>Subscription Not Found. <a href='?'>Go Back</a></div>"; }
 
-    $order = wc_get_order($sub->wc_order_id);
+    $order = ($sub->wc_order_id > 0) ? wc_get_order($sub->wc_order_id) : false;
     $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
-    $name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $sub->display_name;
+    
+    $names          = cmp_resolve_accounts_names($sub);
+    $customer_name  = $names['customer_name'];
+    $recipient_name = $names['recipient_name'];
+    $timing_info    = cmp_resolve_accounts_timing($sub);
 
     $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
+    foreach ($logs as $l) {
+        $l->wc_order_id     = $sub->wc_order_id;
+        $l->delivery_timing = isset($sub->delivery_timing) ? $sub->delivery_timing : '';
+    }
+    $logs = cmp_process_timing_data($logs);
+
     $foods = $wpdb->get_results("SELECT id, food_name FROM $table_foods");
     $fmap = array(); foreach($foods as $f) $fmap[$f->id] = $f->food_name;
 
@@ -773,9 +995,7 @@ function cmp_render_accounts_sub_view($sub_id) {
     $is_completed = ($used >= $sub->total_days || $sub->expiry_date < current_time('mysql'));
     $derived_status = $is_completed ? 'Completed' : $sub->status;
 
-    $display_order_id = 'Manual';
-    if ($sub->wc_order_id < 0) { $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); } 
-    elseif ($sub->wc_order_id > 0) { $display_order_id = '#' . $sub->wc_order_id; }
+    $display_order_id = cmp_format_accounts_order_id($sub->wc_order_id, $sub->id);
 
     $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
     if ($deposit_held === '') {
@@ -814,15 +1034,23 @@ function cmp_render_accounts_sub_view($sub_id) {
         </div>
 
         <div class="acc-ledger-header">
-            <div>
-                <h1 style="margin:0 0 10px 0; color:#231F20; font-size:1.8em;">Customer Record</h1>
-                <div style="font-size:1.1em; color:#334155;"><strong><?php echo esc_html($name); ?></strong></div>
-                <div style="color:#64748b; margin-top:5px;"><?php echo esc_html($sub->user_email); ?> | <?php echo esc_html($phone ?: 'No Phone'); ?></div>
+            <div style="line-height:1.6;">
+                <h1 style="margin:0 0 10px 0; color:#231F20; font-size:1.8em; line-height:1.2;">Customer Record</h1>
+                <div style="font-size:1.05em; color:#334155;">
+                    <span style="color:#64748b; font-weight:bold; font-size:0.85em; text-transform:uppercase;">Customer Name:</span>
+                    <strong style="color:#231F20;"><?php echo esc_html($customer_name); ?></strong>
+                </div>
+                <div style="font-size:1.05em; color:#334155; margin-top:2px;">
+                    <span style="color:#64748b; font-weight:bold; font-size:0.85em; text-transform:uppercase;">Recipient Name:</span>
+                    <strong style="color:#379237;"><?php echo esc_html($recipient_name); ?></strong>
+                </div>
+                <div style="color:#64748b; margin-top:6px;"><?php echo esc_html($sub->user_email); ?> | <?php echo esc_html($phone ?: 'No Phone'); ?></div>
             </div>
-            <div style="text-align:right;">
-                <div style="font-size:1.2em; font-weight:bold; color:#231F20; margin-bottom:10px;"><?php echo esc_html($sub->plan_name); ?></div>
-                <div style="color:#64748b;">Order: <strong><?php echo esc_html($display_order_id); ?></strong></div>
-                <div style="color:#64748b; margin-top:5px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status == 'active' ? '#379237' : ($derived_status == 'Completed' ? '#ef4444' : '#f59e0b'); ?>;"><?php echo esc_html($derived_status); ?></strong></div>
+            <div style="text-align:right; line-height:1.6;">
+                <div style="font-size:1.2em; font-weight:bold; color:#231F20; margin-bottom:6px;"><?php echo esc_html($sub->plan_name); ?></div>
+                <div style="color:#64748b;">Order: <strong style="color:#231F20;"><?php echo esc_html($display_order_id); ?></strong></div>
+                <div style="color:#64748b; margin-top:3px;">Delivery: <strong style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 10px; border-radius:10px; font-size:0.9em;"><?php echo esc_html($timing_info['label']); ?></strong></div>
+                <div style="color:#64748b; margin-top:4px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status == 'active' ? '#379237' : ($derived_status == 'Completed' ? '#ef4444' : '#f59e0b'); ?>;"><?php echo esc_html($derived_status); ?></strong></div>
                 
                 <div style="color:#64748b; margin-top:8px; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
                     <span>Bag Status:</span>
@@ -864,7 +1092,7 @@ function cmp_render_accounts_sub_view($sub_id) {
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;">
-            <h2 style="margin:0; font-size:1.3em; color:#231F20;">Daily Selections & Logistics</h2>
+            <h2 style="margin:0; font-size:1.3em; color:#231F20;">Daily Selections &amp; Logistics</h2>
             <div class="cmp-no-print" style="display:flex; gap:10px;">
                 <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_sub&sub_id='.$sub_id)); ?>" style="background:#379237; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;">Export CSV</a>
                 <button onclick="window.print()" style="background:#475569; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.9em;">Print PDF</button>
@@ -875,9 +1103,10 @@ function cmp_render_accounts_sub_view($sub_id) {
             <table class="acc-table">
                 <thead>
                     <tr>
-                        <th style="width:5%;">Day</th>
+                        <th style="width:6%;">Day</th>
+                        <th style="width:15%;">Delivery Date</th>
                         <th style="width:15%;">Eating Date</th>
-                        <th style="width:40%;">Meal Assignments</th>
+                        <th style="width:39%;">Meal Assignments</th>
                         <th style="width:15%; text-align:center;">Delivery Log</th>
                         <th style="width:10%; text-align:center;">POS Check</th>
                     </tr>
@@ -886,7 +1115,7 @@ function cmp_render_accounts_sub_view($sub_id) {
                     <?php 
                     $day_counter = 1;
                     if(empty($logs)): ?>
-                        <tr><td colspan="5" style="text-align:center; padding:30px; color:#64748b;">No schedule created yet.</td></tr>
+                        <tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;">No schedule created yet.</td></tr>
                     <?php else: foreach($logs as $l): 
                         $meals = [];
                         if ($l->is_chefs_choice && !$l->breakfast_id && !$l->lunch_id && !$l->dinner_id && !$l->juice_1_id) {
@@ -909,6 +1138,7 @@ function cmp_render_accounts_sub_view($sub_id) {
                     ?>
                     <tr>
                         <td><strong><?php echo $day_counter++; ?></strong></td>
+                        <td><strong style="color:#1B5E20;"><?php echo date('d M Y', strtotime($l->computed_delivery_date)); ?></strong></td>
                         <td><?php echo date('d M Y', strtotime($l->target_date)); ?></td>
                         <td style="line-height:1.5;">
                             <?php echo empty($meals) ? '<em style="color:#94a3b8;">No meals selected</em>' : implode('<br>', $meals); ?>
