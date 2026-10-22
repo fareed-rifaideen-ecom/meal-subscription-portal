@@ -116,7 +116,7 @@ function cmp_ajax_save_daily_log() {
     $is_override_mode = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
 
     if ( empty( $target_date ) ) {
-        wp_send_json_error('Please select a valid delivery date first.');
+        wp_send_json_error('Please select a valid date first.');
     }
 
     // Separate Date/Cut-off Privilege from Quota Bypass Privilege (Read from WP Admin Settings)
@@ -148,38 +148,6 @@ function cmp_ajax_save_daily_log() {
     $is_staff_user = cmp_can_bypass_date_restrictions() || cmp_can_bypass_meal_quota() || current_user_can('kitchen_staff');
     if ( ! $is_staff_user && intval($sub->user_id) !== get_current_user_id() ) {
         wp_send_json_error('Unauthorized access to this subscription.');
-    }
-
-    // --- DUPLICATE DATE & OVER-QUOTA PROTECTION ---
-    if ($log_id === 0) {
-        // If a non-void log already exists for this exact date (e.g. double Enter press), convert to update
-        $existing_date_log_id = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM $table_logs WHERE subscription_id = %d AND target_date = %s AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned')) LIMIT 1",
-            $sub_id, $target_date
-        ));
-        if ($existing_date_log_id) {
-            $log_id = intval($existing_date_log_id);
-        }
-    } else {
-        // Prevent changing an existing row's date to another active date already scheduled on this plan
-        $conflict_log_id = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM $table_logs WHERE subscription_id = %d AND target_date = %s AND id != %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned')) LIMIT 1",
-            $sub_id, $target_date, $log_id
-        ));
-        if ($conflict_log_id) {
-            wp_send_json_error('This delivery date (' . date('D, d M Y', strtotime($target_date)) . ') is already scheduled on another day in this plan.');
-        }
-    }
-
-    if ($log_id === 0) {
-        // Strictly prevent inserting new active logs beyond total_days
-        $active_filled_count = intval($wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
-            $sub_id
-        )));
-        if ($active_filled_count >= intval($sub->total_days)) {
-            wp_send_json_error("Plan Quota Reached: All {$sub->total_days} active days for this subscription have already been scheduled.");
-        }
     }
 
     // --- LOG-LEVEL SNAPSHOT LOGIC (Phase 7) ---
@@ -463,7 +431,7 @@ function cmp_ajax_cp_admin_update_account_details() {
     ));
 }
 
-// 1.7 AJAX HANDLER: ADD/REMOVE PLAN DAYS & AUTO-TRIM EXCESS LOGS (GOVERNED BY WP ADMIN SETTINGS)
+// 1.7 AJAX HANDLER: ADD/REMOVE PLAN DAYS (GOVERNED BY WP ADMIN SETTINGS)
 add_action('wp_ajax_cmp_cp_admin_adjust_days', 'cmp_ajax_cp_admin_adjust_days');
 function cmp_ajax_cp_admin_adjust_days() {
     check_ajax_referer('cmp_portal_nonce', 'nonce');
@@ -471,102 +439,37 @@ function cmp_ajax_cp_admin_adjust_days() {
         wp_send_json_error('Permission Denied. Your role is not authorized to add or remove plan days.');
     }
 
-    $sub_id    = intval($_POST['sub_id']);
+    $sub_id = intval($_POST['sub_id']);
     $operation = sanitize_text_field($_POST['operation']);
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $sub = $wpdb->get_row($wpdb->prepare("SELECT total_days, expiry_date FROM $table_subs WHERE id = %d", $sub_id));
 
     if (!$sub) wp_send_json_error('Subscription not found.');
 
     $new_days = intval($sub->total_days);
     $current_expiry = new DateTime($sub->expiry_date);
-    $trimmed_logs = 0;
 
     if ($operation === 'add') {
         $new_days++;
         $current_expiry->modify('+1 day');
-        $wpdb->update($table_subs, array(
-            'total_days'  => $new_days,
-            'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
-        ), array('id' => $sub_id));
-
     } elseif ($operation === 'remove') {
         if ($new_days <= 1) {
             wp_send_json_error('Cannot reduce plan below 1 day.');
         }
-
-        // Count active (non-Cancelled, non-Returned) scheduled logs before reducing
-        $active_logs_count = intval($wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
-            $sub_id
-        )));
-
         $new_days--;
         $current_expiry->modify('-1 day');
-
-        // If all days (or excess days) were already filled, automatically delete the latest future un-delivered log(s)
-        if ($active_logs_count > $new_days) {
-            $excess_to_remove = $active_logs_count - $new_days;
-            $logs_to_delete = $wpdb->get_col($wpdb->prepare(
-                "SELECT id FROM $table_logs 
-                 WHERE subscription_id = %d 
-                 AND (delivery_result IS NULL OR delivery_result = 'Pending') 
-                 AND dispatch_status = 0 
-                 ORDER BY target_date DESC, id DESC 
-                 LIMIT %d",
-                $sub_id, $excess_to_remove
-            ));
-
-            if (!empty($logs_to_delete)) {
-                foreach ($logs_to_delete as $del_id) {
-                    $wpdb->delete($table_logs, array('id' => intval($del_id)));
-                    $trimmed_logs++;
-                }
-            }
-        }
-
-        $wpdb->update($table_subs, array(
-            'total_days'  => $new_days,
-            'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
-        ), array('id' => $sub_id));
-
-    } elseif ($operation === 'trim_excess') {
-        // Standalone cleanup for legacy over-filled plans (e.g. 19/11 or 20/12) without altering total_days
-        $active_logs_count = intval($wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))",
-            $sub_id
-        )));
-
-        if ($active_logs_count > $new_days) {
-            $excess_to_remove = $active_logs_count - $new_days;
-            $logs_to_delete = $wpdb->get_col($wpdb->prepare(
-                "SELECT id FROM $table_logs 
-                 WHERE subscription_id = %d 
-                 AND (delivery_result IS NULL OR delivery_result = 'Pending') 
-                 AND dispatch_status = 0 
-                 ORDER BY target_date DESC, id DESC 
-                 LIMIT %d",
-                $sub_id, $excess_to_remove
-            ));
-
-            if (!empty($logs_to_delete)) {
-                foreach ($logs_to_delete as $del_id) {
-                    $wpdb->delete($table_logs, array('id' => intval($del_id)));
-                    $trimmed_logs++;
-                }
-            }
-        }
     } else {
         wp_send_json_error('Invalid operation.');
     }
 
-    wp_send_json_success(array(
-        'new_days'     => $new_days,
-        'trimmed_logs' => $trimmed_logs
-    ));
+    $wpdb->update($table_subs, array(
+        'total_days' => $new_days,
+        'expiry_date' => $current_expiry->format('Y-m-d H:i:s')
+    ), array('id' => $sub_id));
+
+    wp_send_json_success(array('new_days' => $new_days));
 }
 
 // 1.8 AJAX HANDLER: CLEAR/RESET DAILY SELECTION
@@ -1002,21 +905,6 @@ function cmp_render_customer_portal() {
             background: #ffedd5 !important;
             border: 1.5px solid #fdba74 !important;
         }
-        .cmp-status-pill.pill-over-quota {
-            color: #991b1b !important;
-            background: #fee2e2 !important;
-            border: 1.5px solid #f87171 !important;
-        }
-        .cmp-table tr.cmp-day-row.status-over-quota:not(.is-unsaved) {
-            border-color: #f87171 !important;
-            border-left: 6px solid #dc2626 !important;
-            background: #fff5f5 !important;
-        }
-        .cmp-table tr.cmp-day-row.status-over-quota:not(.is-unsaved) td.cmp-cell-day {
-            background: #fee2e2 !important;
-            color: #991b1b !important;
-            border-color: #fca5a5 !important;
-        }
         .cmp-undo-row {
             display: none !important;
             align-items: center !important;
@@ -1138,7 +1026,7 @@ function cmp_render_customer_portal() {
             transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
         }
         .cmp-table tr.cmp-day-row.status-pending:not(.is-unsaved) { border-color: #fde68a !important; }
-        .cmp-table tr.cmp-day-row.status-saved:not(.is-unsaved):not(.status-over-quota) { border-color: #bbf7d0 !important; }
+        .cmp-table tr.cmp-day-row.status-saved:not(.is-unsaved) { border-color: #bbf7d0 !important; }
         .cmp-table tr.cmp-day-row.status-void { border-color: #fecdd3 !important; opacity: 0.82; }
 
         /* Active Keyboard Focus Highlight on Day Card */
@@ -1615,79 +1503,260 @@ function cmp_render_customer_portal() {
             box-shadow: 0 6px 16px rgba(27, 94, 32, 0.42);
         }
 
-        /* MOBILE ACCORDION CARD VIEW (<= 768px) */
+        /* =========================================================
+           MOBILE SINGLE-VIEWPORT COMPACT ACCORDION VIEW (<= 768px)
+           ========================================================= */
         @media (max-width: 768px) {
-            .cmp-dashboard-wrap { padding: 0 6px 35px 6px; }
+            .cmp-dashboard-wrap { padding: 0 6px 86px 6px; }
             .cmp-kbd-guide { display: none !important; }
-            .cmp-table tr.cmp-day-row, .cmp-table td:not(.cmp-collapsed-summary) { display: block !important; width: 100% !important; }
-            .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; }
+            .cmp-table td.cmp-collapsed-summary { display: none !important; }
+            .cmp-table td.cmp-cell-status { display: none !important; }
 
+            /* Collapsed Mobile Card */
             .cmp-table tr.cmp-day-row {
-                margin-bottom: 18px !important;
-                padding: 15px 16px 18px 16px !important;
+                display: block !important;
+                width: 100% !important;
+                margin-bottom: 10px !important;
+                padding: 8px 10px !important;
+                border-radius: 13px !important;
+            }
+            .cmp-table tr.cmp-day-row:not(.is-open) td:not(.cmp-cell-day) {
+                display: none !important;
             }
 
-            .cmp-table td.cmp-cell-day {
-                border-radius: 10px !important;
+            /* Expanded Mobile Card: 12-Column Compact Grid (Fits in Single Screen) */
+            .cmp-table tr.cmp-day-row.is-open {
+                display: grid !important;
+                grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+                gap: 6px 8px !important;
+                align-items: end !important;
+                padding: 10px 11px 12px 11px !important;
+                margin-bottom: 12px !important;
+            }
+            .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status) {
+                display: block !important;
+                width: 100% !important;
+                border: none !important;
+                padding: 0 !important;
                 text-align: left !important;
-                font-size: 1.15em !important;
-                margin-bottom: 8px !important;
-                padding: 14px 16px !important;
+            }
+
+            /* Respect Chef's Choice Compact Mode on Mobile When Checked */
+            .cmp-table tr.cmp-day-row.is-open.is-chefs-choice-compact td.cmp-cell-meal,
+            .cmp-table tr.cmp-day-row.is-open.is-chefs-choice-compact td.cmp-cell-snack,
+            .cmp-table tr.cmp-day-row.is-open.is-chefs-choice-compact td.cmp-cell-juice {
+                display: none !important;
+            }
+
+            /* Row 1: Day Header Banner */
+            .cmp-table td.cmp-cell-day {
+                grid-column: 1 / span 12 !important;
+                border-radius: 9px !important;
+                text-align: left !important;
+                font-size: 1rem !important;
+                margin-bottom: 0 !important;
+                padding: 9px 34px 9px 12px !important;
                 cursor: pointer;
                 position: relative;
                 transition: all 0.2s ease;
             }
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-day {
+                margin-bottom: 2px !important;
+            }
             .cmp-table td.cmp-cell-day::after {
                 content: '\25BC';
                 position: absolute;
-                right: 16px;
+                right: 12px;
                 top: 50%;
                 transform: translateY(-50%);
-                font-size: 14px;
+                font-size: 12px;
                 color: inherit;
             }
             .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
-            .cmp-table tr:not(.is-open) td:not(.cmp-cell-day) { display: none !important; }
-            .cmp-table td.cmp-collapsed-summary { display: none !important; }
 
-            .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
-            .cmp-table td.cmp-cell-status { display: none !important; }
+            .cmp-mobile-status { display: inline-block !important; margin-left: 8px; font-weight: normal; vertical-align: middle; }
+            .cmp-mobile-status .cmp-status-pill { font-size: 0.74rem !important; padding: 3px 9px !important; }
 
             .status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
             .status-saved td.cmp-cell-day { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
             .status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
 
+            /* Row 2: Date (7 Cols) + Chef's Choice (5 Cols) Side-by-Side */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-date {
+                grid-column: 1 / span 7 !important;
+            }
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-chef {
+                grid-column: 8 / span 5 !important;
+            }
+
+            /* Rows 3-5: Main Meals & Juices */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-meal,
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-juice {
+                grid-column: 1 / span 12 !important;
+            }
+
+            /* Row 6: Snacks Side-by-Side in 2 Equal Columns */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-snack {
+                grid-column: 1 / span 12 !important;
+            }
             .cmp-snacks-grid {
-                grid-template-columns: 1fr !important;
-                gap: 12px !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 8px !important;
+            }
+            .cmp-snacks-grid.single-snack {
+                grid-template-columns: minmax(0, 1fr) !important;
+            }
+
+            /* Compact Mobile Micro-Labels & Inputs */
+            .cmp-mobile-label {
+                font-size: 0.66rem !important;
+                margin-bottom: 2px !important;
+                line-height: 1.1 !important;
+            }
+            .cmp-table select,
+            .cmp-table input[type="text"],
+            .cmp-table input[type="date"] {
+                min-height: 38px !important;
+                height: 38px !important;
+                padding: 5px 28px 5px 10px !important;
+                font-size: 13.5px !important;
+                border-radius: 8px !important;
+                border-width: 1.5px !important;
+                box-shadow: 0 1px 0 #cbd5e1 !important;
+            }
+            .cmp-table select {
+                background-position: right 9px center !important;
+                background-size: 14px !important;
+            }
+            .cmp-table input[type="date"],
+            .cmp-table input[type="text"] {
+                padding-right: 8px !important;
+                font-size: 13px !important;
+            }
+            .cmp-chef-box {
+                min-height: 38px !important;
+                height: 38px !important;
+                padding: 4px 8px !important;
+                gap: 6px !important;
+                border-radius: 8px !important;
+                border-width: 1.5px !important;
+            }
+            .cmp-chef-box span {
+                font-size: 0.76rem !important;
+                white-space: nowrap !important;
+            }
+            .cmp-chefs-choice {
+                width: 17px !important;
+                height: 17px !important;
+            }
+
+            /* Row 7: Single-Row 4-Column Colourful Macro Strip */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-macros {
+                grid-column: 1 / span 12 !important;
+                margin-top: 2px !important;
+            }
+            .cmp-table td.cmp-cell-macros > .cmp-mobile-label {
+                display: none !important;
+            }
+            .cmp-macro-display {
+                padding: 5px 6px !important;
+                border-radius: 9px !important;
+            }
+            .cmp-macro-chef-tag {
+                font-size: 0.64rem !important;
+                padding: 1px 6px !important;
+                margin-bottom: 4px !important;
             }
             .cmp-macro-tiles-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                gap: 5px !important;
+            }
+            .cmp-macro-tile {
+                padding: 4px 2px !important;
+                border-radius: 7px !important;
+            }
+            .cmp-macro-tile .tile-label {
+                font-size: 0.55rem !important;
+                margin-bottom: 1px !important;
+                letter-spacing: 0.02em !important;
+            }
+            .cmp-macro-tile .tile-val {
+                font-size: 0.76rem !important;
+            }
+            .cmp-macro-banner-state {
+                padding: 5px 8px !important;
+                font-size: 0.76rem !important;
+            }
+
+            /* Row 8: Single-Row Inline Action Bar (Update + Reset + Cancel / Undo) */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-action {
+                grid-column: 1 / span 12 !important;
+                margin-top: 2px !important;
+            }
+            .cmp-table td.cmp-cell-action > .cmp-mobile-label {
+                display: none !important;
             }
             .cmp-action-box {
-                flex-direction: column !important;
-                align-items: stretch !important;
+                flex-direction: row !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 6px !important;
             }
             .cmp-save-row {
-                width: 100% !important;
-                min-height: 50px !important;
-                font-size: 16px !important;
+                flex: 1 1 auto !important;
+                width: auto !important;
+                min-width: 0 !important;
+                min-height: 40px !important;
+                height: 40px !important;
+                padding: 6px 12px !important;
+                font-size: 14px !important;
+                border-radius: 8px !important;
             }
             .cmp-secondary-actions {
-                width: 100% !important;
-                display: flex !important;
+                width: auto !important;
+                display: inline-flex !important;
+                gap: 6px !important;
+                flex-shrink: 0 !important;
             }
             .cmp-clear-row, .cmp-cancel-day-row {
-                flex: 1 !important;
-                height: 46px !important;
+                flex: 0 0 40px !important;
+                width: 40px !important;
+                height: 40px !important;
+                border-radius: 8px !important;
             }
             .cmp-undo-row {
-                width: 100% !important;
-                height: 44px !important;
+                width: auto !important;
+                height: 40px !important;
+                padding: 0 11px !important;
+                font-size: 12.5px !important;
+                border-radius: 8px !important;
             }
-            .cmp-wa-float { bottom: 20px; right: 20px; padding: 12px; border-radius: 50%; }
+
+            /* Non-Intrusive Floating Buttons on Mobile */
+            .cmp-wa-float {
+                bottom: 14px;
+                right: 12px;
+                width: 42px;
+                height: 42px;
+                padding: 0;
+                justify-content: center;
+                border-radius: 50%;
+                opacity: 0.88;
+            }
+            .cmp-wa-float svg { width: 22px; height: 22px; }
             .cmp-wa-text { display: none; }
-            .cmp-back-to-top { bottom: 80px; right: 25px; width: 40px; height: 40px; }
+            .cmp-back-to-top {
+                bottom: 62px;
+                right: 14px;
+                width: 36px;
+                height: 36px;
+                opacity: 0.85;
+            }
+            body.cmp-mobile-input-active .cmp-wa-float,
+            body.cmp-mobile-input-active .cmp-back-to-top {
+                opacity: 0.18 !important;
+                pointer-events: none !important;
+            }
         }
     </style>
 
@@ -1825,19 +1894,6 @@ function cmp_render_customer_portal() {
                 if ($allowed_quota <= 0) $allowed_quota = 1;
                 $snack_quota = ($allowed_quota >= 2) ? 2 : 1; 
             }
-
-            // Pre-fetch saved logs to evaluate active vs void vs over-filled counts
-            $saved_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC, id ASC", $sub->id));
-            $void_count = 0;
-            $active_filled_count = 0;
-            foreach ($saved_logs as $log_item) {
-                if (in_array($log_item->delivery_result, array('Cancelled', 'Returned'))) {
-                    $void_count++;
-                } else {
-                    $active_filled_count++;
-                }
-            }
-            $excess_filled_days = max(0, $active_filled_count - intval($sub->total_days));
         ?>
         <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
 
@@ -1955,20 +2011,9 @@ function cmp_render_customer_portal() {
             <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <div>
                     <strong style="color:#b45309; font-size:1.1em;">Plan Days Controls</strong><br>
-                    <span style="color:#92400e; font-size:0.9em;">
-                        Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong> &bull;
-                        Scheduled: <strong><?php echo $active_filled_count; ?>/<?php echo $sub->total_days; ?></strong>
-                        <?php if ($excess_filled_days > 0): ?>
-                            <span style="background:#fee2e2; color:#991b1b; border:1px solid #f87171; padding:2px 8px; border-radius:999px; font-weight:800; font-size:0.85em; margin-left:6px;">
-                                +<?php echo $excess_filled_days; ?> Excess Filled Day(s)
-                            </span>
-                        <?php endif; ?>
-                    </span>
+                    <span style="color:#92400e; font-size:0.9em;">Current Quota: <strong><?php echo $sub->total_days; ?> Days</strong></span>
                 </div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <?php if ($excess_filled_days > 0): ?>
-                        <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="trim_excess" style="background:#d97706; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">Auto-Trim <?php echo $excess_filled_days; ?> Excess Day(s)</button>
-                    <?php endif; ?>
+                <div style="display:flex; gap:10px;">
                     <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="add" style="background:#379237; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">+ Add Extra Day</button>
                     <button class="admin-adjust-days-btn" data-sub-id="<?php echo $sub->id; ?>" data-operation="remove" style="background:#dc2626; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">- Remove Last Day</button>
                 </div>
@@ -2023,19 +2068,19 @@ function cmp_render_customer_portal() {
                     </thead>
                     <tbody>
                         <?php 
-                        $display_days         = intval($sub->total_days) + $void_count;
-                        $total_rows_to_render = max($display_days, count($saved_logs));
-                        $active_min_date      = $global_min_date;
-                        $active_day_counter   = 0;
+                        $saved_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC, id ASC", $sub->id));
+                        
+                        $void_count = 0;
+                        foreach ($saved_logs as $log) {
+                            if (in_array($log->delivery_result, array('Cancelled', 'Returned'))) $void_count++;
+                        }
+                        $display_days = intval($sub->total_days) + $void_count;
+                        $active_min_date = $global_min_date;
 
-                        for ($i = 1; $i <= $total_rows_to_render; $i++) {
+                        for ($i = 1; $i <= $display_days; $i++) {
                             $log = isset($saved_logs[$i-1]) ? $saved_logs[$i-1] : null;
                             $log_id = $log ? $log->id : 0;
                             $is_void = ($log && in_array($log->delivery_result, array('Cancelled', 'Returned')));
-                            if ($log && !$is_void) {
-                                $active_day_counter++;
-                            }
-                            $is_over_quota_row = ($log && !$is_void && $active_day_counter > intval($sub->total_days));
                             $saved_chefs_choice = ($log && $log->is_chefs_choice) ? true : false;
 
                             // --- PHASE 7 LOGIC: Evaluate Plan Mode at the Log Level ---
@@ -2072,7 +2117,6 @@ function cmp_render_customer_portal() {
 
                             $row_status_class = 'status-pending';
                             if ($is_void) { $row_status_class = 'status-void row-void'; } 
-                            elseif ($is_over_quota_row) { $row_status_class = 'status-saved status-over-quota'; }
                             elseif ($log_id > 0) { $row_status_class = 'status-saved'; }
                             
                             // Keep all Day Cards collapsed by default on Desktop/Tablet
@@ -2097,8 +2141,6 @@ function cmp_render_customer_portal() {
                                 $status_badge = '<span class="cmp-status-pill pill-successful">Successful</span>';
                             } elseif ($is_void && $log) {
                                 $status_badge = '<span class="cmp-status-pill pill-void">' . esc_html($log->delivery_result) . '</span>';
-                            } elseif ($is_over_quota_row) {
-                                $status_badge = '<span class="cmp-status-pill pill-over-quota" title="Exceeds plan quota — Reset to remove">Over Quota</span>';
                             } elseif ($is_paused) {
                                 $status_badge = '<span class="cmp-status-pill pill-paused">Paused</span>';
                             } elseif ($log_id > 0 && !$saved_chefs_choice && !$is_chef_assigned) {
@@ -2124,7 +2166,7 @@ function cmp_render_customer_portal() {
                                     <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                 </td>
                                 <td class="cmp-cell-date">
-                                    <span class="cmp-mobile-label">Delivery Date</span>
+                                    <span class="cmp-mobile-label">Date</span>
                                     <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" <?php echo $min_attr; ?> value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $date_picker_disabled; ?>>
                                 </td>
                                 <td class="cmp-cell-chef">
@@ -2261,7 +2303,7 @@ function cmp_render_customer_portal() {
                                 </td>
 
                                 <!-- Compact 1-Line Summary Bar (Visible When Card is Collapsed on Desktop/Tablet) -->
-                                <td class="cmp-collapsed-summary" title="<?php echo $is_void ? 'This delivery day was cancelled' : 'Click to expand meal selections'; ?>">
+                                <td class="cmp-collapsed-summary" title="<?php echo $is_void ? 'This day was cancelled' : 'Click to expand meal selections'; ?>">
                                     <span class="cmp-summary-text">Click to view or edit meal selections</span>
                                     <span class="cmp-expand-hint" style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
                                 </td>
@@ -2540,7 +2582,6 @@ function cmp_render_customer_portal() {
 
             var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked');
             var isUnsaved     = rowElement.hasClass('is-unsaved');
-            var isOverQuota   = rowElement.hasClass('status-over-quota');
             var saveBtn       = rowElement.find('.cmp-save-row');
             var logId         = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
             var hasValues     = false;
@@ -2570,15 +2611,12 @@ function cmp_render_customer_portal() {
 
             if (summaryTextEl.length) {
                 var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
-                if (isOverQuota && !isUnsaved) {
-                    unsavedPrefix = '<strong style="color:#dc2626;">[Exceeds Plan Quota &mdash; Click Reset or Auto-Trim]</strong> ';
-                }
                 if (isChefsChoice && !hasValues) {
                     summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
                 } else if (pickedNames.length > 0) {
                     summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
                 } else if (logId > 0 && !isUnsaved) {
-                    summaryTextEl.html(unsavedPrefix + '<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
+                    summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
                 } else {
                     summaryTextEl.html(unsavedPrefix + 'Pending selection — Click to expand and choose meals');
                 }
@@ -2727,19 +2765,14 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // PLAN DAYS CONTROLS: ADD / REMOVE / AUTO-TRIM EXCESS DAYS LOGIC
+        // PLAN DAYS CONTROLS: ADD / REMOVE DAYS LOGIC
         $('.admin-adjust-days-btn').on('click', function(e) {
             e.preventDefault();
             var btn = $(this);
             var subId = btn.data('sub-id');
             var op = btn.data('operation');
             
-            var confirmMsg = "Are you sure you want to ADD an extra day to this plan?";
-            if (op === 'remove') {
-                confirmMsg = "Are you sure you want to REMOVE a day from this plan? If all days are already filled, the latest future un-delivered log will be automatically deleted.";
-            } else if (op === 'trim_excess') {
-                confirmMsg = "Are you sure you want to automatically delete the excess future un-delivered logs so the filled days match the plan quota?";
-            }
+            var confirmMsg = op === 'add' ? "Are you sure you want to ADD an extra day to this plan?" : "Are you sure you want to REMOVE a day from this plan?";
             if(!confirm(confirmMsg)) return;
 
             var origText = btn.text();
@@ -2787,7 +2820,7 @@ function cmp_render_customer_portal() {
                 chefChoiceCell.find('.cmp-chef-box').hide();
                 macroCell.css('opacity', '0.45'); 
 
-                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.86em; font-style:italic; text-align:center; padding:11px;">&larr; Pick a delivery date first to view meals.</div>');
+                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.82em; font-style:italic; text-align:center; padding:8px;">&larr; Pick a date first to view meals.</div>');
                 return false;
             }
 
@@ -2877,14 +2910,41 @@ function cmp_render_customer_portal() {
             return true;
         }
 
-        // Card Expand / Collapse Toggle (Mobile & Desktop)
+        // Fade floating buttons on mobile while actively interacting with inputs/dropdowns
+        $(document).on('focusin', '.cmp-day-row select, .cmp-day-row input, .cmp-day-row button', function() {
+            if ($(window).width() <= 768) {
+                $('body').addClass('cmp-mobile-input-active');
+            }
+        });
+        $(document).on('focusout', '.cmp-day-row select, .cmp-day-row input, .cmp-day-row button', function() {
+            setTimeout(function() {
+                if (!$(document.activeElement).closest('.cmp-day-row').length) {
+                    $('body').removeClass('cmp-mobile-input-active');
+                }
+            }, 150);
+        });
+
+        // Card Expand / Collapse Toggle (Mobile Single-Viewport Accordion & Desktop Toggle)
         $('.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary').on('click', function() {
             var $row = $(this).closest('tr.cmp-day-row');
             if ($row.hasClass('status-void')) {
                 return;
             }
             if ($(window).width() <= 768) {
-                $row.toggleClass('is-open');
+                var willOpen = !$row.hasClass('is-open');
+                if (willOpen) {
+                    // Close other open cards unless they have unsaved edits
+                    $row.siblings('tr.cmp-day-row.is-open:not(.is-unsaved)').removeClass('is-open');
+                    $row.addClass('is-open');
+                    setTimeout(function() {
+                        $('html, body').stop(true).animate({
+                            scrollTop: Math.max(0, $row.offset().top - 10)
+                        }, 220);
+                    }, 40);
+                } else {
+                    $row.removeClass('is-open');
+                    $('body').removeClass('cmp-mobile-input-active');
+                }
             } else {
                 $row.toggleClass('is-collapsed-desktop');
             }
@@ -2893,7 +2953,7 @@ function cmp_render_customer_portal() {
         // Toolbar Buttons: Collapse All / Expand All
         $('.cmp-collapse-all-btn').on('click', function() {
             var $container = $(this).closest('.cmp-portal-container');
-            $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop');
+            $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop').removeClass('is-open');
         });
 
         $('.cmp-expand-all-btn').on('click', function() {
@@ -3129,13 +3189,16 @@ function cmp_render_customer_portal() {
             void $targetRow[0].offsetWidth; // trigger reflow for pulse animation
             $targetRow.addClass('cmp-pulse-target');
 
+            var scrollOffset = 110;
             if ($(window).width() <= 768) {
+                $targetRow.siblings('tr.cmp-day-row.is-open:not(.is-unsaved)').removeClass('is-open');
                 $targetRow.addClass('is-open');
+                scrollOffset = 10;
             }
 
             $('html, body').stop(true).animate({
-                scrollTop: Math.max(0, $targetRow.offset().top - 110)
-            }, 320);
+                scrollTop: Math.max(0, $targetRow.offset().top - scrollOffset)
+            }, 280);
 
             setTimeout(function() {
                 var $dp = $targetRow.find('.cmp-date-picker');
@@ -3443,7 +3506,6 @@ function cmp_render_customer_portal() {
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if (response.success) {
                     markRowSaved(rowElement);
-                    isIntentionalReload = true;
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
@@ -3485,7 +3547,6 @@ function cmp_render_customer_portal() {
             $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
                 if (response.success) {
                     markRowSaved(rowElement);
-                    isIntentionalReload = true;
                     location.reload(); 
                 } else {
                     alert('Error: ' + response.data);
