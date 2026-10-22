@@ -116,7 +116,7 @@ function cmp_ajax_save_daily_log() {
     $is_override_mode = !empty($_POST['is_override_mode']) ? intval($_POST['is_override_mode']) : 0;
 
     if ( empty( $target_date ) ) {
-        wp_send_json_error('Please select a valid delivery date first.');
+        wp_send_json_error('Please select a valid date first.');
     }
 
     // Separate Date/Cut-off Privilege from Quota Bypass Privilege (Read from WP Admin Settings)
@@ -951,25 +951,26 @@ function cmp_render_customer_portal() {
         }
         .cmp-unsaved-float-bar {
             position: fixed;
-            bottom: 24px;
+            bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(15, 23, 42, 0.95);
+            background: rgba(15, 23, 42, 0.96);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             color: #ffffff;
             border: 1.5px solid #f59e0b;
-            border-radius: 999px;
-            padding: 10px 18px;
+            border-radius: 12px;
+            padding: 8px 16px;
             display: none;
             align-items: center;
-            gap: 12px;
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+            gap: 10px;
+            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.32);
             z-index: 9998;
-            font-size: 0.86rem;
+            font-size: 0.84rem;
             font-weight: 700;
             max-width: 92vw;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            white-space: nowrap;
             justify-content: center;
         }
         .cmp-unsaved-float-bar.is-active {
@@ -979,7 +980,7 @@ function cmp_render_customer_portal() {
             background: #f59e0b;
             color: #0f172a;
             border: none;
-            border-radius: 999px;
+            border-radius: 8px;
             padding: 5px 12px;
             font-size: 0.78rem;
             font-weight: 800;
@@ -1503,79 +1504,267 @@ function cmp_render_customer_portal() {
             box-shadow: 0 6px 16px rgba(27, 94, 32, 0.42);
         }
 
-        /* MOBILE ACCORDION CARD VIEW (<= 768px) */
+        /* =========================================================
+           MOBILE SINGLE-VIEWPORT COMPACT ACCORDION VIEW (<= 768px)
+           ========================================================= */
         @media (max-width: 768px) {
-            .cmp-dashboard-wrap { padding: 0 6px 35px 6px; }
+            .cmp-dashboard-wrap { padding: 0 6px 86px 6px; }
             .cmp-kbd-guide { display: none !important; }
-            .cmp-table tr.cmp-day-row, .cmp-table td:not(.cmp-collapsed-summary) { display: block !important; width: 100% !important; }
-            .cmp-table td { border: none !important; padding: 10px 0 !important; text-align: left !important; }
+            .cmp-table td.cmp-collapsed-summary { display: none !important; }
+            .cmp-table td.cmp-cell-status { display: none !important; }
 
-            .cmp-table tr.cmp-day-row {
-                margin-bottom: 18px !important;
-                padding: 15px 16px 18px 16px !important;
+            /* Hide floating unsaved popup on mobile so it never overlaps the card buttons */
+            .cmp-unsaved-float-bar,
+            .cmp-unsaved-float-bar.is-active {
+                display: none !important;
             }
 
-            .cmp-table td.cmp-cell-day {
-                border-radius: 10px !important;
+            /* Collapsed Mobile Card */
+            .cmp-table tr.cmp-day-row {
+                display: block !important;
+                width: 100% !important;
+                margin-bottom: 10px !important;
+                padding: 8px 10px !important;
+                border-radius: 13px !important;
+            }
+            .cmp-table tr.cmp-day-row:not(.is-open) td:not(.cmp-cell-day) {
+                display: none !important;
+            }
+
+            /* Expanded Mobile Card: 12-Column Compact Grid (Fits in Single Screen) */
+            .cmp-table tr.cmp-day-row.is-open {
+                display: grid !important;
+                grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+                gap: 4px 8px !important;
+                align-items: end !important;
+                padding: 9px 10px 10px 10px !important;
+                margin-bottom: 12px !important;
+            }
+            .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status) {
+                display: block !important;
+                width: 100% !important;
+                border: none !important;
+                padding: 0 !important;
                 text-align: left !important;
-                font-size: 1.15em !important;
-                margin-bottom: 8px !important;
-                padding: 14px 16px !important;
+            }
+
+            /* Respect Chef's Choice Compact Mode on Mobile When Checked */
+            .cmp-table tr.cmp-day-row.is-open.is-chefs-choice-compact td.cmp-cell-meal,
+            .cmp-table tr.cmp-day-row.is-open.is-chefs-choice-compact td.cmp-cell-snack,
+            .cmp-table tr.cmp-day-row.is-open.is-chefs-choice-compact td.cmp-cell-juice {
+                display: none !important;
+            }
+
+            /* Row 1: Day Header Banner */
+            .cmp-table td.cmp-cell-day {
+                grid-column: 1 / span 12 !important;
+                border-radius: 9px !important;
+                text-align: left !important;
+                font-size: 0.96rem !important;
+                margin-bottom: 0 !important;
+                padding: 7px 32px 7px 11px !important;
                 cursor: pointer;
                 position: relative;
                 transition: all 0.2s ease;
             }
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-day {
+                margin-bottom: 1px !important;
+            }
             .cmp-table td.cmp-cell-day::after {
                 content: '\25BC';
                 position: absolute;
-                right: 16px;
+                right: 12px;
                 top: 50%;
                 transform: translateY(-50%);
-                font-size: 14px;
+                font-size: 12px;
                 color: inherit;
             }
             .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
-            .cmp-table tr:not(.is-open) td:not(.cmp-cell-day) { display: none !important; }
-            .cmp-table td.cmp-collapsed-summary { display: none !important; }
 
-            .cmp-mobile-status { display: inline-block !important; margin-left: 10px; font-weight: normal; vertical-align: middle; }
-            .cmp-table td.cmp-cell-status { display: none !important; }
+            .cmp-mobile-status { display: inline-block !important; margin-left: 8px; font-weight: normal; vertical-align: middle; }
+            .cmp-mobile-status .cmp-status-pill { font-size: 0.72rem !important; padding: 2px 8px !important; }
 
             .status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
             .status-saved td.cmp-cell-day { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
             .status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
 
-            .cmp-snacks-grid {
-                grid-template-columns: 1fr !important;
-                gap: 12px !important;
+            /* Row 2: Date (7 Cols) + Chef's Choice (5 Cols) Side-by-Side */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-date {
+                grid-column: 1 / span 7 !important;
+            }
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-chef {
+                grid-column: 8 / span 5 !important;
+            }
+
+            /* Rows 3-5: Main Meals & Juices */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-meal,
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-juice {
+                grid-column: 1 / span 12 !important;
+            }
+
+            /* Row 6: Full-Width Snacks on Mobile so Long Snack Names Never Clip */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-snack {
+                grid-column: 1 / span 12 !important;
+            }
+            .cmp-snacks-grid,
+            .cmp-snacks-grid.single-snack {
+                grid-template-columns: minmax(0, 1fr) !important;
+                gap: 4px !important;
+            }
+
+            /* Compact Mobile Micro-Labels & Auto-Height Selects (Zero Vertical Text Clipping) */
+            .cmp-mobile-label {
+                font-size: 0.64rem !important;
+                margin-bottom: 2px !important;
+                line-height: 1.05 !important;
+            }
+            .cmp-table select {
+                min-height: 35px !important;
+                height: auto !important;
+                padding: 6px 30px 6px 10px !important;
+                font-size: 13px !important;
+                line-height: 1.25 !important;
+                border-radius: 8px !important;
+                border-width: 1.5px !important;
+                box-shadow: 0 1px 0 #cbd5e1 !important;
+                background-position: right 9px center !important;
+                background-size: 14px !important;
+            }
+            .cmp-table input[type="text"],
+            .cmp-table input[type="date"] {
+                min-height: 35px !important;
+                height: 35px !important;
+                padding: 4px 8px 4px 10px !important;
+                font-size: 13px !important;
+                line-height: 1.2 !important;
+                border-radius: 8px !important;
+                border-width: 1.5px !important;
+                box-shadow: 0 1px 0 #cbd5e1 !important;
+            }
+            .cmp-chef-box {
+                min-height: 35px !important;
+                height: 35px !important;
+                padding: 4px 8px !important;
+                gap: 6px !important;
+                border-radius: 8px !important;
+                border-width: 1.5px !important;
+            }
+            .cmp-chef-box span {
+                font-size: 0.75rem !important;
+                white-space: nowrap !important;
+            }
+            .cmp-chefs-choice {
+                width: 16px !important;
+                height: 16px !important;
+            }
+
+            /* Row 7: Single-Row 4-Column Colourful Macro Strip */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-macros {
+                grid-column: 1 / span 12 !important;
+                margin-top: 1px !important;
+            }
+            .cmp-table td.cmp-cell-macros > .cmp-mobile-label {
+                display: none !important;
+            }
+            .cmp-macro-display {
+                padding: 4px 5px !important;
+                border-radius: 8px !important;
+            }
+            .cmp-macro-chef-tag {
+                font-size: 0.62rem !important;
+                padding: 1px 6px !important;
+                margin-bottom: 3px !important;
             }
             .cmp-macro-tiles-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                gap: 4px !important;
+            }
+            .cmp-macro-tile {
+                padding: 3px 2px !important;
+                border-radius: 6px !important;
+            }
+            .cmp-macro-tile .tile-label {
+                font-size: 0.54rem !important;
+                margin-bottom: 1px !important;
+                letter-spacing: 0.02em !important;
+            }
+            .cmp-macro-tile .tile-val {
+                font-size: 0.74rem !important;
+            }
+            .cmp-macro-banner-state {
+                padding: 4px 8px !important;
+                font-size: 0.74rem !important;
+            }
+
+            /* Row 8: Single-Row Inline Action Bar (Update + Reset + Cancel / Undo) */
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-action {
+                grid-column: 1 / span 12 !important;
+                margin-top: 2px !important;
+            }
+            .cmp-table td.cmp-cell-action > .cmp-mobile-label {
+                display: none !important;
             }
             .cmp-action-box {
-                flex-direction: column !important;
-                align-items: stretch !important;
+                flex-direction: row !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 6px !important;
             }
             .cmp-save-row {
-                width: 100% !important;
-                min-height: 50px !important;
-                font-size: 16px !important;
+                flex: 1 1 auto !important;
+                width: auto !important;
+                min-width: 0 !important;
+                min-height: 38px !important;
+                height: 38px !important;
+                padding: 6px 12px !important;
+                font-size: 13.5px !important;
+                border-radius: 8px !important;
             }
             .cmp-secondary-actions {
-                width: 100% !important;
-                display: flex !important;
+                width: auto !important;
+                display: inline-flex !important;
+                gap: 6px !important;
+                flex-shrink: 0 !important;
             }
             .cmp-clear-row, .cmp-cancel-day-row {
-                flex: 1 !important;
-                height: 46px !important;
+                flex: 0 0 38px !important;
+                width: 38px !important;
+                height: 38px !important;
+                border-radius: 8px !important;
             }
             .cmp-undo-row {
-                width: 100% !important;
-                height: 44px !important;
+                width: auto !important;
+                height: 38px !important;
+                padding: 0 11px !important;
+                font-size: 12.5px !important;
+                border-radius: 8px !important;
             }
-            .cmp-wa-float { bottom: 20px; right: 20px; padding: 12px; border-radius: 50%; }
+
+            /* Non-Intrusive Floating Buttons on Mobile */
+            .cmp-wa-float {
+                bottom: 14px;
+                right: 12px;
+                width: 42px;
+                height: 42px;
+                padding: 0;
+                justify-content: center;
+                border-radius: 50%;
+                opacity: 0.88;
+            }
+            .cmp-wa-float svg { width: 22px; height: 22px; }
             .cmp-wa-text { display: none; }
-            .cmp-back-to-top { bottom: 80px; right: 25px; width: 40px; height: 40px; }
+            .cmp-back-to-top {
+                bottom: 62px;
+                right: 14px;
+                width: 36px;
+                height: 36px;
+                opacity: 0.85;
+            }
+            body.cmp-mobile-input-active .cmp-wa-float,
+            body.cmp-mobile-input-active .cmp-back-to-top {
+                opacity: 0.18 !important;
+                pointer-events: none !important;
+            }
         }
     </style>
 
@@ -2122,7 +2311,7 @@ function cmp_render_customer_portal() {
                                 </td>
 
                                 <!-- Compact 1-Line Summary Bar (Visible When Card is Collapsed on Desktop/Tablet) -->
-                                <td class="cmp-collapsed-summary" title="<?php echo $is_void ? 'This delivery day was cancelled' : 'Click to expand meal selections'; ?>">
+                                <td class="cmp-collapsed-summary" title="<?php echo $is_void ? 'This day was cancelled' : 'Click to expand meal selections'; ?>">
                                     <span class="cmp-summary-text">Click to view or edit meal selections</span>
                                     <span class="cmp-expand-hint" style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
                                 </td>
@@ -2639,7 +2828,7 @@ function cmp_render_customer_portal() {
                 chefChoiceCell.find('.cmp-chef-box').hide();
                 macroCell.css('opacity', '0.45'); 
 
-                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.86em; font-style:italic; text-align:center; padding:11px;">&larr; Pick a date first to view meals.</div>');
+                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.82em; font-style:italic; text-align:center; padding:8px;">&larr; Pick a date first to view meals.</div>');
                 return false;
             }
 
@@ -2729,14 +2918,41 @@ function cmp_render_customer_portal() {
             return true;
         }
 
-        // Card Expand / Collapse Toggle (Mobile & Desktop)
+        // Fade floating buttons on mobile while actively interacting with inputs/dropdowns
+        $(document).on('focusin', '.cmp-day-row select, .cmp-day-row input, .cmp-day-row button', function() {
+            if ($(window).width() <= 768) {
+                $('body').addClass('cmp-mobile-input-active');
+            }
+        });
+        $(document).on('focusout', '.cmp-day-row select, .cmp-day-row input, .cmp-day-row button', function() {
+            setTimeout(function() {
+                if (!$(document.activeElement).closest('.cmp-day-row').length) {
+                    $('body').removeClass('cmp-mobile-input-active');
+                }
+            }, 150);
+        });
+
+        // Card Expand / Collapse Toggle (Mobile Single-Viewport Accordion & Desktop Toggle)
         $('.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary').on('click', function() {
             var $row = $(this).closest('tr.cmp-day-row');
             if ($row.hasClass('status-void')) {
                 return;
             }
             if ($(window).width() <= 768) {
-                $row.toggleClass('is-open');
+                var willOpen = !$row.hasClass('is-open');
+                if (willOpen) {
+                    // Close other open cards unless they have unsaved edits
+                    $row.siblings('tr.cmp-day-row.is-open:not(.is-unsaved)').removeClass('is-open');
+                    $row.addClass('is-open');
+                    setTimeout(function() {
+                        $('html, body').stop(true).animate({
+                            scrollTop: Math.max(0, $row.offset().top - 10)
+                        }, 220);
+                    }, 40);
+                } else {
+                    $row.removeClass('is-open');
+                    $('body').removeClass('cmp-mobile-input-active');
+                }
             } else {
                 $row.toggleClass('is-collapsed-desktop');
             }
@@ -2745,7 +2961,7 @@ function cmp_render_customer_portal() {
         // Toolbar Buttons: Collapse All / Expand All
         $('.cmp-collapse-all-btn').on('click', function() {
             var $container = $(this).closest('.cmp-portal-container');
-            $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop');
+            $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop').removeClass('is-open');
         });
 
         $('.cmp-expand-all-btn').on('click', function() {
@@ -2981,13 +3197,16 @@ function cmp_render_customer_portal() {
             void $targetRow[0].offsetWidth; // trigger reflow for pulse animation
             $targetRow.addClass('cmp-pulse-target');
 
+            var scrollOffset = 110;
             if ($(window).width() <= 768) {
+                $targetRow.siblings('tr.cmp-day-row.is-open:not(.is-unsaved)').removeClass('is-open');
                 $targetRow.addClass('is-open');
+                scrollOffset = 10;
             }
 
             $('html, body').stop(true).animate({
-                scrollTop: Math.max(0, $targetRow.offset().top - 110)
-            }, 320);
+                scrollTop: Math.max(0, $targetRow.offset().top - scrollOffset)
+            }, 280);
 
             setTimeout(function() {
                 var $dp = $targetRow.find('.cmp-date-picker');
