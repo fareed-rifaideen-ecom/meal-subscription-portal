@@ -1985,7 +1985,7 @@ function cmp_render_customer_portal() {
                                     <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                 </td>
                                 <td class="cmp-cell-date">
-                                    <span class="cmp-mobile-label">Delivery Date</span>
+                                    <span class="cmp-mobile-label">Date</span>
                                     <input type="date" class="cmp-date-picker" data-row="<?php echo $i; ?>" <?php echo $min_attr; ?> value="<?php echo $log ? esc_attr($log->target_date) : ''; ?>" <?php echo $date_picker_disabled; ?>>
                                 </td>
                                 <td class="cmp-cell-chef">
