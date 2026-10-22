@@ -951,25 +951,26 @@ function cmp_render_customer_portal() {
         }
         .cmp-unsaved-float-bar {
             position: fixed;
-            bottom: 24px;
+            bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(15, 23, 42, 0.95);
+            background: rgba(15, 23, 42, 0.96);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             color: #ffffff;
             border: 1.5px solid #f59e0b;
-            border-radius: 999px;
-            padding: 10px 18px;
+            border-radius: 12px;
+            padding: 8px 16px;
             display: none;
             align-items: center;
-            gap: 12px;
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+            gap: 10px;
+            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.32);
             z-index: 9998;
-            font-size: 0.86rem;
+            font-size: 0.84rem;
             font-weight: 700;
             max-width: 92vw;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            white-space: nowrap;
             justify-content: center;
         }
         .cmp-unsaved-float-bar.is-active {
@@ -979,7 +980,7 @@ function cmp_render_customer_portal() {
             background: #f59e0b;
             color: #0f172a;
             border: none;
-            border-radius: 999px;
+            border-radius: 8px;
             padding: 5px 12px;
             font-size: 0.78rem;
             font-weight: 800;
@@ -1512,6 +1513,12 @@ function cmp_render_customer_portal() {
             .cmp-table td.cmp-collapsed-summary { display: none !important; }
             .cmp-table td.cmp-cell-status { display: none !important; }
 
+            /* Hide floating unsaved popup on mobile so it never overlaps the card buttons */
+            .cmp-unsaved-float-bar,
+            .cmp-unsaved-float-bar.is-active {
+                display: none !important;
+            }
+
             /* Collapsed Mobile Card */
             .cmp-table tr.cmp-day-row {
                 display: block !important;
@@ -1528,9 +1535,9 @@ function cmp_render_customer_portal() {
             .cmp-table tr.cmp-day-row.is-open {
                 display: grid !important;
                 grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
-                gap: 6px 8px !important;
+                gap: 4px 8px !important;
                 align-items: end !important;
-                padding: 10px 11px 12px 11px !important;
+                padding: 9px 10px 10px 10px !important;
                 margin-bottom: 12px !important;
             }
             .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status) {
@@ -1553,15 +1560,15 @@ function cmp_render_customer_portal() {
                 grid-column: 1 / span 12 !important;
                 border-radius: 9px !important;
                 text-align: left !important;
-                font-size: 1rem !important;
+                font-size: 0.96rem !important;
                 margin-bottom: 0 !important;
-                padding: 9px 34px 9px 12px !important;
+                padding: 7px 32px 7px 11px !important;
                 cursor: pointer;
                 position: relative;
                 transition: all 0.2s ease;
             }
             .cmp-table tr.cmp-day-row.is-open td.cmp-cell-day {
-                margin-bottom: 2px !important;
+                margin-bottom: 1px !important;
             }
             .cmp-table td.cmp-cell-day::after {
                 content: '\25BC';
@@ -1575,7 +1582,7 @@ function cmp_render_customer_portal() {
             .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
 
             .cmp-mobile-status { display: inline-block !important; margin-left: 8px; font-weight: normal; vertical-align: middle; }
-            .cmp-mobile-status .cmp-status-pill { font-size: 0.74rem !important; padding: 3px 9px !important; }
+            .cmp-mobile-status .cmp-status-pill { font-size: 0.72rem !important; padding: 2px 8px !important; }
 
             .status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
             .status-saved td.cmp-cell-day { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
@@ -1595,97 +1602,98 @@ function cmp_render_customer_portal() {
                 grid-column: 1 / span 12 !important;
             }
 
-            /* Row 6: Snacks Side-by-Side in 2 Equal Columns */
+            /* Row 6: Full-Width Snacks on Mobile so Long Snack Names Never Clip */
             .cmp-table tr.cmp-day-row.is-open td.cmp-cell-snack {
                 grid-column: 1 / span 12 !important;
             }
-            .cmp-snacks-grid {
-                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-                gap: 8px !important;
-            }
+            .cmp-snacks-grid,
             .cmp-snacks-grid.single-snack {
                 grid-template-columns: minmax(0, 1fr) !important;
+                gap: 4px !important;
             }
 
-            /* Compact Mobile Micro-Labels & Inputs */
+            /* Compact Mobile Micro-Labels & Auto-Height Selects (Zero Vertical Text Clipping) */
             .cmp-mobile-label {
-                font-size: 0.66rem !important;
+                font-size: 0.64rem !important;
                 margin-bottom: 2px !important;
-                line-height: 1.1 !important;
+                line-height: 1.05 !important;
             }
-            .cmp-table select,
+            .cmp-table select {
+                min-height: 35px !important;
+                height: auto !important;
+                padding: 6px 30px 6px 10px !important;
+                font-size: 13px !important;
+                line-height: 1.25 !important;
+                border-radius: 8px !important;
+                border-width: 1.5px !important;
+                box-shadow: 0 1px 0 #cbd5e1 !important;
+                background-position: right 9px center !important;
+                background-size: 14px !important;
+            }
             .cmp-table input[type="text"],
             .cmp-table input[type="date"] {
-                min-height: 38px !important;
-                height: 38px !important;
-                padding: 5px 28px 5px 10px !important;
-                font-size: 13.5px !important;
+                min-height: 35px !important;
+                height: 35px !important;
+                padding: 4px 8px 4px 10px !important;
+                font-size: 13px !important;
+                line-height: 1.2 !important;
                 border-radius: 8px !important;
                 border-width: 1.5px !important;
                 box-shadow: 0 1px 0 #cbd5e1 !important;
             }
-            .cmp-table select {
-                background-position: right 9px center !important;
-                background-size: 14px !important;
-            }
-            .cmp-table input[type="date"],
-            .cmp-table input[type="text"] {
-                padding-right: 8px !important;
-                font-size: 13px !important;
-            }
             .cmp-chef-box {
-                min-height: 38px !important;
-                height: 38px !important;
+                min-height: 35px !important;
+                height: 35px !important;
                 padding: 4px 8px !important;
                 gap: 6px !important;
                 border-radius: 8px !important;
                 border-width: 1.5px !important;
             }
             .cmp-chef-box span {
-                font-size: 0.76rem !important;
+                font-size: 0.75rem !important;
                 white-space: nowrap !important;
             }
             .cmp-chefs-choice {
-                width: 17px !important;
-                height: 17px !important;
+                width: 16px !important;
+                height: 16px !important;
             }
 
             /* Row 7: Single-Row 4-Column Colourful Macro Strip */
             .cmp-table tr.cmp-day-row.is-open td.cmp-cell-macros {
                 grid-column: 1 / span 12 !important;
-                margin-top: 2px !important;
+                margin-top: 1px !important;
             }
             .cmp-table td.cmp-cell-macros > .cmp-mobile-label {
                 display: none !important;
             }
             .cmp-macro-display {
-                padding: 5px 6px !important;
-                border-radius: 9px !important;
+                padding: 4px 5px !important;
+                border-radius: 8px !important;
             }
             .cmp-macro-chef-tag {
-                font-size: 0.64rem !important;
+                font-size: 0.62rem !important;
                 padding: 1px 6px !important;
-                margin-bottom: 4px !important;
+                margin-bottom: 3px !important;
             }
             .cmp-macro-tiles-grid {
                 grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-                gap: 5px !important;
+                gap: 4px !important;
             }
             .cmp-macro-tile {
-                padding: 4px 2px !important;
-                border-radius: 7px !important;
+                padding: 3px 2px !important;
+                border-radius: 6px !important;
             }
             .cmp-macro-tile .tile-label {
-                font-size: 0.55rem !important;
+                font-size: 0.54rem !important;
                 margin-bottom: 1px !important;
                 letter-spacing: 0.02em !important;
             }
             .cmp-macro-tile .tile-val {
-                font-size: 0.76rem !important;
+                font-size: 0.74rem !important;
             }
             .cmp-macro-banner-state {
-                padding: 5px 8px !important;
-                font-size: 0.76rem !important;
+                padding: 4px 8px !important;
+                font-size: 0.74rem !important;
             }
 
             /* Row 8: Single-Row Inline Action Bar (Update + Reset + Cancel / Undo) */
@@ -1706,10 +1714,10 @@ function cmp_render_customer_portal() {
                 flex: 1 1 auto !important;
                 width: auto !important;
                 min-width: 0 !important;
-                min-height: 40px !important;
-                height: 40px !important;
+                min-height: 38px !important;
+                height: 38px !important;
                 padding: 6px 12px !important;
-                font-size: 14px !important;
+                font-size: 13.5px !important;
                 border-radius: 8px !important;
             }
             .cmp-secondary-actions {
@@ -1719,14 +1727,14 @@ function cmp_render_customer_portal() {
                 flex-shrink: 0 !important;
             }
             .cmp-clear-row, .cmp-cancel-day-row {
-                flex: 0 0 40px !important;
-                width: 40px !important;
-                height: 40px !important;
+                flex: 0 0 38px !important;
+                width: 38px !important;
+                height: 38px !important;
                 border-radius: 8px !important;
             }
             .cmp-undo-row {
                 width: auto !important;
-                height: 40px !important;
+                height: 38px !important;
                 padding: 0 11px !important;
                 font-size: 12.5px !important;
                 border-radius: 8px !important;
