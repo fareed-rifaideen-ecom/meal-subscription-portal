@@ -2639,7 +2639,7 @@ function cmp_render_customer_portal() {
                 chefChoiceCell.find('.cmp-chef-box').hide();
                 macroCell.css('opacity', '0.45'); 
 
-                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.86em; font-style:italic; text-align:center; padding:11px;">&larr; Pick a delivery date first to view meals.</div>');
+                selectContainer.append('<div class="date-prompt-overlay" style="color:#64748b; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; font-size:0.86em; font-style:italic; text-align:center; padding:11px;">&larr; Pick a date first to view meals.</div>');
                 return false;
             }
 
