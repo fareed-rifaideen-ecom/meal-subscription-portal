@@ -436,7 +436,7 @@ function cmp_render_foh_portal() {
             $sub->days_until_end = -999;
         }
 
-        // Calculate urgency score for "Schedule Ending Soonest (Urgent Follow-Up)" sort
+        // Calculate urgency score for "Needed Meal Selection" sort
         // Group 1 (Top): Plans with unfilled days (Filled < Total), ordered by earliest last scheduled date (or no dates scheduled first)
         // Group 2 (Bottom): Plans where all days are filled (Filled >= Total)
         if ($sub->pending_fill > 0) {
@@ -650,7 +650,7 @@ function cmp_render_foh_portal() {
             <div style="min-width: 260px;">
                 <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
                     <option value="default">Sort By: Default (Newest)</option>
-                    <option value="ending_soon">Schedule Ending Soonest (Urgent Follow-Up)</option>
+                    <option value="ending_soon">Needed Meal Selection</option>
                     <option value="balance_asc">Balance Days Ending Soon</option>
                 </select>
             </div>
