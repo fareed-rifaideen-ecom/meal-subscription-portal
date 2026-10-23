@@ -179,8 +179,8 @@ function cmp_foh_export_csv() {
         wp_die('Access Denied'); 
     }
 
-    date_default_timezone_set('Asia/Dubai');
     global $wpdb;
+    date_default_timezone_set('Asia/Dubai');
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $today = date('Y-m-d H:i:s');
@@ -192,7 +192,7 @@ function cmp_foh_export_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Total Days', 'Pending to Fill', 'Used Days', 'Balance Days', 'Last Scheduled Date', 'Start Date', 'Expiry Date', 'FOH Remarks'));
+    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Total Days', 'Filled Days', 'Pending to Fill', 'Used Days', 'Balance Days', 'Last Scheduled Date', 'Start Date', 'Expiry Date', 'FOH Remarks'));
 
     foreach ($all_subs as $sub) {
         $order = wc_get_order($sub->wc_order_id);
@@ -209,16 +209,16 @@ function cmp_foh_export_csv() {
 
         $filled_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
         $usage_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
-        $last_scheduled_date = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
-
-        $total_days_int = intval($sub->total_days);
-        $balance = max(0, $total_days_int - $usage_days);
-        $pending_fill = max(0, $total_days_int - $filled_days);
+        $last_scheduled = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+        
+        $total_days = (int) $sub->total_days;
+        $pending_fill = max(0, $total_days - $filled_days);
+        $balance = max(0, $total_days - $usage_days);
 
         $status_label = 'Active';
         if ($sub->status === 'paused') {
             $status_label = 'Paused';
-        } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
+        } elseif ($usage_days >= $total_days || $sub->expiry_date < $today) {
             $status_label = 'Inactive/Expired';
         }
 
@@ -279,12 +279,12 @@ function cmp_foh_export_csv() {
             $final_price,
             $status_label,
             $bag_status_text,
+            $total_days,
             $filled_days,
-            $total_days_int,
             $pending_fill,
             $usage_days,
             $balance,
-            !empty($last_scheduled_date) ? $last_scheduled_date : 'None',
+            !empty($last_scheduled) ? $last_scheduled : 'None',
             date('Y-m-d', strtotime($sub->start_date)),
             date('Y-m-d', strtotime($sub->expiry_date)),
             $remarks
@@ -417,41 +417,24 @@ function cmp_render_foh_portal() {
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
     $today = date('Y-m-d H:i:s');
     $today_date = date('Y-m-d');
+    $tomorrow_date = date('Y-m-d', strtotime('+1 day'));
+    $warn_date = date('Y-m-d', strtotime('+3 days'));
 
     foreach ($all_subs as $sub) {
         $filled_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
         $usage_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
-        $last_scheduled_date = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+        $last_scheduled = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
         
-        $total_days_int = intval($sub->total_days);
+        $sub->total_days = (int) $sub->total_days;
         $sub->filled = $filled_days;
         $sub->usage = $usage_days;
-        $sub->balance = max(0, $total_days_int - $usage_days);
-        $sub->pending_fill = max(0, $total_days_int - $filled_days);
-        $sub->last_scheduled_date = $last_scheduled_date;
-
-        if (!empty($last_scheduled_date)) {
-            $sub->days_until_end = (int) round((strtotime($last_scheduled_date) - strtotime($today_date)) / 86400);
-        } else {
-            $sub->days_until_end = -999;
-        }
-
-        // Calculate urgency score for "Needed Meal Selection" sort
-        // Group 1 (Top): Plans with unfilled days (Filled < Total), ordered by earliest last scheduled date (or no dates scheduled first)
-        // Group 2 (Bottom): Plans where all days are filled (Filled >= Total)
-        if ($sub->pending_fill > 0) {
-            if (empty($last_scheduled_date)) {
-                $sub->urgency_score = -5000 - $sub->pending_fill;
-            } else {
-                $sub->urgency_score = $sub->days_until_end;
-            }
-        } else {
-            $sub->urgency_score = 100000 + ($sub->days_until_end > -999 ? $sub->days_until_end : 9999);
-        }
-
+        $sub->balance = max(0, $sub->total_days - $usage_days);
+        $sub->pending_fill = max(0, $sub->total_days - $filled_days);
+        $sub->last_scheduled = !empty($last_scheduled) ? $last_scheduled : '';
+        
         if ($sub->status === 'paused') {
             $tabs['paused'][] = $sub;
-        } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
+        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
             $tabs['inactive'][] = $sub;
         } else {
             $tabs['active'][] = $sub;
@@ -467,6 +450,21 @@ function cmp_render_foh_portal() {
     ob_start();
     ?>
     <style>
+        /* WordPress Emoji Stretch Guard */
+        .foh-portal-wrapper img.emoji,
+        .foh-portal-wrapper img.wp-smiley {
+            width: 1em !important;
+            height: 1em !important;
+            max-width: 16px !important;
+            max-height: 16px !important;
+            display: inline !important;
+            vertical-align: -0.1em !important;
+            margin: 0 0.07em !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
         /* Desktop FOH Glass Header (> 992px) */
         .foh-header-banner {
             background: linear-gradient(135deg, rgba(27, 94, 32, 0.92) 0%, rgba(55, 146, 55, 0.86) 55%, rgba(104, 185, 70, 0.82) 100%) !important;
@@ -488,32 +486,10 @@ function cmp_render_foh_portal() {
         .foh-header-banner h2 { margin: 0 !important; color: #ffffff !important; font-weight: 800 !important; }
         .foh-header-banner p { margin: 5px 0 0 0 !important; color: #EEF7E3 !important; font-weight: 500 !important; }
 
-        /* Tablet FOH Glass Header (601px - 991px) */
-        @media (min-width: 601px) and (max-width: 991px) {
-            .foh-header-banner {
-                background: linear-gradient(125deg, rgba(220, 236, 201, 0.92) 0%, rgba(104, 185, 70, 0.42) 100%) !important;
-                border: 1.5px solid #379237 !important;
-                padding: 22px 24px !important;
-            }
-            .foh-header-banner h2 { color: #231F20 !important; }
-            .foh-header-banner p { color: #1B5E20 !important; }
-        }
-
-        /* Mobile FOH Glass Header (<= 600px) */
-        @media (max-width: 600px) {
-            .foh-header-banner {
-                background: linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%) !important;
-                border: 1.5px solid #68B946 !important;
-                border-radius: 16px !important;
-                padding: 18px !important;
-            }
-            .foh-header-banner h2 { color: #ffffff !important; font-size: 1.45em !important; }
-            .foh-header-banner p { color: #DCECC9 !important; font-size: 0.9em !important; }
-        }
-
+        /* KPI Tile Grid */
         .foh-tile-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 15px;
             margin-bottom: 25px;
         }
@@ -583,24 +559,338 @@ function cmp_render_foh_portal() {
         .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
         .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
 
-        /* Prevent WordPress wp-emoji from stretching to 100% container width */
-        .foh-tile img.emoji,
-        .foh-tile img.wp-smiley,
-        .sub-table img.emoji,
-        .sub-table img.wp-smiley {
-            width: 1em !important;
-            height: 1em !important;
-            max-width: 16px !important;
-            max-height: 16px !important;
-            display: inline-block !important;
-            vertical-align: -0.15em !important;
-            margin: 0 2px !important;
-            border: none !important;
-            box-shadow: none !important;
+        /* Tracking Metrics Interactive Card & Floating Popover Bubble (Option 1) */
+        .foh-metric-card {
+            background: #f8fafc;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            text-align: left;
+            width: 100%;
+            box-sizing: border-box;
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: box-shadow 0.15s ease, transform 0.12s ease, background-color 0.15s ease;
+        }
+        .foh-metric-card:hover,
+        .foh-metric-card.popover-open {
+            background: #ffffff;
+            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.10);
+        }
+        .foh-metric-card:active {
+            transform: scale(0.99);
+        }
+        .foh-metric-info-dot {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: #DCECC9;
+            color: #1B5E20;
+            font-size: 0.72em;
+            font-weight: 800;
+            margin-left: 5px;
+            vertical-align: middle;
+        }
+
+        /* Floating Popover Callout Bubble */
+        #foh-metric-popover-bubble {
+            position: fixed;
+            z-index: 10050;
+            background: #1B5E20;
+            color: #ffffff;
+            padding: 9px 14px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            font-weight: 600;
+            line-height: 1.35;
+            white-space: nowrap;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.25);
+            border: 1px solid #68B946;
+            pointer-events: none;
+            opacity: 0;
+            transform: translate(-50%, -6px);
+            transition: opacity 0.16s ease, transform 0.16s ease;
+            display: none;
+        }
+        #foh-metric-popover-bubble.visible {
+            opacity: 1;
+            transform: translate(-50%, -10px);
+        }
+        #foh-metric-popover-bubble::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -6px;
+            border-width: 6px;
+            border-style: solid;
+            border-color: #1B5E20 transparent transparent transparent;
+        }
+        #foh-metric-popover-bubble.flip-below::after {
+            top: auto;
+            bottom: 100%;
+            border-color: transparent transparent #1B5E20 transparent;
+        }
+
+        /* Touch-friendly Hit Zones for Inline Edit Buttons */
+        .toggle-account-edit,
+        .edit-financials-btn {
+            min-width: 26px;
+            min-height: 26px;
+            justify-content: center;
+            border-radius: 4px;
+        }
+        .toggle-remark-btn {
+            padding: 2px 6px !important;
+            border-radius: 4px;
+        }
+
+        /* Mobile Card Labels (Hidden on Desktop/Tablet) */
+        .foh-mobile-label {
+            display: none;
+        }
+
+        /* =========================================================
+           TABLET OPTIMIZATION (768px - 1024px) - Tuned Table
+           ========================================================= */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            .foh-header-banner {
+                background: linear-gradient(125deg, rgba(220, 236, 201, 0.94) 0%, rgba(104, 185, 70, 0.45) 100%) !important;
+                border: 1.5px solid #379237 !important;
+                padding: 20px 22px !important;
+            }
+            .foh-header-banner h2 { color: #231F20 !important; font-size: 1.5em !important; }
+            .foh-header-banner p { color: #1B5E20 !important; }
+
+            .foh-tile-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 12px;
+                margin-bottom: 18px;
+            }
+            .foh-tile {
+                padding: 14px 16px;
+            }
+            .foh-tile-count {
+                font-size: 1.85em !important;
+            }
+
+            /* Prevent Tablet Auto-Zoom on Inputs */
+            #fohSearch, #fohSort {
+                font-size: 16px !important;
+                padding: 11px 14px !important;
+            }
+
+            /* Tuned 6-Column Tablet Widths & Padding */
+            .sub-table {
+                font-size: 0.88em;
+            }
+            .sub-table th,
+            .sub-table td {
+                padding: 10px 8px;
+            }
+            .sub-table th:nth-child(1) { width: 8% !important; }
+            .sub-table th:nth-child(2) { width: 22% !important; }
+            .sub-table th:nth-child(3) { width: 22% !important; }
+            .sub-table th:nth-child(4) { width: 20% !important; }
+            .sub-table th:nth-child(5) { width: 15% !important; }
+            .sub-table th:nth-child(6) { width: 13% !important; }
+
+            /* 2x2 Touch Grid for Action Buttons on Tablet */
+            .foh-action-btn-row {
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 6px !important;
+            }
+            .foh-action-btn-row > form,
+            .foh-action-btn-row > button,
+            .foh-action-btn-row > a {
+                width: 100% !important;
+                height: 36px !important;
+            }
+            .foh-action-btn-row .status-btn {
+                height: 36px !important;
+            }
+
+            .toggle-account-edit,
+            .edit-financials-btn {
+                min-width: 32px;
+                min-height: 32px;
+            }
+        }
+
+        /* =========================================================
+           MOBILE OPTIMIZATION (<= 767px) - Vertical Customer Cards
+           ========================================================= */
+        @media (max-width: 767px) {
+            .foh-header-banner {
+                background: linear-gradient(145deg, rgba(55, 146, 55, 0.95) 0%, rgba(27, 94, 32, 0.92) 100%) !important;
+                border: 1.5px solid #68B946 !important;
+                border-radius: 16px !important;
+                padding: 18px !important;
+                margin-bottom: 18px !important;
+            }
+            .foh-header-banner h2 { color: #ffffff !important; font-size: 1.4em !important; }
+            .foh-header-banner p { color: #DCECC9 !important; font-size: 0.9em !important; }
+            .foh-header-actions {
+                width: 100%;
+                display: flex !important;
+                gap: 8px !important;
+            }
+            .foh-header-actions a {
+                flex: 1;
+                text-align: center;
+                padding: 10px 8px !important;
+                font-size: 0.85em !important;
+            }
+
+            /* Compact 3-Column KPI Bar on Mobile */
+            .foh-tile-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 8px;
+                margin-bottom: 16px;
+            }
+            .foh-tile {
+                padding: 12px 10px;
+                border-radius: 10px;
+            }
+            .foh-tile-title {
+                font-size: 0.68em !important;
+                line-height: 1.2;
+            }
+            .foh-tile-indicator {
+                display: none !important;
+            }
+            .foh-tile-count {
+                font-size: 1.55em !important;
+                margin-top: 6px !important;
+            }
+
+            /* Search & Sort Controls */
+            .foh-controls-bar {
+                padding: 12px !important;
+                gap: 10px !important;
+            }
+            #fohSearch, #fohSort {
+                font-size: 16px !important;
+                padding: 12px !important;
+            }
+
+            /* Transform Table into Vertical Customer Cards */
+            .sub-table {
+                border: none !important;
+                background: transparent !important;
+                box-shadow: none !important;
+                overflow: visible !important;
+            }
+            .sub-table thead {
+                display: none !important;
+            }
+            .sub-table tbody {
+                display: block !important;
+                width: 100% !important;
+            }
+            .sub-table tr.foh-row {
+                display: block !important;
+                background: #ffffff !important;
+                border: 1.5px solid #DCECC9 !important;
+                border-radius: 14px !important;
+                margin-bottom: 16px !important;
+                padding: 14px !important;
+                box-shadow: 0 6px 16px rgba(27, 94, 32, 0.06) !important;
+            }
+            .sub-table tr.foh-row td {
+                display: block !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
+                padding: 10px 0 !important;
+                border-bottom: 1px dashed #e2e8f0 !important;
+                text-align: left !important;
+            }
+            .sub-table tr.foh-row td:first-child {
+                padding-top: 0 !important;
+                padding-bottom: 10px !important;
+                border-bottom: 2px solid #EEF7E3 !important;
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+            }
+            .sub-table tr.foh-row td:last-child {
+                padding-bottom: 0 !important;
+                border-bottom: none !important;
+            }
+
+            .foh-mobile-label {
+                display: inline-block;
+                font-size: 0.72em;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: #1B5E20;
+                background: #EEF7E3;
+                padding: 3px 8px;
+                border-radius: 6px;
+                margin-bottom: 6px;
+            }
+            .sub-table tr.foh-row td:first-child .foh-mobile-label {
+                margin-bottom: 0;
+            }
+
+            /* Side-by-Side Expiry Input & Update Button on Mobile */
+            .ajax-expiry-form {
+                flex-direction: row !important;
+                align-items: center !important;
+                gap: 8px !important;
+                margin-top: 6px !important;
+            }
+            .ajax-expiry-form input[type="date"] {
+                flex: 1.3 !important;
+                height: 40px !important;
+                font-size: 15px !important;
+            }
+            .ajax-expiry-form .expiry-btn {
+                flex: 0.7 !important;
+                height: 40px !important;
+                font-size: 0.95em !important;
+            }
+
+            /* Touch-friendly Action Buttons on Mobile */
+            .foh-action-btn-row > form,
+            .foh-action-btn-row > button,
+            .foh-action-btn-row > a {
+                height: 40px !important;
+            }
+            .foh-action-btn-row .status-btn {
+                height: 40px !important;
+            }
+            .deposit-status-pill {
+                padding: 8px 12px !important;
+                font-size: 0.88em !important;
+            }
+            .deposit-status-select {
+                height: 40px !important;
+                font-size: 16px !important;
+            }
+
+            .toggle-account-edit,
+            .edit-financials-btn {
+                min-width: 34px;
+                min-height: 34px;
+                background: #EEF7E3 !important;
+            }
+
+            #foh-metric-popover-bubble {
+                white-space: normal;
+                max-width: 88vw;
+                text-align: center;
+            }
         }
     </style>
 
-    <div style="max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
+    <div class="foh-portal-wrapper" style="max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
         
         <!-- HEADER -->
         <div class="foh-header-banner">
@@ -608,49 +898,49 @@ function cmp_render_foh_portal() {
                 <h2>FOH Command Center</h2>
                 <p>The Cycle Bistro &mdash; Manage Customer Subscriptions</p>
             </div>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <div class="foh-header-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_foh_export_csv')); ?>" style="background: #379237; color: white; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; border: 1px solid rgba(220,236,201,0.5); transition: background 0.2s;">Export CSV</a>
                 <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #1B5E20; color: white; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; border: 1px solid rgba(220,236,201,0.5);">View Live Kitchen Report</a>
                 <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
 
-        <!-- INTERACTIVE KPI FILTER TILES -->
+        <!-- INTERACTIVE KPI FILTER TILES (Original 3 Tiles) -->
         <div class="foh-tile-grid">
             <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#1B5E20; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
+                    <div class="foh-tile-title" style="color:#1B5E20; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
+                <div class="foh-tile-count" style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
             </div>
 
             <div class="foh-tile tile-paused" onclick="switchTab(event, 'paused-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
+                    <div class="foh-tile-title" style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
+                <div class="foh-tile-count" style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
             </div>
 
             <div class="foh-tile tile-inactive" onclick="switchTab(event, 'inactive-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
+                    <div class="foh-tile-title" style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
+                <div class="foh-tile-count" style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
             </div>
         </div>
 
         <!-- SEARCH AND SORT BAR -->
-        <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #DCECC9; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-            <div style="flex: 1; min-width: 250px;">
-                <input type="text" id="fohSearch" placeholder="Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
+        <div class="foh-controls-bar" style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #DCECC9; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 240px;">
+                <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
             </div>
-            <div style="min-width: 260px;">
+            <div style="min-width: 240px;">
                 <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
                     <option value="default">Sort By: Default (Newest)</option>
-                    <option value="ending_soon">Needed Meal Selection</option>
+                    <option value="schedule_asc">Schedule Ending Soonest (Urgent Follow-Up)</option>
                     <option value="balance_asc">Balance Days Ending Soon</option>
                 </select>
             </div>
@@ -739,6 +1029,24 @@ function cmp_render_foh_portal() {
                             
                             $usage_percent = ($sub->total_days > 0) ? min(100, round(($sub->usage / $sub->total_days) * 100)) : 0;
                             
+                            // Tracking Metrics Border & Tap-to-Popover Content (No Over-Quota Highlighting)
+                            $metric_border_style = 'border: 1px solid #e2e8f0;';
+                            $formatted_last_date = !empty($sub->last_scheduled) ? date('M j, Y', strtotime($sub->last_scheduled)) : 'No Dates Scheduled';
+                            $sort_last_date = !empty($sub->last_scheduled) ? $sub->last_scheduled : '0000-00-00';
+
+                            if ($sub->pending_fill > 0) {
+                                $popover_text = 'Pending to Fill: ' . $sub->pending_fill . ' Days · Ends: ' . $formatted_last_date;
+                                if ($tab_key === 'active') {
+                                    if (empty($sub->last_scheduled) || $sub->last_scheduled <= $tomorrow_date) {
+                                        $metric_border_style = 'border: 1px solid #fecaca; border-left: 4px solid #dc2626;';
+                                    } elseif ($sub->last_scheduled <= $warn_date) {
+                                        $metric_border_style = 'border: 1px solid #fde68a; border-left: 4px solid #f59e0b;';
+                                    }
+                                }
+                            } else {
+                                $popover_text = 'All Days Filled · Ends: ' . $formatted_last_date;
+                            }
+
                             $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
                             if ($deposit_held === '') { $deposit_held = 'yes'; } 
                             
@@ -754,29 +1062,6 @@ function cmp_render_foh_portal() {
                             if ($allow_custom) $current_mode = 'custom';
 
                             $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
-
-                            // Option 3: Clean 3-Row Tracking Metrics Card with Left-Border Indicator & Hover Tooltip
-                            $last_sched_formatted = !empty($sub->last_scheduled_date) ? date('M j, Y', strtotime($sub->last_scheduled_date)) : '';
-                            $metric_border_style = 'border: 1px solid #e2e8f0;';
-                            if ($sub->pending_fill > 0) {
-                                if (empty($sub->last_scheduled_date)) {
-                                    $metric_tooltip = 'Pending to Fill: ' . $sub->pending_fill . ' Days | No dates scheduled';
-                                    if ($tab_key === 'active') {
-                                        $metric_border_style = 'border: 1px solid #fca5a5; border-left: 4px solid #dc2626;';
-                                    }
-                                } else {
-                                    $metric_tooltip = 'Pending to Fill: ' . $sub->pending_fill . ' Days | Last Scheduled: ' . $last_sched_formatted;
-                                    if ($tab_key === 'active') {
-                                        if ($sub->days_until_end <= 1) {
-                                            $metric_border_style = 'border: 1px solid #fca5a5; border-left: 4px solid #dc2626;';
-                                        } elseif ($sub->days_until_end <= 3) {
-                                            $metric_border_style = 'border: 1px solid #fcd34d; border-left: 4px solid #f59e0b;';
-                                        }
-                                    }
-                                }
-                            } else {
-                                $metric_tooltip = 'All Days Filled' . ($last_sched_formatted ? ' | Last Scheduled: ' . $last_sched_formatted : '');
-                            }
                         ?>
                         <tr class="foh-row" 
                             data-search="<?php echo $search_data; ?>" 
@@ -784,16 +1069,17 @@ function cmp_render_foh_portal() {
                             data-balance="<?php echo esc_attr($sub->balance); ?>" 
                             data-filled="<?php echo esc_attr($sub->filled); ?>" 
                             data-used="<?php echo esc_attr($sub->usage); ?>" 
-                            data-pending-fill="<?php echo esc_attr($sub->pending_fill); ?>"
-                            data-days-until-end="<?php echo esc_attr($sub->days_until_end); ?>"
-                            data-urgency-score="<?php echo esc_attr($sub->urgency_score); ?>"
+                            data-unfilled="<?php echo esc_attr($sub->pending_fill); ?>" 
+                            data-last-date="<?php echo esc_attr($sort_last_date); ?>" 
                             id="sub-row-<?php echo $sub->id; ?>">
                             
                             <td style="font-size: 1.1em; font-weight: bold; color: #231F20;">
-                                <?php echo $display_order_id; ?>
+                                <span class="foh-mobile-label">Order ID</span>
+                                <span><?php echo $display_order_id; ?></span>
                             </td>
                             
                             <td>
+                                <span class="foh-mobile-label">Customer Info</span>
                                 <div style="display: flex; flex-direction: column;">
                                     <div style="display:flex; justify-content:space-between; align-items:center;">
                                         <div>
@@ -810,7 +1096,7 @@ function cmp_render_foh_portal() {
                                     <div id="recipient-row-<?php echo $sub->id; ?>" style="display:<?php echo !empty($recipient_badge) ? 'block' : 'none'; ?>">
                                         <span id="recipient-val-<?php echo $sub->id; ?>"><?php echo $recipient_badge; ?></span>
                                     </div>
-                                    <span style="color: #555;"><?php echo esc_html($sub->user_email); ?></span>
+                                    <span style="color: #555; word-break: break-word;"><?php echo esc_html($sub->user_email); ?></span>
                                     <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 3px;">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#379237" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                                         <?php echo esc_html($phone); ?>
@@ -821,63 +1107,67 @@ function cmp_render_foh_portal() {
                                 <?php if ($can_edit_details): ?>
                                 <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
                                     <div style="display:flex; gap:6px; margin-bottom:8px;">
-                                        <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" placeholder="First Name" style="width:50%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
-                                        <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" placeholder="Last Name" style="width:50%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" placeholder="First Name" style="width:50%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" placeholder="Last Name" style="width:50%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:3px;">
                                     </div>
                                     <div style="margin-bottom:8px;">
-                                        <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($raw_recipient); ?>" placeholder="Recipient Name (Optional)" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($raw_recipient); ?>" placeholder="Recipient Name (Optional)" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:3px; box-sizing:border-box;">
                                     </div>
                                     
                                     <div style="margin-bottom:10px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
                                         <label style="font-size:0.8em; font-weight:bold; display:block; margin-bottom: 4px; color:#334155;">Plan Mode (Menu Type):</label>
-                                        <select id="edit-plan-mode-<?php echo $sub->id; ?>" style="width:100%; padding:4px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:3px;">
+                                        <select id="edit-plan-mode-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:3px;">
                                             <option value="standard" <?php selected($current_mode, 'standard'); ?>>Standard Menu (Strict Quotas)</option>
                                             <option value="flexible" <?php selected($current_mode, 'flexible'); ?>>Flexible Menu (Universal Dropdowns)</option>
                                             <option value="custom" <?php selected($current_mode, 'custom'); ?>>Bespoke Custom (Text Inputs)</option>
                                         </select>
                                     </div>
 
-                                    <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
+                                    <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
                                 </div>
                                 <?php endif; ?>
 
                             </td>
                             <td>
-                                <strong style="color: #231F20;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
-                                
-                                <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
-                                    <span style="color: #1B5E20; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
+                                <span class="foh-mobile-label">Plan Details</span>
+                                <div>
+                                    <strong style="color: #231F20;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
                                     
-                                    <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
-                                        <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#94a3b8; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Pricing">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                                        </button>
-                                    <?php endif; ?>
-                                </div>
+                                    <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                                        <span style="color: #1B5E20; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
+                                        
+                                        <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
+                                            <button class="edit-financials-btn" data-target="fin-edit-<?php echo $sub->id; ?>" style="background:none; border:none; color:#94a3b8; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Pricing">
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
 
-                                <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
-                                    <div id="fin-edit-<?php echo $sub->id; ?>" class="fin-edit-box" style="display:none; margin-top:8px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
-                                        <label style="font-size:0.8em; font-weight:bold;">Base Price (AED)</label>
-                                        <input type="number" step="0.01" id="fin-price-<?php echo $sub->id; ?>" value="<?php echo esc_attr($base_price); ?>" style="width:100%; padding:4px; margin-bottom:5px; font-size:0.9em;">
-                                        <label style="font-size:0.8em; font-weight:bold;">Discount (AED)</label>
-                                        <input type="number" step="0.01" id="fin-discount-<?php echo $sub->id; ?>" value="<?php echo esc_attr($discount); ?>" style="width:100%; padding:4px; margin-bottom:8px; font-size:0.9em;">
-                                        <button class="save-financials-btn" data-sub-id="<?php echo $sub->id; ?>" style="background:#379237; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Financials</button>
-                                    </div>
-                                <?php endif; ?>
-                                
-                                <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
-                                        <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
-                                    </div>
-                                    <div id="remark-box-<?php echo $sub->id; ?>" class="remark-edit-box" style="display:none; margin-top:8px;">
-                                        <textarea id="remark-text-<?php echo $sub->id; ?>" style="width:100%; padding:6px; border:1px solid #ccc; border-radius:4px; font-size:0.9em; min-height:60px; box-sizing:border-box;" placeholder="Add specific delivery or kitchen notes here..."><?php echo esc_textarea($remark_text); ?></textarea>
-                                        <button class="save-remark-btn" data-sub-id="<?php echo $sub->id; ?>" style="margin-top:4px; background:#379237; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-size:0.85em; cursor:pointer; width:100%;">Save Note</button>
+                                    <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
+                                        <div id="fin-edit-<?php echo $sub->id; ?>" class="fin-edit-box" style="display:none; margin-top:8px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:4px;">
+                                            <label style="font-size:0.8em; font-weight:bold;">Base Price (AED)</label>
+                                            <input type="number" step="0.01" id="fin-price-<?php echo $sub->id; ?>" value="<?php echo esc_attr($base_price); ?>" style="width:100%; padding:6px; margin-bottom:5px; font-size:0.9em; box-sizing:border-box;">
+                                            <label style="font-size:0.8em; font-weight:bold;">Discount (AED)</label>
+                                            <input type="number" step="0.01" id="fin-discount-<?php echo $sub->id; ?>" value="<?php echo esc_attr($discount); ?>" style="width:100%; padding:6px; margin-bottom:8px; font-size:0.9em; box-sizing:border-box;">
+                                            <button class="save-financials-btn" data-sub-id="<?php echo $sub->id; ?>" style="background:#379237; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Financials</button>
+                                        </div>
+                                    <?php endif; ?>
+                                    
+                                    <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                                            <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
+                                            <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
+                                        </div>
+                                        <div id="remark-box-<?php echo $sub->id; ?>" class="remark-edit-box" style="display:none; margin-top:8px;">
+                                            <textarea id="remark-text-<?php echo $sub->id; ?>" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; font-size:0.95em; min-height:60px; box-sizing:border-box;" placeholder="Add specific delivery or kitchen notes here..."><?php echo esc_textarea($remark_text); ?></textarea>
+                                            <button class="save-remark-btn" data-sub-id="<?php echo $sub->id; ?>" style="margin-top:4px; background:#379237; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Note</button>
+                                        </div>
                                     </div>
                                 </div>
                             </td>
                             <td style="text-align: center;">
-                                <div title="<?php echo esc_attr($metric_tooltip); ?>" style="background: #f8fafc; padding: 12px; border-radius: 6px; <?php echo $metric_border_style; ?> text-align: left; width: 100%; box-sizing: border-box; cursor: help;">
+                                <span class="foh-mobile-label">Tracking Metrics</span>
+                                <div class="foh-metric-card" style="<?php echo $metric_border_style; ?>" data-popover="<?php echo esc_attr($popover_text); ?>">
                                     <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
                                         <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
                                         <span style="color: #379237;">Used: <strong><?php echo $sub->usage; ?></strong></span>
@@ -886,22 +1176,26 @@ function cmp_render_foh_portal() {
                                         <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
                                     </div>
                                     <div style="color: #1B5E20; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
-                                        Balance: <?php echo $sub->balance; ?> Days
+                                        Balance: <?php echo $sub->balance; ?> Days <span class="foh-metric-info-dot">i</span>
                                     </div>
                                 </div>
                             </td>
                             <td>
-                                <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
-                                <form class="ajax-expiry-form" style="display: flex; flex-direction: column; gap: 5px; margin-top: 5px;">
-                                    <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
-                                    <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
-                                    <button type="submit" class="expiry-btn" style="width: 100%; background: #379237; color: white; border: none; padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s;">Update</button>
-                                </form>
+                                <span class="foh-mobile-label">Expiry</span>
+                                <div>
+                                    <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
+                                    <form class="ajax-expiry-form" style="display: flex; flex-direction: column; gap: 5px; margin-top: 5px;">
+                                        <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
+                                        <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                                        <button type="submit" class="expiry-btn" style="width: 100%; background: #379237; color: white; border: none; padding: 6px 10px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: background 0.2s;">Update</button>
+                                    </form>
+                                </div>
                             </td>
                             <td style="vertical-align: middle;">
+                                <span class="foh-mobile-label">Actions</span>
                                 <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%;">
                                     
-                                    <div style="display: flex; gap: 5px; width: 100%;">
+                                    <div class="foh-action-btn-row" style="display: flex; gap: 5px; width: 100%;">
                                         <?php if($tab_key !== 'inactive'): ?>
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
@@ -954,17 +1248,20 @@ function cmp_render_foh_portal() {
         <div id="fohPagination" style="margin-top: 20px; display: flex; gap: 5px; justify-content: center; flex-wrap: wrap;"></div>
     </div>
 
+    <!-- FLOATING POPOVER BUBBLE FOR TRACKING METRICS (OPTION 1) -->
+    <div id="foh-metric-popover-bubble"></div>
+
     <!-- MANAGE DAYS AJAX MODAL -->
     <div id="foh-manage-days-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
-        <div style="background:#fff; width:90%; max-width:600px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh; overflow:hidden;">
+        <div style="background:#fff; width:92%; max-width:600px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; max-height:90vh; overflow:hidden;">
             <div style="padding:20px; border-bottom:1px solid #DCECC9; background:#EEF7E3; display:flex; justify-content:space-between; align-items:center;">
                 <h3 style="margin:0; color:#1B5E20;">Hold Upcoming Days</h3>
-                <button class="close-modal-btn" style="background:none; border:none; font-size:1.5em; cursor:pointer; color:#1B5E20;">&times;</button>
+                <button class="close-modal-btn" style="background:none; border:none; font-size:1.6em; cursor:pointer; color:#1B5E20; line-height:1;">&times;</button>
             </div>
             <div style="padding:20px; overflow-y:auto; flex:1;" id="foh-modal-body">
                 <p style="text-align:center; color:#64748b;">Loading...</p>
             </div>
-            <div style="padding:20px; border-top:1px solid #e2e8f0; background:#f8fafc; display:flex; justify-content:space-between; align-items:center;">
+            <div style="padding:16px 20px; border-top:1px solid #e2e8f0; background:#f8fafc; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                 <div style="display:flex; align-items:center; gap:6px; font-size:0.85em; color:#64748b;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> 
                     = Past Kitchen Cut-off
@@ -987,6 +1284,105 @@ function cmp_render_foh_portal() {
 
     document.addEventListener("DOMContentLoaded", function() {
         
+        // =========================================================
+        // OPTION 1: TAP-TO-POPOVER BUBBLE FOR TRACKING METRICS
+        // =========================================================
+        const popoverBubble = document.getElementById('foh-metric-popover-bubble');
+        let activeMetricCard = null;
+        let popoverTimer = null;
+
+        function showMetricPopover(card, autoHideMs) {
+            const text = card.getAttribute('data-popover');
+            if (!text) return;
+
+            if (activeMetricCard && activeMetricCard !== card) {
+                activeMetricCard.classList.remove('popover-open');
+            }
+            activeMetricCard = card;
+            card.classList.add('popover-open');
+
+            popoverBubble.textContent = text;
+            popoverBubble.style.display = 'block';
+            popoverBubble.classList.remove('flip-below');
+
+            const rect = card.getBoundingClientRect();
+            const bubbleRect = popoverBubble.getBoundingClientRect();
+
+            let leftPos = rect.left + (rect.width / 2);
+            const halfWidth = bubbleRect.width / 2;
+            if (leftPos - halfWidth < 10) leftPos = halfWidth + 10;
+            if (leftPos + halfWidth > window.innerWidth - 10) leftPos = window.innerWidth - halfWidth - 10;
+
+            let topPos = rect.top - bubbleRect.height - 4;
+            if (topPos < 12) {
+                topPos = rect.bottom + 14;
+                popoverBubble.classList.add('flip-below');
+            }
+
+            popoverBubble.style.left = leftPos + 'px';
+            popoverBubble.style.top = topPos + 'px';
+
+            requestAnimationFrame(() => {
+                popoverBubble.classList.add('visible');
+            });
+
+            if (popoverTimer) clearTimeout(popoverTimer);
+            if (autoHideMs > 0) {
+                popoverTimer = setTimeout(hideMetricPopover, autoHideMs);
+            }
+        }
+
+        function hideMetricPopover() {
+            if (popoverTimer) {
+                clearTimeout(popoverTimer);
+                popoverTimer = null;
+            }
+            if (activeMetricCard) {
+                activeMetricCard.classList.remove('popover-open');
+                activeMetricCard = null;
+            }
+            popoverBubble.classList.remove('visible');
+            setTimeout(() => {
+                if (!activeMetricCard) {
+                    popoverBubble.style.display = 'none';
+                }
+            }, 160);
+        }
+
+        document.querySelectorAll('.foh-metric-card').forEach(card => {
+            // Tap / Click support for Tablet, Mobile, and Desktop
+            card.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (activeMetricCard === this && popoverBubble.classList.contains('visible')) {
+                    hideMetricPopover();
+                } else {
+                    showMetricPopover(this, 3500);
+                }
+            });
+
+            // Hover support for Desktop mice
+            card.addEventListener('mouseenter', function() {
+                if (window.matchMedia('(hover: hover)').matches) {
+                    showMetricPopover(this, 0);
+                }
+            });
+            card.addEventListener('mouseleave', function() {
+                if (window.matchMedia('(hover: hover)').matches) {
+                    hideMetricPopover();
+                }
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            if (activeMetricCard && !e.target.closest('.foh-metric-card')) {
+                hideMetricPopover();
+            }
+        });
+
+        window.addEventListener('scroll', function() {
+            if (activeMetricCard) hideMetricPopover();
+        }, { passive: true });
+
         // Expiry Form
         document.querySelectorAll('.ajax-expiry-form').forEach(form => {
             form.addEventListener('submit', function(e) {
@@ -1379,7 +1775,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // MANAGE DAYS AJAX MODAL LOGIC
+        // MANAGE DAYS AJAX MODAL LOGIC (Touch-Optimized)
         const modal = document.getElementById('foh-manage-days-modal');
         const modalBody = document.getElementById('foh-modal-body');
         const confirmBtn = document.getElementById('foh-confirm-cancel-btn');
@@ -1405,16 +1801,16 @@ function cmp_render_foh_portal() {
                     if(res.data.length === 0) {
                         modalBody.innerHTML = '<p style="text-align:center; padding:20px; color:#64748b;">No upcoming scheduled days available to manage.</p>';
                     } else {
-                        let html = '<div style="margin-bottom:10px;"><label style="font-weight:bold; cursor:pointer;"><input type="checkbox" id="modal-select-all"> Select All Dates</label></div>';
+                        let html = '<div style="margin-bottom:12px;"><label style="font-weight:bold; cursor:pointer; display:inline-flex; align-items:center; gap:8px;"><input type="checkbox" id="modal-select-all" style="width:20px; height:20px; cursor:pointer;"> Select All Dates</label></div>';
                         html += '<table style="width:100%; border-collapse:collapse; font-size:0.95em;">';
-                        html += '<thead><tr style="background:#EEF7E3; color:#1B5E20; border-bottom:2px solid #DCECC9;"><th style="padding:10px; text-align:left; width:40px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
+                        html += '<thead><tr style="background:#EEF7E3; color:#1B5E20; border-bottom:2px solid #DCECC9;"><th style="padding:10px; text-align:left; width:44px;"></th><th style="padding:10px; text-align:left;">Date</th><th style="padding:10px; text-align:left;">Status</th></tr></thead><tbody>';
                         
                         res.data.forEach(function(day) {
                             let warning = day.past_cutoff ? ' <span title="Past Cut-off Time. Kitchen may have already started prepping this." style="cursor:help; display:inline-block;">' + warningSvg + '</span>' : '';
-                            html += '<tr style="border-bottom:1px solid #e2e8f0;">';
-                            html += '<td style="padding:10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'"></td>';
-                            html += '<td style="padding:10px;">' + day.date + warning + '</td>';
-                            html += '<td style="padding:10px; color:#64748b;">' + day.status + '</td>';
+                            html += '<tr class="modal-tappable-row" style="border-bottom:1px solid #e2e8f0; cursor:pointer;">';
+                            html += '<td style="padding:12px 10px;"><input type="checkbox" class="modal-day-checkbox" value="'+day.id+'" style="width:20px; height:20px; cursor:pointer;"></td>';
+                            html += '<td style="padding:12px 10px; font-weight:500;">' + day.date + warning + '</td>';
+                            html += '<td style="padding:12px 10px; color:#64748b;">' + day.status + '</td>';
                             html += '</tr>';
                         });
                         html += '</tbody></table>';
@@ -1431,6 +1827,12 @@ function cmp_render_foh_portal() {
                             } else if (jQuery('.modal-day-checkbox:not(:checked)').length === 0) {
                                 jQuery('#modal-select-all').prop('checked', true);
                             }
+                        });
+                        // Allow tapping anywhere on the row to toggle the checkbox on tablets/mobile
+                        jQuery('.modal-tappable-row').on('click', function(e) {
+                            if (jQuery(e.target).is('input[type="checkbox"]')) return;
+                            const cb = jQuery(this).find('.modal-day-checkbox');
+                            cb.prop('checked', !cb.prop('checked')).trigger('change');
                         });
                     }
                 } else {
@@ -1568,6 +1970,7 @@ function cmp_render_foh_portal() {
         const query = document.getElementById('fohSearch').value.toLowerCase();
         const sortVal = document.getElementById('fohSort').value;
         const tbody = document.querySelector('#' + currentTab + ' tbody');
+        if (!tbody) return;
         
         let allRows = Array.from(tbody.querySelectorAll('.foh-row'));
         
@@ -1576,28 +1979,41 @@ function cmp_render_foh_portal() {
             return query === '' || searchData.includes(query);
         });
 
-        // Numeric Sorting Engine
-        if (sortVal === 'ending_soon') {
+        // Sorting Engine
+        if (sortVal === 'schedule_asc') {
+            // Schedule Ending Soonest (Urgent Follow-Up):
+            // 1. Plans with unfilled days (unfilled > 0) come first, ordered by earliest last-scheduled date ('0000-00-00' first)
+            // 2. Fully filled plans come after, ordered by last-scheduled date
             filtered.sort((a, b) => {
-                let scoreA = parseInt(a.getAttribute('data-urgency-score'));
-                let scoreB = parseInt(b.getAttribute('data-urgency-score'));
-                if (isNaN(scoreA)) scoreA = 999999;
-                if (isNaN(scoreB)) scoreB = 999999;
-                if (scoreA !== scoreB) return scoreA - scoreB;
-                let idA = parseInt(a.id.replace('sub-row-', '')) || 0;
-                let idB = parseInt(b.id.replace('sub-row-', '')) || 0;
-                return idB - idA;
+                const unfilledA = parseInt(a.getAttribute('data-unfilled')) || 0;
+                const unfilledB = parseInt(b.getAttribute('data-unfilled')) || 0;
+                const hasUnfilledA = unfilledA > 0 ? 0 : 1;
+                const hasUnfilledB = unfilledB > 0 ? 0 : 1;
+
+                if (hasUnfilledA !== hasUnfilledB) {
+                    return hasUnfilledA - hasUnfilledB;
+                }
+
+                const dateA = a.getAttribute('data-last-date') || '0000-00-00';
+                const dateB = b.getAttribute('data-last-date') || '0000-00-00';
+                if (dateA !== dateB) {
+                    return dateA.localeCompare(dateB);
+                }
+
+                return unfilledB - unfilledA;
             });
         } else if (sortVal === 'balance_asc') {
+            // Balance Days Ending Soon:
+            // Lowest remaining balance days first, with earliest last-scheduled date as tie-breaker
             filtered.sort((a, b) => {
-                let balA = parseInt(a.getAttribute('data-balance')) || 0;
-                let balB = parseInt(b.getAttribute('data-balance')) || 0;
-                if (balA !== balB) return balA - balB;
-                let endA = parseInt(a.getAttribute('data-days-until-end'));
-                let endB = parseInt(b.getAttribute('data-days-until-end'));
-                if (isNaN(endA) || endA === -999) endA = 9999;
-                if (isNaN(endB) || endB === -999) endB = 9999;
-                return endA - endB;
+                const balA = parseInt(a.getAttribute('data-balance')) || 0;
+                const balB = parseInt(b.getAttribute('data-balance')) || 0;
+                if (balA !== balB) {
+                    return balA - balB;
+                }
+                const dateA = a.getAttribute('data-last-date') || '9999-12-31';
+                const dateB = b.getAttribute('data-last-date') || '9999-12-31';
+                return dateA.localeCompare(dateB);
             });
         } else {
             // Restore default sort (Descending ID)
@@ -1649,7 +2065,7 @@ function cmp_render_foh_portal() {
         for(let i = 1; i <= totalPages; i++) {
             const btn = document.createElement('button');
             btn.innerText = i;
-            btn.style.padding = "6px 14px";
+            btn.style.padding = "8px 15px";
             btn.style.border = "1px solid #cbd5e1";
             btn.style.background = (i === currentPage) ? "#379237" : "#fff";
             btn.style.color = (i === currentPage) ? "#fff" : "#231F20";
