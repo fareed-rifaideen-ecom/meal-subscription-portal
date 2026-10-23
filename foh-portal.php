@@ -179,6 +179,7 @@ function cmp_foh_export_csv() {
         wp_die('Access Denied'); 
     }
 
+    date_default_timezone_set('Asia/Dubai');
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
@@ -191,7 +192,7 @@ function cmp_foh_export_csv() {
     $output = fopen('php://output', 'w');
     fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Used Days', 'Balance Days', 'Start Date', 'Expiry Date', 'FOH Remarks'));
+    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Details', 'Plan Mode', 'Base Price (AED)', 'Discount (AED)', 'Final Paid (AED)', 'Status', 'Bag Status', 'Filled Days', 'Total Days', 'Pending to Fill', 'Used Days', 'Balance Days', 'Last Scheduled Date', 'Start Date', 'Expiry Date', 'FOH Remarks'));
 
     foreach ($all_subs as $sub) {
         $order = wc_get_order($sub->wc_order_id);
@@ -206,14 +207,18 @@ function cmp_foh_export_csv() {
 
         $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
 
-        $filled_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result NOT IN ('Cancelled', 'Returned')", $sub->id));
-        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
-        $balance = max(0, $sub->total_days - $usage_days);
+        $filled_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+        $usage_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $last_scheduled_date = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+
+        $total_days_int = intval($sub->total_days);
+        $balance = max(0, $total_days_int - $usage_days);
+        $pending_fill = max(0, $total_days_int - $filled_days);
 
         $status_label = 'Active';
         if ($sub->status === 'paused') {
             $status_label = 'Paused';
-        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
+        } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
             $status_label = 'Inactive/Expired';
         }
 
@@ -275,8 +280,11 @@ function cmp_foh_export_csv() {
             $status_label,
             $bag_status_text,
             $filled_days,
+            $total_days_int,
+            $pending_fill,
             $usage_days,
             $balance,
+            !empty($last_scheduled_date) ? $last_scheduled_date : 'None',
             date('Y-m-d', strtotime($sub->start_date)),
             date('Y-m-d', strtotime($sub->expiry_date)),
             $remarks
@@ -408,18 +416,42 @@ function cmp_render_foh_portal() {
     
     $tabs = array('active' => array(), 'paused' => array(), 'inactive' => array());
     $today = date('Y-m-d H:i:s');
+    $today_date = date('Y-m-d');
 
     foreach ($all_subs as $sub) {
-        $filled_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result NOT IN ('Cancelled', 'Returned')", $sub->id));
-        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $filled_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
+        $usage_days = (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $last_scheduled_date = $wpdb->get_var($wpdb->prepare("SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id));
         
+        $total_days_int = intval($sub->total_days);
         $sub->filled = $filled_days;
         $sub->usage = $usage_days;
-        $sub->balance = max(0, $sub->total_days - $usage_days);
-        
+        $sub->balance = max(0, $total_days_int - $usage_days);
+        $sub->pending_fill = max(0, $total_days_int - $filled_days);
+        $sub->last_scheduled_date = $last_scheduled_date;
+
+        if (!empty($last_scheduled_date)) {
+            $sub->days_until_end = (int) round((strtotime($last_scheduled_date) - strtotime($today_date)) / 86400);
+        } else {
+            $sub->days_until_end = -999;
+        }
+
+        // Calculate urgency score for "Schedule Ending Soonest (Urgent Follow-Up)" sort
+        // Group 1 (Top): Plans with unfilled days (Filled < Total), ordered by earliest last scheduled date (or no dates scheduled first)
+        // Group 2 (Bottom): Plans where all days are filled (Filled >= Total)
+        if ($sub->pending_fill > 0) {
+            if (empty($last_scheduled_date)) {
+                $sub->urgency_score = -5000 - $sub->pending_fill;
+            } else {
+                $sub->urgency_score = $sub->days_until_end;
+            }
+        } else {
+            $sub->urgency_score = 100000 + ($sub->days_until_end > -999 ? $sub->days_until_end : 9999);
+        }
+
         if ($sub->status === 'paused') {
             $tabs['paused'][] = $sub;
-        } elseif ($usage_days >= $sub->total_days || $sub->expiry_date < $today) {
+        } elseif ($usage_days >= $total_days_int || $sub->expiry_date < $today) {
             $tabs['inactive'][] = $sub;
         } else {
             $tabs['active'][] = $sub;
@@ -540,8 +572,45 @@ function cmp_render_foh_portal() {
         .foh-tab-content { display: none; }
         .foh-tab-content.active { display: block; }
         
-        .sub-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e2e8f0; font-size: 0.95em; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05); }
-        .sub-table th { padding: 12px; border-bottom: 2px solid #DCECC9; text-align: left; background: #EEF7E3; color: #1B5E20; }
+        /* Sticky Header Table Architecture */
+        .foh-table-wrap {
+            overflow: visible;
+        }
+        .sub-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            font-size: 0.95em;
+            border-radius: 12px;
+            box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05);
+        }
+        .sub-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            padding: 12px;
+            border-bottom: 2px solid #DCECC9;
+            text-align: left;
+            background: #EEF7E3;
+            color: #1B5E20;
+            box-shadow: 0 2px 6px rgba(27, 94, 32, 0.08);
+        }
+        body.admin-bar .sub-table thead th {
+            top: 32px;
+        }
+        @media (min-width: 601px) and (max-width: 782px) {
+            body.admin-bar .sub-table thead th {
+                top: 46px;
+            }
+        }
+        .sub-table thead th:first-child {
+            border-top-left-radius: 11px;
+        }
+        .sub-table thead th:last-child {
+            border-top-right-radius: 11px;
+        }
         .sub-table td { padding: 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
         .foh-row { transition: background-color 0.2s ease; }
         .foh-row:hover { background-color: #f8fafc !important; }
@@ -550,6 +619,432 @@ function cmp_render_foh_portal() {
         .metric-progress-bar { width: 100%; background-color: #e2e8f0; border-radius: 4px; height: 6px; margin: 6px 0; overflow: hidden; }
         .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
         .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
+
+        /* Prevent WordPress wp-emoji from stretching to 100% container width */
+        .foh-tile img.emoji,
+        .foh-tile img.wp-smiley,
+        .sub-table img.emoji,
+        .sub-table img.wp-smiley {
+            width: 1em !important;
+            height: 1em !important;
+            max-width: 16px !important;
+            max-height: 16px !important;
+            display: inline-block !important;
+            vertical-align: -0.15em !important;
+            margin: 0 2px !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Tracking Metrics Interactive Card & Floating Popover Bubble (Option 1) */
+        .foh-metric-card {
+            background: #f8fafc;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            text-align: left;
+            width: 100%;
+            box-sizing: border-box;
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            transition: box-shadow 0.15s ease, transform 0.12s ease, background-color 0.15s ease;
+        }
+        .foh-metric-card:hover,
+        .foh-metric-card.popover-open {
+            background: #ffffff;
+            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.10);
+        }
+        .foh-metric-card:active {
+            transform: scale(0.99);
+        }
+        .foh-metric-top-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85em;
+            margin-bottom: 2px;
+            gap: 4px;
+            white-space: nowrap;
+        }
+        .foh-metric-balance-row {
+            color: #1B5E20;
+            font-size: 1.02em;
+            font-weight: bold;
+            text-align: center;
+            border-top: 1px solid #cbd5e1;
+            padding-top: 6px;
+            margin-top: 4px;
+            white-space: nowrap;
+        }
+        .foh-metric-info-dot {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            background: #DCECC9;
+            color: #1B5E20;
+            font-size: 0.72em;
+            font-weight: 800;
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+
+        /* Floating Popover Callout Bubble */
+        #foh-metric-popover-bubble {
+            position: fixed;
+            z-index: 10050;
+            background: #1B5E20;
+            color: #ffffff;
+            padding: 9px 14px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            font-weight: 600;
+            line-height: 1.35;
+            white-space: nowrap;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.25);
+            border: 1px solid #68B946;
+            pointer-events: none;
+            opacity: 0;
+            transform: translate(-50%, -6px);
+            transition: opacity 0.16s ease, transform 0.16s ease;
+            display: none;
+        }
+        #foh-metric-popover-bubble.visible {
+            opacity: 1;
+            transform: translate(-50%, -10px);
+        }
+        #foh-metric-popover-bubble::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -6px;
+            border-width: 6px;
+            border-style: solid;
+            border-color: #1B5E20 transparent transparent transparent;
+        }
+        #foh-metric-popover-bubble.flip-below::after {
+            top: auto;
+            bottom: 100%;
+            border-color: transparent transparent #1B5E20 transparent;
+        }
+
+        .foh-mobile-label {
+            display: none;
+        }
+
+        /* =========================================================
+           TABLET OPTIMIZATION (768px - 1024px) - Portrait & Landscape
+           ========================================================= */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            .foh-tile-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 10px;
+                margin-bottom: 16px;
+            }
+            .foh-tile {
+                padding: 13px 15px;
+            }
+            .foh-tile-count {
+                font-size: 1.8em !important;
+            }
+
+            #fohSearch, #fohSort {
+                font-size: 15px !important;
+                padding: 10px 12px !important;
+            }
+
+            /* Fixed Table Layout & Proportional Column Widths */
+            .sub-table {
+                table-layout: fixed;
+                font-size: 0.80em;
+            }
+            .sub-table thead th {
+                padding: 9px 6px;
+                font-size: 0.92em;
+                white-space: nowrap;
+            }
+            .sub-table td {
+                padding: 9px 6px;
+            }
+
+            /* Optimized Column Widths: Narrower Expiry (13%) & Order ID (7%) to give space to Metrics & Info */
+            .sub-table thead th:nth-child(1), .sub-table td:nth-child(1) { width: 7% !important; }
+            .sub-table thead th:nth-child(2), .sub-table td:nth-child(2) { width: 23% !important; }
+            .sub-table thead th:nth-child(3), .sub-table td:nth-child(3) { width: 23% !important; }
+            .sub-table thead th:nth-child(4), .sub-table td:nth-child(4) { width: 21% !important; }
+            .sub-table thead th:nth-child(5), .sub-table td:nth-child(5) { width: 13% !important; }
+            .sub-table thead th:nth-child(6), .sub-table td:nth-child(6) { width: 13% !important; }
+
+            /* Order ID: Keep on a single line */
+            .foh-order-id-cell {
+                font-size: 0.95em !important;
+                white-space: nowrap;
+            }
+
+            /* Customer Info: Proportional Typography */
+            .foh-customer-name {
+                font-size: 1.02em !important;
+            }
+            .foh-customer-meta {
+                font-size: 0.88em !important;
+                line-height: 1.3;
+                word-break: break-word;
+            }
+            .foh-recipient-pill {
+                font-size: 0.78em !important;
+                padding: 1px 6px !important;
+                margin-left: 0 !important;
+                margin-top: 2px;
+            }
+
+            /* Plan Details & Remarks Box: Fit on single line without awkward wrapping */
+            .foh-plan-title {
+                font-size: 0.98em !important;
+                line-height: 1.25;
+            }
+            .foh-price-line {
+                font-size: 0.92em !important;
+                gap: 4px !important;
+            }
+            .foh-remark-container {
+                padding: 5px 6px !important;
+                margin-top: 5px !important;
+            }
+            .foh-remark-header {
+                font-size: 0.85em !important;
+                gap: 4px;
+            }
+            .toggle-remark-btn {
+                font-size: 0.85em !important;
+                flex-shrink: 0;
+            }
+
+            /* Tracking Metrics Box: Scaled to fit Filled/Used and Balance on 1 line each */
+            .foh-metric-card {
+                padding: 7px 8px !important;
+            }
+            .foh-metric-top-row {
+                font-size: 0.82em !important;
+            }
+            .metric-progress-bar {
+                height: 5px !important;
+                margin: 4px 0 !important;
+            }
+            .foh-metric-balance-row {
+                font-size: 0.88em !important;
+                padding-top: 4px !important;
+                margin-top: 3px !important;
+            }
+            .foh-metric-info-dot {
+                width: 13px;
+                height: 13px;
+                font-size: 0.68em;
+                margin-left: 2px;
+            }
+
+            /* Expiry Column: Compact Date Input & Button */
+            .foh-started-label {
+                font-size: 0.78em !important;
+                display: block;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                line-height: 1.2;
+            }
+            .ajax-expiry-form {
+                gap: 4px !important;
+                margin-top: 3px !important;
+            }
+            .ajax-expiry-form input[type="date"] {
+                padding: 3px 4px !important;
+                font-size: 0.82em !important;
+                height: 26px !important;
+            }
+            .ajax-expiry-form .expiry-btn {
+                padding: 4px 6px !important;
+                font-size: 0.82em !important;
+                height: 24px !important;
+                line-height: 1;
+            }
+
+            /* Actions Column: Compact 2x2 Grid & Smaller Bag Deposit Pill */
+            .foh-action-btn-row {
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 4px !important;
+            }
+            .foh-action-btn-row > form,
+            .foh-action-btn-row > button,
+            .foh-action-btn-row > a {
+                width: 100% !important;
+                height: 28px !important;
+            }
+            .foh-action-btn-row .status-btn {
+                height: 28px !important;
+            }
+            .foh-action-btn-row svg {
+                width: 13px !important;
+                height: 13px !important;
+            }
+            .foh-deposit-divider {
+                padding-top: 5px !important;
+            }
+            .deposit-status-pill {
+                font-size: 0.68em !important;
+                padding: 3px 4px !important;
+                border-radius: 6px !important;
+                line-height: 1.15 !important;
+                letter-spacing: -0.2px;
+            }
+            .deposit-status-select {
+                font-size: 0.75em !important;
+                padding: 2px !important;
+            }
+        }
+
+        /* =========================================================
+           MOBILE OPTIMIZATION (<= 767px) - Vertical Customer Cards
+           ========================================================= */
+        @media (max-width: 767px) {
+            .foh-header-actions {
+                width: 100%;
+                display: flex !important;
+                gap: 8px !important;
+            }
+            .foh-header-actions a {
+                flex: 1;
+                text-align: center;
+                padding: 10px 8px !important;
+                font-size: 0.85em !important;
+            }
+
+            .foh-tile-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 8px;
+                margin-bottom: 16px;
+            }
+            .foh-tile {
+                padding: 12px 10px;
+                border-radius: 10px;
+            }
+            .foh-tile-title {
+                font-size: 0.68em !important;
+                line-height: 1.2;
+            }
+            .foh-tile-indicator {
+                display: none !important;
+            }
+            .foh-tile-count {
+                font-size: 1.55em !important;
+                margin-top: 6px !important;
+            }
+
+            #fohSearch, #fohSort {
+                font-size: 16px !important;
+                padding: 12px !important;
+            }
+
+            .sub-table {
+                border: none !important;
+                background: transparent !important;
+                box-shadow: none !important;
+            }
+            .sub-table thead {
+                display: none !important;
+            }
+            .sub-table tbody {
+                display: block !important;
+                width: 100% !important;
+            }
+            .sub-table tr.foh-row {
+                display: block !important;
+                background: #ffffff !important;
+                border: 1.5px solid #DCECC9 !important;
+                border-radius: 14px !important;
+                margin-bottom: 16px !important;
+                padding: 14px !important;
+                box-shadow: 0 6px 16px rgba(27, 94, 32, 0.06) !important;
+            }
+            .sub-table tr.foh-row td {
+                display: block !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
+                padding: 10px 0 !important;
+                border-bottom: 1px dashed #e2e8f0 !important;
+                text-align: left !important;
+            }
+            .sub-table tr.foh-row td:first-child {
+                padding-top: 0 !important;
+                padding-bottom: 10px !important;
+                border-bottom: 2px solid #EEF7E3 !important;
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+            }
+            .sub-table tr.foh-row td:last-child {
+                padding-bottom: 0 !important;
+                border-bottom: none !important;
+            }
+
+            .foh-mobile-label {
+                display: inline-block;
+                font-size: 0.72em;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: #1B5E20;
+                background: #EEF7E3;
+                padding: 3px 8px;
+                border-radius: 6px;
+                margin-bottom: 6px;
+            }
+            .sub-table tr.foh-row td:first-child .foh-mobile-label {
+                margin-bottom: 0;
+            }
+
+            .ajax-expiry-form {
+                flex-direction: row !important;
+                align-items: center !important;
+                gap: 8px !important;
+                margin-top: 6px !important;
+            }
+            .ajax-expiry-form input[type="date"] {
+                flex: 1.3 !important;
+                height: 40px !important;
+                font-size: 15px !important;
+            }
+            .ajax-expiry-form .expiry-btn {
+                flex: 0.7 !important;
+                height: 40px !important;
+                font-size: 0.95em !important;
+            }
+
+            .foh-action-btn-row > form,
+            .foh-action-btn-row > button,
+            .foh-action-btn-row > a {
+                height: 40px !important;
+            }
+            .foh-action-btn-row .status-btn {
+                height: 40px !important;
+            }
+            .deposit-status-pill {
+                padding: 8px 12px !important;
+                font-size: 0.88em !important;
+            }
+            .deposit-status-select {
+                height: 40px !important;
+                font-size: 16px !important;
+            }
+
+            #foh-metric-popover-bubble {
+                white-space: normal;
+                max-width: 88vw;
+                text-align: center;
+            }
+        }
     </style>
 
     <div style="max-width: 1200px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
@@ -560,7 +1055,7 @@ function cmp_render_foh_portal() {
                 <h2>FOH Command Center</h2>
                 <p>The Cycle Bistro &mdash; Manage Customer Subscriptions</p>
             </div>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <div class="foh-header-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_foh_export_csv')); ?>" style="background: #379237; color: white; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; border: 1px solid rgba(220,236,201,0.5); transition: background 0.2s;">Export CSV</a>
                 <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #1B5E20; color: white; text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; border: 1px solid rgba(220,236,201,0.5);">View Live Kitchen Report</a>
                 <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight:bold;">Log Out</a>
@@ -571,48 +1066,46 @@ function cmp_render_foh_portal() {
         <div class="foh-tile-grid">
             <div class="foh-tile tile-active active" onclick="switchTab(event, 'active-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#1B5E20; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
+                    <div class="foh-tile-title" style="color:#1B5E20; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Active Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
+                <div class="foh-tile-count" style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['active']); ?></div>
             </div>
 
             <div class="foh-tile tile-paused" onclick="switchTab(event, 'paused-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
+                    <div class="foh-tile-title" style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Paused Customers</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
+                <div class="foh-tile-count" style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['paused']); ?></div>
             </div>
 
             <div class="foh-tile tile-inactive" onclick="switchTab(event, 'inactive-tab')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
+                    <div class="foh-tile-title" style="color:#64748b; font-size:0.85em; font-weight:800; text-transform:uppercase; letter-spacing:0.5px;">Inactive / Expired</div>
                     <span class="foh-tile-indicator">Viewing</span>
                 </div>
-                <div style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
+                <div class="foh-tile-count" style="font-size:2.2em; font-weight:900; color:#231F20; margin-top:4px; line-height:1;"><?php echo count($tabs['inactive']); ?></div>
             </div>
         </div>
 
         <!-- SEARCH AND SORT BAR -->
         <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #DCECC9; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 250px;">
-                <input type="text" id="fohSearch" placeholder="🔍 Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
+                <input type="text" id="fohSearch" placeholder="Search by Order ID, Name, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
             </div>
-            <div style="min-width: 200px;">
+            <div style="min-width: 260px;">
                 <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
                     <option value="default">Sort By: Default (Newest)</option>
-                    <option value="balance_asc">Balance Days (Low to High)</option>
-                    <option value="balance_desc">Balance Days (High to Low)</option>
-                    <option value="filled_desc">Filled Days (High to Low)</option>
-                    <option value="used_desc">Used Days (High to Low)</option>
+                    <option value="ending_soon">Schedule Ending Soonest (Urgent Follow-Up)</option>
+                    <option value="balance_asc">Balance Days Ending Soon</option>
                 </select>
             </div>
         </div>
 
         <?php foreach(array('active', 'paused', 'inactive') as $tab_key): ?>
         <div id="<?php echo $tab_key; ?>-tab" class="foh-tab-content <?php echo $tab_key == 'active' ? 'active' : ''; ?>">
-            <div style="overflow-x: auto;">
+            <div class="foh-table-wrap">
                 <table class="sub-table">
                     <thead>
                         <tr>
@@ -649,7 +1142,7 @@ function cmp_render_foh_portal() {
                             
                             if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
                                 $raw_recipient = $potential_recipient;
-                                $recipient_badge = ' <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; margin-left:8px; display:inline-block; margin-bottom: 5px;">For: <strong>' . esc_html($potential_recipient) . '</strong></span>';
+                                $recipient_badge = ' <span class="foh-recipient-pill" style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; margin-left:8px; display:inline-block; margin-bottom: 5px;">For: <strong>' . esc_html($potential_recipient) . '</strong></span>';
                                 array_pop($plan_parts);
                                 $core_plan_name = implode(' - ', $plan_parts);
                             } else {
@@ -691,7 +1184,7 @@ function cmp_render_foh_portal() {
                             $short_remark = mb_strimwidth($remark_text, 0, 32, '...');
                             $preview_html = empty($remark_text) ? '<span style="color:#94a3b8; font-style:italic; font-weight:normal;">No remarks</span>' : esc_html($short_remark);
                             
-                            $usage_percent = ($sub->total_days > 0) ? round(($sub->usage / $sub->total_days) * 100) : 0;
+                            $usage_percent = ($sub->total_days > 0) ? min(100, round(($sub->usage / $sub->total_days) * 100)) : 0;
                             
                             $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
                             if ($deposit_held === '') { $deposit_held = 'yes'; } 
@@ -708,23 +1201,50 @@ function cmp_render_foh_portal() {
                             if ($allow_custom) $current_mode = 'custom';
 
                             $can_edit_details = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
+
+                            // Clean 3-Row Tracking Metrics Card with Left-Border Indicator & Tap-to-Popover Bubble
+                            $last_sched_formatted = !empty($sub->last_scheduled_date) ? date('M j, Y', strtotime($sub->last_scheduled_date)) : 'No Dates Scheduled';
+                            $metric_border_style = 'border: 1px solid #e2e8f0;';
+                            if ($sub->pending_fill > 0) {
+                                $metric_popover = 'Pending to Fill: ' . $sub->pending_fill . ' Days · Ends: ' . $last_sched_formatted;
+                                if ($tab_key === 'active') {
+                                    if (empty($sub->last_scheduled_date) || $sub->days_until_end <= 1) {
+                                        $metric_border_style = 'border: 1px solid #fca5a5; border-left: 4px solid #dc2626;';
+                                    } elseif ($sub->days_until_end <= 3) {
+                                        $metric_border_style = 'border: 1px solid #fcd34d; border-left: 4px solid #f59e0b;';
+                                    }
+                                }
+                            } else {
+                                $metric_popover = 'All Days Filled · Ends: ' . $last_sched_formatted;
+                            }
                         ?>
-                        <tr class="foh-row" data-search="<?php echo $search_data; ?>" data-plan="<?php echo $plan_data; ?>" data-balance="<?php echo esc_attr($sub->balance); ?>" data-filled="<?php echo esc_attr($sub->filled); ?>" data-used="<?php echo esc_attr($sub->usage); ?>" id="sub-row-<?php echo $sub->id; ?>">
+                        <tr class="foh-row" 
+                            data-search="<?php echo $search_data; ?>" 
+                            data-plan="<?php echo $plan_data; ?>" 
+                            data-balance="<?php echo esc_attr($sub->balance); ?>" 
+                            data-filled="<?php echo esc_attr($sub->filled); ?>" 
+                            data-used="<?php echo esc_attr($sub->usage); ?>" 
+                            data-pending-fill="<?php echo esc_attr($sub->pending_fill); ?>"
+                            data-days-until-end="<?php echo esc_attr($sub->days_until_end); ?>"
+                            data-urgency-score="<?php echo esc_attr($sub->urgency_score); ?>"
+                            id="sub-row-<?php echo $sub->id; ?>">
                             
-                            <td style="font-size: 1.1em; font-weight: bold; color: #231F20;">
-                                <?php echo $display_order_id; ?>
+                            <td class="foh-order-id-cell" style="font-size: 1.1em; font-weight: bold; color: #231F20;">
+                                <span class="foh-mobile-label">Order ID</span>
+                                <span><?php echo $display_order_id; ?></span>
                             </td>
                             
                             <td>
+                                <span class="foh-mobile-label">Customer Info</span>
                                 <div style="display: flex; flex-direction: column;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; gap: 4px;">
                                         <div>
                                             <a href="<?php echo site_url('/my-meal-portal/?admin_edit_sub=' . $sub->id); ?>" target="_blank" style="text-decoration: none;" title="Open Customer Portal in New Tab">
-                                                <strong style="font-size: 1.1em; color: #379237; border-bottom: 1px dotted #379237; transition: color 0.2s;" id="name-val-<?php echo $sub->id; ?>" onmouseover="this.style.color='#1B5E20'" onmouseout="this.style.color='#379237'"><?php echo esc_html($full_name ?: 'Customer'); ?></strong>
+                                                <strong class="foh-customer-name" style="font-size: 1.1em; color: #379237; border-bottom: 1px dotted #379237; transition: color 0.2s;" id="name-val-<?php echo $sub->id; ?>" onmouseover="this.style.color='#1B5E20'" onmouseout="this.style.color='#379237'"><?php echo esc_html($full_name ?: 'Customer'); ?></strong>
                                             </a>
                                         </div>
                                         <?php if ($can_edit_details): ?>
-                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:0; display:inline-flex; align-items:center; transition:color 0.2s;" title="Edit Account & Mode">
+                                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:0; display:inline-flex; align-items:center; flex-shrink:0; transition:color 0.2s;" title="Edit Account & Mode">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                             </button>
                                         <?php endif; ?>
@@ -732,9 +1252,9 @@ function cmp_render_foh_portal() {
                                     <div id="recipient-row-<?php echo $sub->id; ?>" style="display:<?php echo !empty($recipient_badge) ? 'block' : 'none'; ?>">
                                         <span id="recipient-val-<?php echo $sub->id; ?>"><?php echo $recipient_badge; ?></span>
                                     </div>
-                                    <span style="color: #555;"><?php echo esc_html($sub->user_email); ?></span>
-                                    <span style="color: #555; display: inline-flex; align-items: center; gap: 5px; margin-top: 3px;">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#379237" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                    <span class="foh-customer-meta" style="color: #555;"><?php echo esc_html($sub->user_email); ?></span>
+                                    <span class="foh-customer-meta" style="color: #555; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" style="flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="#379237" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                                         <?php echo esc_html($phone); ?>
                                     </span>
                                 </div>
@@ -765,9 +1285,10 @@ function cmp_render_foh_portal() {
 
                             </td>
                             <td>
-                                <strong style="color: #231F20;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
+                                <span class="foh-mobile-label">Plan Details</span>
+                                <strong class="foh-plan-title" style="color: #231F20;" id="tab-title-<?php echo $sub->id; ?>"><?php echo esc_html($core_plan_name); ?></strong><br>
                                 
-                                <div style="margin-top:5px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                                <div class="foh-price-line" style="margin-top:4px; display:flex; align-items:center; flex-wrap:wrap; gap:6px;">
                                     <span style="color: #1B5E20; font-weight:bold;" id="price-display-<?php echo $sub->id; ?>">Price: <?php echo $price_display; ?></span>
                                     
                                     <?php if (current_user_can('manage_options') || current_user_can('menu_manager')): ?>
@@ -787,8 +1308,8 @@ function cmp_render_foh_portal() {
                                     </div>
                                 <?php endif; ?>
                                 
-                                <div style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <div class="foh-remark-container" style="margin-top: 8px; background: #f8fafc; padding: 8px; border-radius: 4px; border: 1px solid #e2e8f0;">
+                                    <div class="foh-remark-header" style="display:flex; justify-content:space-between; align-items:center;">
                                         <span style="font-size:0.9em; color:#475569;"><strong id="remark-preview-<?php echo $sub->id; ?>"><?php echo $preview_html; ?></strong></span>
                                         <button class="toggle-remark-btn" data-target="remark-box-<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; padding:0;">Edit</button>
                                     </div>
@@ -799,21 +1320,23 @@ function cmp_render_foh_portal() {
                                 </div>
                             </td>
                             <td style="text-align: center;">
-                                <div style="background: #f8fafc; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; text-align: left; width: 100%; box-sizing: border-box;">
-                                    <div style="display: flex; justify-content: space-between; font-size: 0.85em; margin-bottom: 2px;">
+                                <span class="foh-mobile-label">Tracking Metrics</span>
+                                <div class="foh-metric-card" data-popover="<?php echo esc_attr($metric_popover); ?>" style="<?php echo $metric_border_style; ?>">
+                                    <div class="foh-metric-top-row">
                                         <span style="color: #64748b;">Filled: <strong><?php echo $sub->filled; ?>/<?php echo $sub->total_days; ?></strong></span>
                                         <span style="color: #379237;">Used: <strong><?php echo $sub->usage; ?></strong></span>
                                     </div>
                                     <div class="metric-progress-bar">
                                         <div class="metric-progress-fill" style="width: <?php echo $usage_percent; ?>%;"></div>
                                     </div>
-                                    <div style="color: #1B5E20; font-size: 1.05em; font-weight: bold; text-align: center; border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 4px;">
-                                        Balance: <?php echo $sub->balance; ?> Days
+                                    <div class="foh-metric-balance-row">
+                                        Balance: <?php echo $sub->balance; ?> Days <span class="foh-metric-info-dot">i</span>
                                     </div>
                                 </div>
                             </td>
                             <td>
-                                <span style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span><br>
+                                <span class="foh-mobile-label">Expiry</span>
+                                <span class="foh-started-label" style="font-size: 0.85em; color: #666;">Started: <?php echo date('M j, Y', strtotime($sub->start_date)); ?></span>
                                 <form class="ajax-expiry-form" style="display: flex; flex-direction: column; gap: 5px; margin-top: 5px;">
                                     <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
                                     <input type="date" name="new_expiry" value="<?php echo date('Y-m-d', strtotime($sub->expiry_date)); ?>" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
@@ -821,9 +1344,10 @@ function cmp_render_foh_portal() {
                                 </form>
                             </td>
                             <td style="vertical-align: middle;">
-                                <div style="display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%;">
+                                <span class="foh-mobile-label">Actions</span>
+                                <div style="display: flex; flex-direction: column; gap: 6px; align-items: center; width: 100%;">
                                     
-                                    <div style="display: flex; gap: 5px; width: 100%;">
+                                    <div class="foh-action-btn-row" style="display: flex; gap: 5px; width: 100%;">
                                         <?php if($tab_key !== 'inactive'): ?>
                                         <form class="ajax-status-form" style="margin: 0; flex: 1; display: flex;">
                                             <input type="hidden" name="sub_id" value="<?php echo $sub->id; ?>">
@@ -850,7 +1374,7 @@ function cmp_render_foh_portal() {
                                         <?php endif; ?>
                                     </div>
                                     
-                                    <div style="width: 100%; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+                                    <div class="foh-deposit-divider" style="width: 100%; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
                                         <div class="deposit-pill-wrapper" data-user-id="<?php echo $sub->user_id; ?>">
                                             <span class="deposit-status-pill" style="color: <?php echo $status_color; ?>; font-weight: bold; background: <?php echo $status_bg; ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; display: inline-block; text-align: center; cursor: pointer; border: 1px solid <?php echo $status_color; ?>; transition: 0.2s; width: 100%; box-sizing: border-box;" title="Click to Change Status">
                                                 <?php echo $status_text; ?> &#9662;
@@ -875,6 +1399,9 @@ function cmp_render_foh_portal() {
 
         <div id="fohPagination" style="margin-top: 20px; display: flex; gap: 5px; justify-content: center; flex-wrap: wrap;"></div>
     </div>
+
+    <!-- FLOATING POPOVER BUBBLE FOR TRACKING METRICS -->
+    <div id="foh-metric-popover-bubble"></div>
 
     <!-- MANAGE DAYS AJAX MODAL -->
     <div id="foh-manage-days-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:10000; align-items:center; justify-content:center;">
@@ -909,6 +1436,101 @@ function cmp_render_foh_portal() {
 
     document.addEventListener("DOMContentLoaded", function() {
         
+        // Tap-to-Popover Bubble for Tracking Metrics (Tablet, Mobile & Desktop)
+        const popoverBubble = document.getElementById('foh-metric-popover-bubble');
+        let activeMetricCard = null;
+        let popoverTimer = null;
+
+        function showMetricPopover(card, autoHideMs) {
+            const text = card.getAttribute('data-popover');
+            if (!text) return;
+
+            if (activeMetricCard && activeMetricCard !== card) {
+                activeMetricCard.classList.remove('popover-open');
+            }
+            activeMetricCard = card;
+            card.classList.add('popover-open');
+
+            popoverBubble.textContent = text;
+            popoverBubble.style.display = 'block';
+            popoverBubble.classList.remove('flip-below');
+
+            const rect = card.getBoundingClientRect();
+            const bubbleRect = popoverBubble.getBoundingClientRect();
+
+            let leftPos = rect.left + (rect.width / 2);
+            const halfWidth = bubbleRect.width / 2;
+            if (leftPos - halfWidth < 10) leftPos = halfWidth + 10;
+            if (leftPos + halfWidth > window.innerWidth - 10) leftPos = window.innerWidth - halfWidth - 10;
+
+            let topPos = rect.top - bubbleRect.height - 4;
+            if (topPos < 12) {
+                topPos = rect.bottom + 14;
+                popoverBubble.classList.add('flip-below');
+            }
+
+            popoverBubble.style.left = leftPos + 'px';
+            popoverBubble.style.top = topPos + 'px';
+
+            requestAnimationFrame(() => {
+                popoverBubble.classList.add('visible');
+            });
+
+            if (popoverTimer) clearTimeout(popoverTimer);
+            if (autoHideMs > 0) {
+                popoverTimer = setTimeout(hideMetricPopover, autoHideMs);
+            }
+        }
+
+        function hideMetricPopover() {
+            if (popoverTimer) {
+                clearTimeout(popoverTimer);
+                popoverTimer = null;
+            }
+            if (activeMetricCard) {
+                activeMetricCard.classList.remove('popover-open');
+                activeMetricCard = null;
+            }
+            popoverBubble.classList.remove('visible');
+            setTimeout(() => {
+                if (!activeMetricCard) {
+                    popoverBubble.style.display = 'none';
+                }
+            }, 160);
+        }
+
+        document.querySelectorAll('.foh-metric-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (activeMetricCard === this && popoverBubble.classList.contains('visible')) {
+                    hideMetricPopover();
+                } else {
+                    showMetricPopover(this, 3500);
+                }
+            });
+
+            card.addEventListener('mouseenter', function() {
+                if (window.matchMedia('(hover: hover)').matches) {
+                    showMetricPopover(this, 0);
+                }
+            });
+            card.addEventListener('mouseleave', function() {
+                if (window.matchMedia('(hover: hover)').matches) {
+                    hideMetricPopover();
+                }
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            if (activeMetricCard && !e.target.closest('.foh-metric-card')) {
+                hideMetricPopover();
+            }
+        });
+
+        window.addEventListener('scroll', function() {
+            if (activeMetricCard) hideMetricPopover();
+        }, { passive: true });
+
         // Expiry Form
         document.querySelectorAll('.ajax-expiry-form').forEach(form => {
             form.addEventListener('submit', function(e) {
@@ -1494,31 +2116,32 @@ function cmp_render_foh_portal() {
         let allRows = Array.from(tbody.querySelectorAll('.foh-row'));
         
         let filtered = allRows.filter(row => {
-            const searchData = row.getAttribute('data-search');
+            const searchData = row.getAttribute('data-search') || '';
             return query === '' || searchData.includes(query);
         });
 
         // Numeric Sorting Engine
-        if (sortVal !== 'default') {
+        if (sortVal === 'ending_soon') {
             filtered.sort((a, b) => {
-                let valA = 0, valB = 0;
-                
-                if (sortVal === 'balance_asc' || sortVal === 'balance_desc') {
-                    valA = parseInt(a.getAttribute('data-balance')) || 0;
-                    valB = parseInt(b.getAttribute('data-balance')) || 0;
-                } else if (sortVal === 'filled_desc') {
-                    valA = parseInt(a.getAttribute('data-filled')) || 0;
-                    valB = parseInt(b.getAttribute('data-filled')) || 0;
-                } else if (sortVal === 'used_desc') {
-                    valA = parseInt(a.getAttribute('data-used')) || 0;
-                    valB = parseInt(b.getAttribute('data-used')) || 0;
-                }
-
-                if (sortVal.includes('_asc')) {
-                    return valA - valB;
-                } else {
-                    return valB - valA;
-                }
+                let scoreA = parseInt(a.getAttribute('data-urgency-score'));
+                let scoreB = parseInt(b.getAttribute('data-urgency-score'));
+                if (isNaN(scoreA)) scoreA = 999999;
+                if (isNaN(scoreB)) scoreB = 999999;
+                if (scoreA !== scoreB) return scoreA - scoreB;
+                let idA = parseInt(a.id.replace('sub-row-', '')) || 0;
+                let idB = parseInt(b.id.replace('sub-row-', '')) || 0;
+                return idB - idA;
+            });
+        } else if (sortVal === 'balance_asc') {
+            filtered.sort((a, b) => {
+                let balA = parseInt(a.getAttribute('data-balance')) || 0;
+                let balB = parseInt(b.getAttribute('data-balance')) || 0;
+                if (balA !== balB) return balA - balB;
+                let endA = parseInt(a.getAttribute('data-days-until-end'));
+                let endB = parseInt(b.getAttribute('data-days-until-end'));
+                if (isNaN(endA) || endA === -999) endA = 9999;
+                if (isNaN(endB) || endB === -999) endB = 9999;
+                return endA - endB;
             });
         } else {
             // Restore default sort (Descending ID)
