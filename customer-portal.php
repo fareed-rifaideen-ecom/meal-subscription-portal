@@ -1765,6 +1765,15 @@ function cmp_render_customer_portal() {
                 opacity: 0.18 !important;
                 pointer-events: none !important;
             }
+
+            /* Part 3: Prevent iOS Safari Auto-Zoom on Tap while preserving compact card height */
+            @supports (-webkit-touch-callout: none) {
+                .cmp-table select,
+                .cmp-table input[type="text"],
+                .cmp-table input[type="date"] {
+                    font-size: 16px !important;
+                }
+            }
         }
     </style>
 
@@ -2370,6 +2379,11 @@ function cmp_render_customer_portal() {
         var customerMinDate   = "<?php echo esc_js($customer_min_date); ?>";
         var todayYmd          = "<?php echo esc_js($today_ymd); ?>";
 
+        // Detect iPhone / iOS WebKit & Touch Devices for Native Date Picker Handling
+        var isIOSOrTouch = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                           ('ontouchstart' in window && $(window).width() <= 1024);
+
         // =========================================================
         // UNSAVED STATE ("DIRTY STATE") & BEFOREUNLOAD EXIT GUARD
         // =========================================================
@@ -2555,6 +2569,26 @@ function cmp_render_customer_portal() {
             $('html, body').stop(true).animate({ scrollTop: 0 }, 350);
         });
 
+        // Helper: Ensure a candidate YYYY-MM-DD date is not a blackout date (advances to next non-blackout day)
+        function ensureNonBlackoutDate(dateStr) {
+            if (!dateStr) return '';
+            var d = new Date(dateStr + 'T00:00:00');
+            if (isNaN(d.getTime())) return dateStr;
+            var safety = 0;
+            while (safety < 60) {
+                var yyyy = d.getFullYear();
+                var mm   = String(d.getMonth() + 1).padStart(2, '0');
+                var dd   = String(d.getDate()).padStart(2, '0');
+                var candidate = yyyy + '-' + mm + '-' + dd;
+                if (!blackoutDates.includes(candidate)) {
+                    return candidate;
+                }
+                d.setDate(d.getDate() + 1);
+                safety++;
+            }
+            return dateStr;
+        }
+
         // Helper: Calculate next valid non-blackout YYYY-MM-DD date for min attribute enforcement
         function getNextValidDeliveryDate(baseDateStr) {
             var d = new Date(baseDateStr + 'T00:00:00');
@@ -2575,6 +2609,67 @@ function cmp_render_customer_portal() {
                 safety++;
             } while (safety < 60);
             return '';
+        }
+
+        // Helper: Compute the earliest valid date for a specific row (used to pre-seed iOS date picker & snap invalid picks)
+        function getRowEarliestValidDate(rowInput) {
+            var container = rowInput.closest('.cmp-portal-container');
+            var rowNumber = parseInt(rowInput.data('row')) || 1;
+            var candidate = (!canBypassDateLock && customerMinDate) ? customerMinDate : todayYmd;
+
+            var minAttr = rowInput.attr('min');
+            if (minAttr && minAttr > candidate) {
+                candidate = minAttr;
+            }
+
+            if (rowNumber > 1 && container.length) {
+                for (var r = rowNumber - 1; r >= 1; r--) {
+                    var $prevInput = container.find('.cmp-date-picker[data-row="' + r + '"]');
+                    var $prevRow   = $prevInput.closest('tr.cmp-day-row');
+                    if ($prevInput.length && !$prevRow.hasClass('status-void') && $prevInput.val()) {
+                        var nextAfterPrev = getNextValidDeliveryDate($prevInput.val());
+                        if (nextAfterPrev && nextAfterPrev > candidate) {
+                            candidate = nextAfterPrev;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return ensureNonBlackoutDate(candidate);
+        }
+
+        // Helper: Cascade min date constraints to subsequent rows and refresh row UI
+        function applyValidDateToRow(rowInput, selectedDate) {
+            var container = rowInput.closest('.cmp-portal-container');
+            var rowNumber = parseInt(rowInput.data('row'));
+            var totalDays = parseInt(container.data('total-days'));
+
+            if (selectedDate) {
+                var nextDateString = getNextValidDeliveryDate(selectedDate);
+                for (var i = rowNumber + 1; i <= (totalDays + 10); i++) {
+                    var targetInput = container.find('.cmp-date-picker[data-row="' + i + '"]');
+                    if (targetInput.length) {
+                        if (!canBypassDateLock && nextDateString) {
+                            targetInput.attr('min', nextDateString);
+                            if (targetInput.val() && targetInput.val() < nextDateString) {
+                                targetInput.val('');
+                            }
+                        } else {
+                            targetInput.removeAttr('min');
+                        }
+                    }
+                }
+            }
+
+            var rowElement = rowInput.closest('tr');
+            rowElement.removeClass('is-collapsed-desktop');
+            var hasFood = populateDynamicDropdowns(rowElement);
+            if (hasFood) {
+                calculateMacros(rowElement);
+                enforceMealQuota(rowElement);
+            }
+            evaluateRowDirtyState(rowElement);
         }
 
         // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text
@@ -3143,49 +3238,78 @@ function cmp_render_customer_portal() {
             }
         });
 
-        $('.cmp-date-picker').on('change', function() {
-            var selectedDate = $(this).val();
+        // =========================================================
+        // iPHONE (iOS SAFARI) & CROSS-BROWSER DATE PICKER ENGINE
+        // =========================================================
+
+        // Part 1: Pre-seed empty date inputs on touchstart/focus so iOS Safari opens directly on the earliest valid date instead of "Today"
+        $(document).on('touchstart focus', '.cmp-date-picker', function() {
             var rowInput = $(this);
-            var container = rowInput.closest('.cmp-portal-container');
-            var rowNumber = parseInt(rowInput.data('row'));
-            var totalDays = parseInt(container.data('total-days'));
+            if (rowInput.is(':disabled') || canBypassDateLock) return;
 
-            if(selectedDate) {
-                if (!canBypassDateLock && (selectedDate <= todayYmd || (customerMinDate && selectedDate < customerMinDate))) {
-                    alert('Past dates, today\'s date, and dates past the cut-off time cannot be selected. Earliest available date: ' + customerMinDate);
-                    rowInput.val('');
+            if (!rowInput.val()) {
+                var seedDate = getRowEarliestValidDate(rowInput);
+                if (seedDate) {
+                    rowInput.attr('min', seedDate);
+                    rowInput.val(seedDate);
+                    applyValidDateToRow(rowInput, seedDate);
+                }
+            }
+        });
+
+        // Shared validator for Date Picker (defers blocking alerts on iOS while wheel/calendar is still open)
+        function handleDatePickerValidation(rowInput, isBlurEvent) {
+            var selectedDate = (rowInput.val() || '').toString().trim();
+            var rowElement   = rowInput.closest('tr');
+
+            if (!selectedDate) {
+                rowElement.removeClass('is-collapsed-desktop');
+                populateDynamicDropdowns(rowElement);
+                evaluateRowDirtyState(rowElement);
+                return;
+            }
+
+            var earliestForRow = getRowEarliestValidDate(rowInput);
+            var isLockedDate   = !canBypassDateLock && (selectedDate <= todayYmd || (customerMinDate && selectedDate < customerMinDate) || (earliestForRow && selectedDate < earliestForRow));
+            var isBlackout     = blackoutDates.includes(selectedDate);
+
+            if (isLockedDate || isBlackout) {
+                // On iPhone/touch devices, if the user is still scrolling inside the open date picker, wait until they tap "Done" (blur)
+                if (isIOSOrTouch && !isBlurEvent && rowInput.is(':focus')) {
                     return;
                 }
-                if(blackoutDates.includes(selectedDate)) {
+
+                var snap         = rowElement.data('cmp-snapshot');
+                var fallbackDate = (snap && snap.date && snap.date >= earliestForRow && !blackoutDates.includes(snap.date))
+                    ? snap.date
+                    : earliestForRow;
+
+                if (isLockedDate) {
+                    alert('Past dates, today\'s date, and dates past the cut-off time cannot be selected. Earliest available date: ' + (earliestForRow || customerMinDate));
+                } else {
                     alert('The kitchen is closed on this date. Please select a different day.');
-                    rowInput.val('');
-                    return;
                 }
-                var nextDateString = getNextValidDeliveryDate(selectedDate);
 
-                for(var i = rowNumber + 1; i <= (totalDays + 10); i++) { 
-                    var targetInput = container.find('.cmp-date-picker[data-row="' + i + '"]');
-                    if (targetInput.length) {
-                        if (!canBypassDateLock && nextDateString) {
-                            targetInput.attr('min', nextDateString);
-                            if (targetInput.val() && targetInput.val() < nextDateString) {
-                                targetInput.val('');
-                            }
-                        } else {
-                            targetInput.removeAttr('min');
-                        }
-                    }
+                // Snap to the earliest valid date on iOS/Touch so tapping the field again never traps the user in an empty-input loop
+                if (isIOSOrTouch && fallbackDate) {
+                    rowInput.val(fallbackDate);
+                    applyValidDateToRow(rowInput, fallbackDate);
+                } else {
+                    rowInput.val((snap && snap.date) ? snap.date : '');
+                    applyValidDateToRow(rowInput, rowInput.val());
                 }
+                return;
             }
 
-            var rowElement = $(this).closest('tr');
-            rowElement.removeClass('is-collapsed-desktop');
-            var hasFood = populateDynamicDropdowns(rowElement);
-            if (hasFood) {
-                calculateMacros(rowElement); 
-                enforceMealQuota(rowElement);
-            }
-            evaluateRowDirtyState(rowElement);
+            applyValidDateToRow(rowInput, selectedDate);
+        }
+
+        $('.cmp-date-picker').on('change', function() {
+            handleDatePickerValidation($(this), false);
+        });
+
+        $('.cmp-date-picker').on('blur', function() {
+            handleDatePickerValidation($(this), true);
         });
 
         // =========================================================
