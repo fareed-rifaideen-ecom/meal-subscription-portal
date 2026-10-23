@@ -328,10 +328,11 @@ function cmp_render_kitchen_portal() {
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
 
-    $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : date('Y-m-d');
-    $target_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
-    $prev_date = date('Y-m-d', strtotime($selected_date . ' - 1 day'));
-    $next_date = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
+    $today_ymd     = date('Y-m-d');
+    $selected_date = isset($_GET['prep_date']) ? sanitize_text_field($_GET['prep_date']) : $today_ymd;
+    $target_date   = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
+    $prev_date     = date('Y-m-d', strtotime($selected_date . ' - 1 day'));
+    $next_date     = date('Y-m-d', strtotime($selected_date . ' + 1 day'));
 
     // Exclude paused subscriptions and cancelled days from the Kitchen View
     $logs = $wpdb->get_results( $wpdb->prepare(
@@ -531,11 +532,163 @@ function cmp_render_kitchen_portal() {
     </script>
 
     <style>
-        .k-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85em; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.06); border-radius: 10px; overflow: hidden; }
-        .k-table th { background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; padding: 12px 8px; text-align: left; }
-        .k-table td { padding: 10px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
-        
-        .chk-large { transform: scale(3.5); cursor: pointer; margin: 10px; accent-color: #379237; }
+        #kp-portal-root {
+            --kp-admin-offset: 0px;
+            --kp-banner-height: 82px;
+            max-width: 1400px;
+            margin: 0 auto;
+            font-family: inherit;
+            padding: 0 12px;
+            box-sizing: border-box;
+        }
+        #kp-portal-root *, #kp-portal-root *::before, #kp-portal-root *::after {
+            box-sizing: border-box;
+        }
+
+        /* ==========================================
+           OPTION 1A: DYNAMIC STICKY STACKING
+           ========================================== */
+        #kp-sticky-banner {
+            position: sticky;
+            top: var(--kp-admin-offset, 0px);
+            z-index: 100;
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            text-align: center;
+            border-bottom: 3px solid #379237;
+            margin-bottom: 16px;
+            padding: 14px 10px 10px 10px;
+            transition: padding 0.2s ease, box-shadow 0.2s ease;
+        }
+        #kp-sticky-banner.kp-is-scrolled {
+            box-shadow: 0 4px 14px rgba(27, 94, 32, 0.08);
+        }
+        #kp-sticky-banner h1 {
+            margin: 0;
+            font-size: 2em;
+            line-height: 1.2;
+            color: #231F20;
+            transition: font-size 0.2s ease;
+        }
+        #kp-sticky-banner h3 {
+            margin: 5px 0 0 0;
+            font-size: 1.25em;
+            line-height: 1.25;
+            color: #379237;
+            transition: font-size 0.2s ease, margin 0.2s ease;
+        }
+
+        .k-table-wrap {
+            width: 100%;
+            overflow: visible;
+        }
+
+        /* Important: Do NOT use overflow:hidden on .k-table so position:sticky works on thead th */
+        .k-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: #fff;
+            font-size: 0.85em;
+            box-shadow: 0 4px 14px rgba(27, 94, 32, 0.06);
+            border-radius: 10px;
+            table-layout: fixed;
+        }
+        .k-table thead th {
+            position: sticky;
+            top: calc(var(--kp-admin-offset, 0px) + var(--kp-banner-height, 82px));
+            z-index: 95;
+            background: linear-gradient(135deg, #1B5E20 0%, #379237 100%);
+            color: #fff;
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 700;
+            box-shadow: 0 2px 6px rgba(27, 94, 32, 0.16);
+            border-bottom: 2px solid #1B5E20;
+        }
+        .k-table thead th:first-child {
+            border-top-left-radius: 10px;
+        }
+        .k-table thead th:last-child {
+            border-top-right-radius: 10px;
+        }
+        .k-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: middle;
+            word-wrap: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        /* Touch-friendly Checkboxes without layout overflow */
+        .chk-large {
+            width: 28px;
+            height: 28px;
+            transform: scale(1.25);
+            cursor: pointer;
+            margin: 6px auto;
+            accent-color: #379237;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .chk-large:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
+
+        /* ==========================================
+           OPTION 2C: SMART COLOR-CODED POS CUE
+           ========================================== */
+        .kp-pos-cell-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+        }
+        .kp-pos-cue {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            font-size: 10px;
+            font-weight: 800;
+            line-height: 1.15;
+            padding: 3px 6px;
+            border-radius: 999px;
+            white-space: nowrap;
+            letter-spacing: 0.01em;
+            border: 1px solid transparent;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            transition: all 0.2s ease;
+        }
+        /* Future Eating Date (e.g. prepping Day-Before orders for tomorrow) */
+        .kp-pos-cue.cue-upcoming {
+            background: #fffbeb;
+            color: #b45309;
+            border-color: #fde68a;
+        }
+        /* Eating Date is Today (Actionable today) */
+        .kp-pos-cue.cue-today {
+            background: #dcfce7;
+            color: #166534;
+            border-color: #86efac;
+        }
+        /* Eating Date Passed & Still Unchecked */
+        .kp-pos-cue.cue-overdue {
+            background: #fef2f2;
+            color: #b91c1c;
+            border-color: #fecaca;
+        }
+        /* POS Checked / Completed */
+        .kp-pos-cue.cue-done {
+            background: #f0fdf4;
+            color: #15803d;
+            border-color: #bbf7d0;
+            opacity: 0.88;
+        }
+
         .k-customer-meta { margin: 2px 0; color: #555; display: flex; align-items: center; gap: 5px; }
         .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; color: #379237; }
         
@@ -544,18 +697,268 @@ function cmp_render_kitchen_portal() {
         .k-tab-btn { background: #ffffff; border: 1px solid #cbd5e1; padding: 10px 20px; border-radius: 8px; font-weight: bold; color: #231F20; cursor: pointer; transition: 0.2s; }
         .k-tab-btn.active { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; color: #fff !important; border-color: #1B5E20 !important; box-shadow: 0 4px 12px rgba(55, 146, 55, 0.25); }
 
-        .k-glass-toolbar { background: linear-gradient(135deg, rgba(220, 236, 201, 0.78) 0%, rgba(238, 247, 227, 0.72) 100%); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 20px 24px; border-radius: 16px; margin-bottom: 26px; display: flex; justify-content: space-between; align-items: center; border: 1.5px solid #DCECC9; box-shadow: 0 10px 26px rgba(27, 94, 32, 0.08); flex-wrap: wrap; gap: 15px; }
+        .k-glass-toolbar { background: linear-gradient(135deg, rgba(220, 236, 201, 0.78) 0%, rgba(238, 247, 227, 0.72) 100%); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 20px 24px; border-radius: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border: 1.5px solid #DCECC9; box-shadow: 0 10px 26px rgba(27, 94, 32, 0.08); flex-wrap: wrap; gap: 15px; }
+
+        .k-filter-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            background: #f8fafc;
+            padding: 15px;
+            border: 1px solid #DCECC9;
+            border-radius: 10px;
+        }
+
+        /* Mobile Card Labels (Hidden on Desktop/Tablet/Landscape Table) */
+        .kp-mob-cell-label {
+            display: none;
+        }
+
+        /* ==========================================
+           TABLET PORTRAIT & LANDSCAPE (768px - 1180px)
+           ========================================== */
+        @media screen and (max-width: 1180px) {
+            #kp-portal-root {
+                padding: 0 8px;
+            }
+            .k-glass-toolbar {
+                padding: 14px 16px;
+                gap: 12px;
+            }
+            .k-table {
+                font-size: 0.81em;
+            }
+            .k-table thead th,
+            .k-table td {
+                padding: 8px 6px;
+            }
+            .k-table thead th:nth-child(1) { width: 21% !important; }
+            .k-table thead th:nth-child(2) { width: 17% !important; }
+            .k-table thead th:nth-child(3) { width: 26% !important; }
+            .k-table thead th:nth-child(4) { width: 8% !important; }
+            .k-table thead th:nth-child(5) { width: 8% !important; }
+            .k-table thead th:nth-child(6) { width: 11% !important; }
+            .k-table thead th:nth-child(7) { width: 9% !important; }
+
+            .chk-large {
+                width: 24px;
+                height: 24px;
+                transform: scale(1.15);
+            }
+            .kp-pos-cue {
+                font-size: 9.5px;
+                padding: 2px 5px;
+            }
+        }
+
+        /* ==========================================
+           SHORT HEIGHT LANDSCAPE (Mobile & Small Tablet Landscape)
+           Compacts sticky banner so table rows have maximum vertical room
+           ========================================== */
+        @media screen and (orientation: landscape) and (max-height: 540px) {
+            #kp-sticky-banner {
+                padding: 6px 12px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 14px;
+                flex-wrap: wrap;
+                margin-bottom: 10px;
+            }
+            #kp-sticky-banner h1 {
+                font-size: 1.15em;
+            }
+            #kp-sticky-banner h3 {
+                margin: 0;
+                font-size: 1em;
+            }
+            .k-table {
+                font-size: 0.78em;
+            }
+            .k-table thead th {
+                padding: 7px 5px;
+                font-size: 0.92em;
+            }
+            .k-table td {
+                padding: 6px 5px;
+            }
+            .chk-large {
+                width: 22px;
+                height: 22px;
+                transform: scale(1.1);
+                margin: 3px auto;
+            }
+            .kp-pos-cue {
+                font-size: 8.5px;
+                padding: 2px 4px;
+            }
+        }
+
+        /* ==========================================
+           OPTION 3A: MOBILE PORTRAIT CARDS (<= 767px, Portrait)
+           ========================================== */
+        @media screen and (max-width: 767px) and (orientation: portrait) {
+            #kp-sticky-banner {
+                padding: 10px 8px 8px 8px;
+                margin-bottom: 14px;
+            }
+            #kp-sticky-banner h1 {
+                font-size: 1.35em;
+            }
+            #kp-sticky-banner h3 {
+                font-size: 0.98em;
+                margin-top: 3px;
+            }
+
+            .k-glass-toolbar {
+                padding: 14px;
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .k-glass-toolbar form {
+                width: 100%;
+                justify-content: space-between;
+            }
+            .k-glass-toolbar form label {
+                width: 100%;
+                margin-bottom: 4px;
+            }
+            .k-glass-toolbar > div {
+                width: 100%;
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px !important;
+            }
+            .k-glass-toolbar > div a,
+            .k-glass-toolbar > div button {
+                text-align: center;
+                padding: 10px 8px !important;
+                font-size: 0.85em;
+            }
+
+            .k-filter-bar {
+                padding: 12px;
+                gap: 10px;
+            }
+            .k-tabs-container {
+                width: 100%;
+                display: flex;
+                overflow-x: auto;
+                flex-wrap: nowrap !important;
+                padding-bottom: 2px;
+            }
+            .k-tab-btn {
+                flex: 1 0 auto;
+                padding: 8px 12px;
+                font-size: 0.85em;
+                white-space: nowrap;
+            }
+
+            .k-table {
+                display: block;
+                background: transparent;
+                box-shadow: none;
+                border-radius: 0;
+                font-size: 0.92em;
+            }
+            .k-table thead {
+                display: none !important;
+            }
+            .k-table tbody {
+                display: block;
+                width: 100%;
+            }
+
+            /* Each Order Row becomes a 2-column Grid Card */
+            .k-table tbody tr.k-row {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                background: #ffffff;
+                border: 1.5px solid #cbd5e1;
+                border-radius: 14px;
+                margin-bottom: 16px;
+                box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+                overflow: hidden;
+            }
+            .k-table tbody tr.k-row.k-row-hidden {
+                display: none !important;
+            }
+
+            /* Top 3 data columns span full card width */
+            .k-table tbody tr.k-row > td:nth-child(1),
+            .k-table tbody tr.k-row > td:nth-child(2),
+            .k-table tbody tr.k-row > td:nth-child(3) {
+                grid-column: 1 / -1;
+                display: block;
+                width: 100%;
+                padding: 12px 14px;
+                border-bottom: 1px solid #e2e8f0;
+            }
+            .k-table tbody tr.k-row > td:nth-child(1) {
+                background: linear-gradient(135deg, rgba(238, 247, 227, 0.55) 0%, rgba(255, 255, 255, 1) 100%);
+                border-left: 4px solid #379237;
+            }
+
+            /* Bottom 4 operational action cells form a clean 2x2 touch grid */
+            .k-table tbody tr.k-row > td:nth-child(4),
+            .k-table tbody tr.k-row > td:nth-child(5),
+            .k-table tbody tr.k-row > td:nth-child(6),
+            .k-table tbody tr.k-row > td:nth-child(7) {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 12px 10px;
+                min-height: 86px;
+                border-bottom: 1px solid #e2e8f0;
+            }
+            .k-table tbody tr.k-row > td:nth-child(4),
+            .k-table tbody tr.k-row > td:nth-child(6) {
+                border-right: 1px solid #e2e8f0;
+                border-left: none !important;
+            }
+            .k-table tbody tr.k-row > td:nth-child(6),
+            .k-table tbody tr.k-row > td:nth-child(7) {
+                border-bottom: none;
+            }
+
+            .kp-mob-cell-label {
+                display: block;
+                font-size: 0.72em;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: #475569;
+                margin-bottom: 6px;
+                text-align: center;
+            }
+
+            .chk-large {
+                width: 28px;
+                height: 28px;
+                transform: scale(1.15);
+                margin: 2px auto;
+            }
+            .cmp-delivery-box {
+                min-height: 38px;
+                font-weight: 600;
+            }
+        }
 
         @media print {
-            .cmp-no-print { display: none !important; }
+            .cmp-no-print, .kp-pos-cue, .kp-mob-cell-label { display: none !important; }
+            #kp-sticky-banner, .k-table thead th { position: static !important; box-shadow: none !important; }
             body, html { background: #fff !important; margin: 0 !important; padding: 0 !important; }
-            .k-table { box-shadow: none !important; border: 1px solid #000; }
+            .k-table { box-shadow: none !important; border: 1px solid #000; border-collapse: collapse !important; }
             .k-table th, .k-table td { border: 1px solid #000; padding: 6px; color: #000 !important; background: transparent !important; }
             select { appearance: none; border: none; background: transparent; }
         }
     </style>
 
-    <div style="max-width: 1400px; margin: 0 auto; font-family: inherit; padding: 0 12px;">
+    <div id="kp-portal-root">
         
         <div class="cmp-no-print k-glass-toolbar">
             <form method="GET" id="cmp-kitchen-date-form" style="margin: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
@@ -576,12 +979,12 @@ function cmp_render_kitchen_portal() {
             </div>
         </div>
 
-        <div style="position: sticky; top: 0; z-index: 99; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(10px); text-align: center; border-bottom: 3px solid #379237; margin-bottom: 20px; padding: 15px 0 10px 0;">
-            <h1 style="margin: 0; font-size: 2em; color: #231F20;">Order Preparation Report</h1>
-            <h3 style="margin: 5px 0 0 0; color: #379237;">Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
+        <div id="kp-sticky-banner">
+            <h1>Order Preparation Report</h1>
+            <h3>Food Orders to Prep on: <?php echo date('l, d/m/Y', strtotime($selected_date)); ?></h3>
         </div>
 
-        <div class="cmp-no-print" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:15px; margin-bottom: 20px; background:#f8fafc; padding:15px; border:1px solid #DCECC9; border-radius:10px;">
+        <div class="cmp-no-print k-filter-bar">
             <div class="k-tabs-container" style="display:flex; gap:10px; flex-wrap:wrap;">
                 <button class="k-tab-btn active" data-filter="all">All Orders (<?php echo $count_all; ?>)</button>
                 <button class="k-tab-btn" data-filter="pending">Pending Chef's Choice <?php if($count_pending > 0) echo '<span style="background:#dc3232; color:#fff; border-radius:10px; padding:2px 8px; font-size:0.8em; margin-left:5px;">'.$count_pending.'</span>'; ?></button>
@@ -595,17 +998,17 @@ function cmp_render_kitchen_portal() {
         <?php if(empty($customers)): ?>
             <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc; border-radius: 10px;">No orders found for this prep date.</p>
         <?php else: ?>
-            <div style="overflow-x: auto;">
+            <div class="k-table-wrap">
                 <table class="k-table">
                     <thead>
                         <tr>
                             <th style="width: 20%;">Customer Details</th>
                             <th style="width: 17%;">Logistics</th>
-                            <th style="width: 31%;">The Food</th>
+                            <th style="width: 30%;">The Food</th>
                             <th style="width: 8%; text-align:center;">Prepared</th>
                             <th style="width: 8%; text-align:center;">Dispatch</th>
                             <th style="width: 10%;">Delivery</th>
-                            <th style="width: 6%; text-align:center;">POS</th>
+                            <th style="width: 7%; text-align:center;">POS</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -629,6 +1032,21 @@ function cmp_render_kitchen_portal() {
                             if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', end($plan_parts))) {
                                 $plan_meals = count($plan_parts) > 2 ? $plan_parts[1] : '';
                             }
+
+                            // Option 2C: Smart Color-Coded "Post on [Date]" Cue (Customer Eating Date)
+                            $eat_ymd = date('Y-m-d', strtotime($c['target_date']));
+                            $eat_short = date('d/m', strtotime($c['target_date']));
+                            $eat_full  = date('l, d/m/Y', strtotime($c['target_date']));
+
+                            if ($eat_ymd > $today_ymd) {
+                                $base_cue_class = 'cue-upcoming';
+                            } elseif ($eat_ymd === $today_ymd) {
+                                $base_cue_class = 'cue-today';
+                            } else {
+                                $base_cue_class = 'cue-overdue';
+                            }
+                            $active_cue_class = $c['pos'] ? 'cue-done' : $base_cue_class;
+                            $pos_cue_text = 'Post on ' . $eat_short . ($c['pos'] ? ' ✓' : '');
                         ?>
                         <tr class="k-row <?php echo $row_filter_class; ?>" data-name="<?php echo $search_name; ?>">
                             <td>
@@ -783,15 +1201,19 @@ function cmp_render_kitchen_portal() {
                             </td>
                             
                             <td style="text-align:center; background:#f0fdf4; border-left:1px solid #ddd;">
+                                <span class="kp-mob-cell-label">Prepared</span>
                                 <input type="checkbox" class="chk-large cmp-prepared-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['prepared'] ? 'checked' : ''; ?> <?php echo $prepared_disabled; ?>>
                                 <?php if($c['prepared']) echo '<span style="display:none; color:#166534; font-weight:bold;" class="print-only">Yes</span>'; ?>
                             </td>
 
                             <td style="text-align:center; background:#fcfcfc;">
+                                <span class="kp-mob-cell-label">Dispatch</span>
                                 <input type="checkbox" class="chk-large cmp-dispatch-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['dispatch'] ? 'checked' : ''; ?> <?php echo $dispatch_disabled; ?>>
                                 <?php if($c['dispatch']) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
                             </td>
+
                             <td style="background:#fcfcfc;">
+                                <span class="kp-mob-cell-label">Delivery</span>
                                 <select class="cmp-delivery-box" data-id="<?php echo $c['log_id']; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;" <?php echo $delivery_disabled; ?>>
                                     <option value="Pending" <?php selected($c['delivery'], 'Pending'); ?>>Pending</option>
                                     <option value="Successful" <?php selected($c['delivery'], 'Successful'); ?>>Successful</option>
@@ -799,8 +1221,19 @@ function cmp_render_kitchen_portal() {
                                     <option value="Returned" <?php selected($c['delivery'], 'Returned'); ?>>Returned</option>
                                 </select>
                             </td>
+
                             <td style="text-align:center; background:#f4f8fa;">
-                                <input type="checkbox" class="chk-large cmp-pos-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['pos'] ? 'checked' : ''; ?> <?php echo $pos_disabled; ?>>
+                                <span class="kp-mob-cell-label">POS Check</span>
+                                <div class="kp-pos-cell-inner">
+                                    <span class="kp-pos-cue <?php echo esc_attr($active_cue_class); ?> cmp-no-print"
+                                          data-id="<?php echo $c['log_id']; ?>"
+                                          data-base-class="<?php echo esc_attr($base_cue_class); ?>"
+                                          data-eat-short="<?php echo esc_attr($eat_short); ?>"
+                                          title="Post in POS on Customer Eating Date: <?php echo esc_attr($eat_full); ?>">
+                                        <?php echo esc_html($pos_cue_text); ?>
+                                    </span>
+                                    <input type="checkbox" class="chk-large cmp-pos-box cmp-no-print" data-id="<?php echo $c['log_id']; ?>" <?php echo $c['pos'] ? 'checked' : ''; ?> <?php echo $pos_disabled; ?>>
+                                </div>
                                 <?php if($c['pos']) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
                             </td>
                         </tr>
@@ -816,6 +1249,46 @@ function cmp_render_kitchen_portal() {
         
         var canEditDelivery = <?php echo empty($chef_disabled) ? 'true' : 'false'; ?>;
         var canEditPos = <?php echo empty($foh_disabled) ? 'true' : 'false'; ?>;
+
+        // ==========================================
+        // OPTION 1A: DYNAMIC STICKY STACKING ENGINE
+        // ==========================================
+        function syncKitchenStickyOffsets() {
+            var rootEl = document.getElementById('kp-portal-root');
+            var bannerEl = document.getElementById('kp-sticky-banner');
+            if (!rootEl || !bannerEl) return;
+
+            var adminBar = document.getElementById('wpadminbar');
+            var adminOffset = 0;
+            if (adminBar) {
+                var adminStyle = window.getComputedStyle(adminBar);
+                if (adminStyle.position === 'fixed') {
+                    adminOffset = adminBar.offsetHeight || 0;
+                }
+            }
+
+            var bannerHeight = bannerEl.offsetHeight || 82;
+            rootEl.style.setProperty('--kp-admin-offset', adminOffset + 'px');
+            rootEl.style.setProperty('--kp-banner-height', bannerHeight + 'px');
+
+            if (window.scrollY > 40) {
+                bannerEl.classList.add('kp-is-scrolled');
+            } else {
+                bannerEl.classList.remove('kp-is-scrolled');
+            }
+        }
+
+        syncKitchenStickyOffsets();
+        $(window).on('resize orientationchange scroll', syncKitchenStickyOffsets);
+        if (typeof ResizeObserver !== 'undefined') {
+            var bannerEl = document.getElementById('kp-sticky-banner');
+            if (bannerEl) {
+                var ro = new ResizeObserver(function() {
+                    syncKitchenStickyOffsets();
+                });
+                ro.observe(bannerEl);
+            }
+        }
 
         function populateDynamicDropdowns(container) {
             var isCustom = container.data('allow-custom') == 1;
@@ -891,6 +1364,7 @@ function cmp_render_kitchen_portal() {
         function applyKitchenFilters() {
             var activeFilter = $('.k-tab-btn.active').data('filter');
             var searchQuery = $('#k-search').val().toLowerCase();
+            var visibleCount = 0;
 
             $('.k-table tbody tr.k-row').each(function() {
                 var row = $(this);
@@ -904,13 +1378,14 @@ function cmp_render_kitchen_portal() {
                 var matchSearch = customerName.indexOf(searchQuery) > -1;
 
                 if (matchTab && matchSearch) {
-                    row.show();
+                    row.removeClass('k-row-hidden').show();
+                    visibleCount++;
                 } else {
-                    row.hide();
+                    row.addClass('k-row-hidden').hide();
                 }
             });
 
-            if ($('.k-table tbody tr.k-row:visible').length === 0) {
+            if (visibleCount === 0) {
                 if ($('#k-empty-msg').length === 0) {
                     $('.k-table tbody').append('<tr id="k-empty-msg"><td colspan="7" style="text-align:center; padding:30px; color:#666; font-size:1.1em;">No customers match your criteria.</td></tr>');
                 } else {
@@ -1107,6 +1582,19 @@ function cmp_render_kitchen_portal() {
             });
         }
 
+        function updatePosCueBadge(logId, isPosChecked) {
+            var cueEl = $('.kp-pos-cue[data-id="' + logId + '"]');
+            if (!cueEl.length) return;
+            var baseClass = cueEl.data('base-class') || 'cue-upcoming';
+            var eatShort = cueEl.data('eat-short') || '';
+            cueEl.removeClass('cue-upcoming cue-today cue-overdue cue-done');
+            if (isPosChecked) {
+                cueEl.addClass('cue-done').text('Post on ' + eatShort + ' ✓');
+            } else {
+                cueEl.addClass(baseClass).text('Post on ' + eatShort);
+            }
+        }
+
         function updateRowLogic(logId) {
             var preparedBox = $('.cmp-prepared-box[data-id="' + logId + '"]');
             var dispatchBox = $('.cmp-dispatch-box[data-id="' + logId + '"]');
@@ -1161,9 +1649,12 @@ function cmp_render_kitchen_portal() {
                     if (isPosChecked) {
                         posBox.prop('checked', false);
                         saveAction(logId, 'pos_updated', 0);
+                        isPosChecked = false;
                     }
                 }
             }
+
+            updatePosCueBadge(logId, isPosChecked);
         }
 
         $('.cmp-prepared-box').on('change', function() {
