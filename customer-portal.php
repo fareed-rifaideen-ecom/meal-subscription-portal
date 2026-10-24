@@ -332,7 +332,6 @@ function cmp_ajax_cp_update_customer_logistics() {
 
     $user_id = intval($_POST['user_id']);
     $order_id = intval($_POST['order_id']);
-    $sub_id = intval($_POST['sub_id']);
     $timing = sanitize_text_field($_POST['delivery_timing']);
     $time_slot = sanitize_text_field($_POST['time_slot']);
     $allergies = sanitize_textarea_field($_POST['allergies']);
@@ -354,18 +353,6 @@ function cmp_ajax_cp_update_customer_logistics() {
             $order->set_customer_note($allergies);
             $order->save();
         }
-    }
-    
-    // Also save to cmp_subscriptions to ensure complete consistency
-    global $wpdb;
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $col_check_dt = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'delivery_timing'");
-    $col_check_ts = $wpdb->get_results("SHOW COLUMNS FROM {$table_subs} LIKE 'time_slot'");
-    $sub_update = array();
-    if (!empty($col_check_dt)) { $sub_update['delivery_timing'] = $timing; }
-    if (!empty($col_check_ts)) { $sub_update['time_slot'] = $time_slot; }
-    if (!empty($sub_update)) {
-        $wpdb->update($table_subs, $sub_update, array('id' => $sub_id));
     }
 
     wp_send_json_success(array('timing' => $timing, 'time_slot' => $time_slot, 'allergies' => $allergies ?: 'No Allergies Recorded'));
@@ -567,34 +554,6 @@ function cmp_ajax_cancel_daily_log() {
     wp_send_json_success(array('msg' => 'Day Cancelled'));
 }
 
-// 1.10 AJAX HANDLER: CUSTOMER FEEDBACK SUBMISSION
-add_action('wp_ajax_cmp_submit_customer_feedback', 'cmp_ajax_submit_customer_feedback');
-function cmp_ajax_submit_customer_feedback() {
-    check_ajax_referer('cmp_portal_nonce', 'nonce');
-
-    $sub_id  = intval($_POST['sub_id']);
-    $user_id = intval($_POST['user_id']);
-    $rating_food   = intval($_POST['rating_food']);
-    $rating_deliv  = intval($_POST['rating_delivery']);
-    $rating_portal = intval($_POST['rating_portal']);
-    $comments      = sanitize_textarea_field($_POST['comments']);
-
-    // Log feedback into a robust WP Option Array for staff to review later
-    $feedbacks = get_option('cmp_customer_feedbacks', array());
-    $feedbacks[] = array(
-        'date'        => current_time('mysql'),
-        'user_id'     => $user_id,
-        'sub_id'      => $sub_id,
-        'food'        => $rating_food,
-        'delivery'    => $rating_deliv,
-        'portal'      => $rating_portal,
-        'comments'    => $comments
-    );
-    update_option('cmp_customer_feedbacks', $feedbacks);
-
-    wp_send_json_success('Thank you! Your feedback helps us improve.');
-}
-
 
 // ==========================================
 // 2. DASHBOARD RENDERER
@@ -646,7 +605,6 @@ function cmp_render_customer_portal() {
     $is_chef_override     = isset($_GET['chef_override_sub']) && ( cmp_can_bypass_date_restrictions() || current_user_can('kitchen_staff') );
     $can_bypass_date_lock = cmp_can_bypass_date_restrictions() || $is_chef_override;
     $can_bypass_quota     = cmp_can_bypass_meal_quota();
-    $is_staff_viewing     = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('menu_manager');
 
     if ($is_admin_override) {
         $raw_subs = $wpdb->get_results( $wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval($_GET['admin_edit_sub'])) );
@@ -679,7 +637,7 @@ function cmp_render_customer_portal() {
         return '<div style="max-width:520px; margin:40px auto; padding:40px 30px; text-align:center; background:rgba(255,255,255,0.88); backdrop-filter:blur(18px); border:1.5px solid #DCECC9; border-top:5px solid #379237; border-radius:18px; box-shadow:0 16px 36px rgba(27,94,32,0.10);">
                     <h3 style="color:#1B5E20; font-size:1.5em; margin:0 0 10px 0;">No Active Meal Plans Found</h3>
                     <p style="color:#475569; margin-bottom: 25px; line-height:1.5;">It looks like your meal plans have been completed or expired.</p>
-                    <a href="' . esc_url( 'https://mealplan.thecyclebistro.com/' ) . '" style="background:linear-gradient(135deg, #379237 0%, #1B5E20 100%); color:#fff; text-decoration:none; padding:13px 28px; border-radius:10px; font-weight:bold; display:inline-block; margin-bottom:18px; box-shadow:0 6px 16px rgba(55,146,55,0.25);">Subscribe to a New Meal Plan</a>
+                    <a href="' . esc_url( site_url('/') ) . '" style="background:linear-gradient(135deg, #379237 0%, #1B5E20 100%); color:#fff; text-decoration:none; padding:13px 28px; border-radius:10px; font-weight:bold; display:inline-block; margin-bottom:18px; box-shadow:0 6px 16px rgba(55,146,55,0.25);">Subscribe to a New Meal Plan</a>
                     <br>
                     <a href="' . esc_url( wp_logout_url( get_permalink() ) ) . '" style="color:#dc2626; font-weight:bold; text-decoration:none; font-size:0.95em;">Log Out</a>
                 </div>';
@@ -808,21 +766,6 @@ function cmp_render_customer_portal() {
         .cmp-tab-nav { display: flex; background: #fff; border: 1px solid #DCECC9; border-top: none; border-bottom: 2px solid #DCECC9; padding: 0 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; align-items: flex-end; border-radius: 0 0 12px 12px; }
         .cmp-tab-btn { padding: 12px 25px; border: none; background: none; font-weight: bold; cursor: pointer; border-bottom: 3px solid transparent; color: #64748b; white-space: nowrap; line-height: 1.4; text-align: center; transition: 0.2s; }
         .cmp-tab-btn.active { color: #1B5E20; border-bottom-color: #379237; background: rgba(238, 247, 227, 0.45); }
-        
-        .cmp-new-plan-tab {
-            margin-left: 10px;
-            color: #379237 !important;
-            border: 1.5px dashed #379237 !important;
-            border-bottom: none !important;
-            border-radius: 8px 8px 0 0;
-            display: inline-flex;
-            align-items: center;
-            padding: 10px 20px;
-            background: rgba(238, 247, 227, 0.2);
-            text-decoration: none !important;
-        }
-        .cmp-new-plan-tab:hover { background: #EEF7E3; text-decoration: none !important; }
-
         .cmp-tab-content { display: none; padding: 25px 0; }
         .cmp-tab-content.active { display: block; }
 
@@ -885,7 +828,6 @@ function cmp_render_customer_portal() {
         .cmp-util-btn {
             display: inline-flex !important;
             align-items: center !important;
-            justify-content: center !important;
             gap: 6px !important;
             background: #ffffff;
             color: #1B5E20;
@@ -1009,25 +951,26 @@ function cmp_render_customer_portal() {
         }
         .cmp-unsaved-float-bar {
             position: fixed;
-            bottom: 24px;
+            bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(15, 23, 42, 0.95);
+            background: rgba(15, 23, 42, 0.96);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             color: #ffffff;
             border: 1.5px solid #f59e0b;
-            border-radius: 999px;
-            padding: 10px 18px;
+            border-radius: 12px;
+            padding: 8px 16px;
             display: none;
             align-items: center;
-            gap: 12px;
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+            gap: 10px;
+            box-shadow: 0 10px 26px rgba(15, 23, 42, 0.32);
             z-index: 9998;
-            font-size: 0.86rem;
+            font-size: 0.84rem;
             font-weight: 700;
             max-width: 92vw;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            white-space: nowrap;
             justify-content: center;
         }
         .cmp-unsaved-float-bar.is-active {
@@ -1037,7 +980,7 @@ function cmp_render_customer_portal() {
             background: #f59e0b;
             color: #0f172a;
             border: none;
-            border-radius: 999px;
+            border-radius: 8px;
             padding: 5px 12px;
             font-size: 0.78rem;
             font-weight: 800;
@@ -1057,41 +1000,6 @@ function cmp_render_customer_portal() {
             background: rgba(253, 230, 138, 0.15);
             color: #ffffff;
         }
-
-        /* Staff POS Badge indicator */
-        .cmp-pos-badge {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-size: 0.72rem;
-            font-weight: 800;
-            margin-left: 6px;
-            white-space: nowrap;
-        }
-        .cmp-pos-badge.pos-done { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
-        .cmp-pos-badge.pos-pend { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
-
-        /* Customer Feedback Widget */
-        .cmp-feedback-widget {
-            background: #f8fafc;
-            border: 1.5px solid #DCECC9;
-            border-radius: 12px;
-            padding: 24px;
-            margin-top: 30px;
-            text-align: center;
-            box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05);
-        }
-        .cmp-feedback-widget h4 { margin: 0 0 16px 0; color: #1B5E20; font-size: 1.25em; font-weight: 800; }
-        .cmp-fb-row { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; margin-bottom: 20px; }
-        .cmp-fb-item { flex: 1; min-width: 140px; background: #fff; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; text-align: center; }
-        .cmp-fb-item label { display: block; font-size: 0.85em; font-weight: bold; color: #475569; margin-bottom: 8px; }
-        .cmp-fb-stars { display: flex; justify-content: center; flex-direction: row-reverse; gap: 4px; }
-        .cmp-fb-stars input { display: none; }
-        .cmp-fb-stars label { font-size: 24px; color: #cbd5e1; cursor: pointer; transition: 0.2s; margin: 0; display: inline-block; }
-        .cmp-fb-stars input:checked ~ label, .cmp-fb-stars label:hover, .cmp-fb-stars label:hover ~ label { color: #f59e0b; }
-        .cmp-fb-textarea { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; font-size: 0.9em; resize: vertical; min-height: 70px; margin-bottom: 12px; }
 
         /* =========================================================
            OPTION A: UNIFIED STACKED DAY CARD LAYOUT
@@ -1448,7 +1356,6 @@ function cmp_render_customer_portal() {
         /* DESKTOP & TABLET CARD GRID LAYOUT (> 768px) */
         @media (min-width: 769px) {
             .cmp-mobile-status { display: none !important; }
-            .cmp-mobile-preview { display: none !important; }
 
             .cmp-table tr.cmp-day-row {
                 display: grid !important;
@@ -1606,89 +1513,38 @@ function cmp_render_customer_portal() {
             .cmp-table td.cmp-collapsed-summary { display: none !important; }
             .cmp-table td.cmp-cell-status { display: none !important; }
 
-            /* Option 1: Mobile Collapsible Details Drawer */
-            .cmp-mobile-details-toggle { display: block !important; width: 100%; padding: 12px; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; font-weight: 700; color: #334155; text-align: left; cursor: pointer; margin-bottom: 12px; }
-            .cmp-details-drawer { display: none; }
-            
-            /* Option A: Mobile 2-Tier Schedule Toolbar */
-            .cmp-schedule-toolbar { padding: 10px; flex-direction: column; align-items: stretch; border-radius: 8px; }
-            .cmp-toolbar-actions { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; width: 100%; }
-            .cmp-jump-pending-btn { grid-column: 1 / span 2; }
-            .cmp-util-btn { padding: 10px !important; font-size: 0.88rem; }
-
             /* Hide floating unsaved popup on mobile so it never overlaps the card buttons */
             .cmp-unsaved-float-bar,
             .cmp-unsaved-float-bar.is-active {
                 display: none !important;
             }
 
-            /* Option 2A: Full-Bleed Collapsed Mobile Card */
+            /* Collapsed Mobile Card */
             .cmp-table tr.cmp-day-row {
                 display: block !important;
                 width: 100% !important;
-                margin-bottom: 12px !important;
-                padding: 0 !important; /* Remove outer padding so bg color touches edge */
-                border-radius: 12px !important;
+                margin-bottom: 10px !important;
+                padding: 8px 10px !important;
+                border-radius: 13px !important;
             }
-            .cmp-table tr:not(.is-open) td:not(.cmp-cell-day) {
+            .cmp-table tr.cmp-day-row:not(.is-open) td:not(.cmp-cell-day) {
                 display: none !important;
             }
-            
-            /* The Card Header acts as the Full Collapsed Card */
-            .cmp-table td.cmp-cell-day {
-                display: block !important;
-                width: 100% !important;
-                border-radius: 10px !important;
-                text-align: left !important;
-                font-size: 1.05em !important;
-                margin: 0 !important;
-                padding: 12px 14px !important;
-                cursor: pointer;
-                position: relative;
-                transition: all 0.2s ease;
-            }
-            .cmp-table tr.is-open td.cmp-cell-day {
-                border-bottom-left-radius: 0 !important;
-                border-bottom-right-radius: 0 !important;
-                border-bottom: 1px solid rgba(0,0,0,0.08) !important;
-            }
-            
-            /* The 2-Line Header Flex Layout */
-            .cmp-cell-day-flex { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-            .cmp-mobile-preview { display: block; font-size: 0.82rem; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%; }
-            .cmp-table tr.is-open .cmp-mobile-preview { display: none; }
-            
-            .cmp-table td.cmp-cell-day::after {
-                content: '\25BC';
-                position: absolute;
-                right: 14px;
-                top: 20px;
-                font-size: 12px;
-                color: inherit;
-            }
-            .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
 
-            .cmp-mobile-status { display: inline-block !important; font-weight: 800; font-size: 0.75rem; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.6); }
-
-            /* Full Bleed Colors */
-            .status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
-            .status-saved td.cmp-cell-day { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
-            .status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
-            .is-unsaved td.cmp-cell-day { background: #fef3c7 !important; border-color: #f59e0b !important; }
-
-            /* Expanded Mobile Card Body */
+            /* Expanded Mobile Card: 12-Column Compact Grid (Fits in Single Screen) */
             .cmp-table tr.cmp-day-row.is-open {
                 display: grid !important;
                 grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
                 gap: 4px 8px !important;
                 align-items: end !important;
-                padding-bottom: 12px !important;
+                padding: 9px 10px 10px 10px !important;
+                margin-bottom: 12px !important;
             }
-            .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status):not(.cmp-cell-day) {
+            .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status) {
                 display: block !important;
                 width: 100% !important;
                 border: none !important;
-                padding: 4px 12px !important;
+                padding: 0 !important;
                 text-align: left !important;
             }
 
@@ -1699,9 +1555,38 @@ function cmp_render_customer_portal() {
                 display: none !important;
             }
 
+            /* Row 1: Day Header Banner */
             .cmp-table td.cmp-cell-day {
                 grid-column: 1 / span 12 !important;
+                border-radius: 9px !important;
+                text-align: left !important;
+                font-size: 0.96rem !important;
+                margin-bottom: 0 !important;
+                padding: 7px 32px 7px 11px !important;
+                cursor: pointer;
+                position: relative;
+                transition: all 0.2s ease;
             }
+            .cmp-table tr.cmp-day-row.is-open td.cmp-cell-day {
+                margin-bottom: 1px !important;
+            }
+            .cmp-table td.cmp-cell-day::after {
+                content: '\25BC';
+                position: absolute;
+                right: 12px;
+                top: 50%;
+                transform: translateY(-50%);
+                font-size: 12px;
+                color: inherit;
+            }
+            .cmp-table tr.is-open td.cmp-cell-day::after { content: '\25B2'; }
+
+            .cmp-mobile-status { display: inline-block !important; margin-left: 8px; font-weight: normal; vertical-align: middle; }
+            .cmp-mobile-status .cmp-status-pill { font-size: 0.72rem !important; padding: 2px 8px !important; }
+
+            .status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border: 1px solid #fde68a !important; }
+            .status-saved td.cmp-cell-day { background: #f0fdf4 !important; color: #166534 !important; border: 1px solid #bbf7d0 !important; }
+            .status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border: 1px solid #fecdd3 !important; }
 
             /* Row 2: Date (7 Cols) + Chef's Choice (5 Cols) Side-by-Side */
             .cmp-table tr.cmp-day-row.is-open td.cmp-cell-date {
@@ -1920,7 +1805,6 @@ function cmp_render_customer_portal() {
                 $first_tab = false;
             }
             ?>
-            <a href="https://mealplan.thecyclebistro.com/" class="cmp-new-plan-tab">+ Subscribe to a New Plan &rarr;</a>
         </div>
 
         <?php 
@@ -2030,116 +1914,107 @@ function cmp_render_customer_portal() {
         ?>
         <div id="<?php echo esc_attr($tab_id); ?>" class="cmp-tab-content <?php echo $active_class; ?> cmp-portal-container" data-sub-id="<?php echo $sub->id; ?>" data-total-days="<?php echo $sub->total_days; ?>" data-allowed-meals="<?php echo $allowed_quota; ?>" data-snack-quota="<?php echo $snack_quota; ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
 
-            <button class="cmp-mobile-details-toggle cmp-no-print" onclick="jQuery(this).next('.cmp-details-drawer').slideToggle(); return false;">
-                📋 Plan, Delivery & Allergy Details (Tap to View) &#9660;
-            </button>
-            <div class="cmp-details-drawer">
-                <div style="background:#fff; border:1px solid #DCECC9; border-radius:12px; padding:25px; margin-bottom:20px; box-shadow:0 4px 12px rgba(27,94,32,0.04); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
-                    <div style="flex:1; min-width:260px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h3 style="margin:0; color:#379237; font-size:1.3em;">Account Details</h3>
-                            <?php if (current_user_can('manage_options')): ?>
-                                <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
-                            <?php endif; ?>
-                        </div>
-
-                        <div id="account-view-<?php echo $sub->id; ?>">
-                            <p style="margin:0 0 8px 0; color:#231F20;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
-                            
-                            <p style="margin:0 0 8px 0; color:#231F20; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
-                                <strong>Name:</strong>
-                                <span id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($display_name); ?></span>
-                                <span id="recipient-row-<?php echo $sub->id; ?>" class="cmp-recipient-label-badge" style="display:<?php echo !empty($recipient_name) ? 'inline-flex' : 'none'; ?>;">
-                                    Recipient: <strong id="recipient-val-<?php echo $sub->id; ?>"><?php echo esc_html($recipient_name); ?></strong>
-                                </span>
-                            </p>
-
-                            <p style="margin:0 0 8px 0; color:#231F20;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
-                            <p style="margin:0 0 8px 0; color:#231F20;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
-                            <p style="margin:0; color:#231F20;"><strong>Address:</strong> <span id="address-val-<?php echo $sub->id; ?>"><?php echo esc_html($address); ?></span></p>
-                        </div>
-
+            <div style="background:#fff; border:1px solid #DCECC9; border-radius:12px; padding:25px; margin-bottom:20px; box-shadow:0 4px 12px rgba(27,94,32,0.04); display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px;">
+                <div style="flex:1; min-width:260px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h3 style="margin:0; color:#379237; font-size:1.3em;">Account Details</h3>
                         <?php if (current_user_can('manage_options')): ?>
-                        <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
-                            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-                                <div style="flex:1; min-width:120px;">
-                                    <label style="font-size:0.85em; font-weight:bold; color:#334155;">First Name:</label>
-                                    <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                                </div>
-                                <div style="flex:1; min-width:120px;">
-                                    <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
-                                    <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                                </div>
-                                <div style="flex:1; min-width:140px;">
-                                    <label style="font-size:0.85em; font-weight:bold; color:#1B5E20;">Recipient Name:</label>
-                                    <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #68B946; background:#EEF7E3; border-radius:4px; box-sizing:border-box;">
-                                </div>
-                            </div>
-                            <div style="margin-bottom:10px;">
-                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
-                                <input type="text" id="edit-address-<?php echo $sub->id; ?>" value="<?php echo esc_attr($address !== 'Address not provided' ? $address : ''); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                            </div>
-                            <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
-                        </div>
-                        <?php endif; ?>
-
-                    </div>
-
-                    <div style="flex:1; min-width:250px; background:#f8fafc; padding:15px; border-radius:8px; border:1px solid #e2e8f0; position:relative;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                            <h3 style="margin:0; color:#1B5E20; font-size:1.1em;">Active Logistics</h3>
-                            <?php if ($can_bypass_date_lock): ?>
-                                <button class="toggle-logistics-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
-                            <?php endif; ?>
-                        </div>
-
-                        <div id="logistics-view-<?php echo $sub->id; ?>">
-                            <p style="margin:0 0 8px 0; color:#475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
-                            <p style="margin:0 0 8px 0; color:#475569;"><strong>Receive By:</strong> <span id="timing-val-<?php echo $sub->id; ?>"><?php echo esc_html($timing_display); ?></span></p>
-                            <p style="margin:0 0 8px 0; color:#475569;"><strong>Time Slot:</strong> <span id="time-slot-val-<?php echo $sub->id; ?>"><?php echo esc_html($time_slot_display); ?></span></p>
-                            <div style="margin-top:15px; padding-top:15px; border-top:1px dashed #cbd5e1;">
-                                <p style="margin:0; color:#b45309;"><strong>Allergies:</strong> <span id="allergies-val-<?php echo $sub->id; ?>"><?php echo !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded'; ?></span></p>
-                            </div>
-                        </div>
-
-                        <?php if ($can_bypass_date_lock): ?>
-                        <div id="logistics-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
-                            <div style="margin-bottom:8px;">
-                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Receive By:</label>
-                                <select id="edit-timing-select-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;" onchange="if(this.value=='custom') jQuery('#edit-timing-custom-<?php echo $sub->id; ?>').show(); else jQuery('#edit-timing-custom-<?php echo $sub->id; ?>').hide();">
-                                    <option value="Deliver Day Before" <?php selected($timing, 'Deliver Day Before'); ?>>Deliver Day Before</option>
-                                    <option value="Deliver Same Day" <?php selected($timing, 'Deliver Same Day'); ?>>Deliver Same Day</option>
-                                    <option value="custom" <?php if(!in_array($timing, ['Deliver Day Before', 'Deliver Same Day'])) echo 'selected'; ?>>+ Custom Receive Timing...</option>
-                                </select>
-                                <input type="text" id="edit-timing-custom-<?php echo $sub->id; ?>" value="<?php echo esc_attr($timing); ?>" placeholder="Enter custom timing..." style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box; margin-top:4px; <?php echo (in_array($timing, ['Deliver Day Before', 'Deliver Same Day'])) ? 'display:none;' : ''; ?>">
-                            </div>
-                            <div style="margin-bottom:8px;">
-                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Time Slot:</label>
-                                <?php $std_slots = ['5:00 AM to 6:00 AM', '6:00 AM to 7:00 AM', '7:00 AM to 8:00 AM', '8:00 AM to 9:00 AM', '5:00 PM to 8:00 PM']; ?>
-                                <select id="edit-timeslot-select-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;" onchange="if(this.value=='custom') jQuery('#edit-timeslot-custom-<?php echo $sub->id; ?>').show(); else jQuery('#edit-timeslot-custom-<?php echo $sub->id; ?>').hide();">
-                                    <option value="5:00 AM to 6:00 AM" <?php selected($time_slot, '5:00 AM to 6:00 AM'); ?>>5:00 AM to 6:00 AM</option>
-                                    <option value="6:00 AM to 7:00 AM" <?php selected($time_slot, '6:00 AM to 7:00 AM'); ?>>6:00 AM to 7:00 AM</option>
-                                    <option value="7:00 AM to 8:00 AM" <?php selected($time_slot, '7:00 AM to 8:00 AM'); ?>>7:00 AM to 8:00 AM</option>
-                                    <option value="8:00 AM to 9:00 AM" <?php selected($time_slot, '8:00 AM to 9:00 AM'); ?>>8:00 AM to 9:00 AM</option>
-                                    <option value="5:00 PM to 8:00 PM" <?php selected($time_slot, '5:00 PM to 8:00 PM'); ?>>5:00 PM to 8:00 PM</option>
-                                    <option value="custom" <?php if(!in_array($time_slot, $std_slots)) echo 'selected'; ?>>+ Custom Time Slot...</option>
-                                </select>
-                                <input type="text" id="edit-timeslot-custom-<?php echo $sub->id; ?>" value="<?php echo esc_attr($time_slot); ?>" placeholder="Enter custom slot (e.g. 12:00 PM)" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box; margin-top:4px; <?php echo (in_array($time_slot, $std_slots)) ? 'display:none;' : ''; ?>">
-                            </div>
-                            <div style="margin-bottom:10px;">
-                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Allergies:</label>
-                                <textarea id="edit-allergies-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;"><?php echo esc_textarea($allergies); ?></textarea>
-                            </div>
-                            <button class="save-logistics-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Changes</button>
-                        </div>
+                            <button class="toggle-account-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
                         <?php endif; ?>
                     </div>
 
-                    <div style="width: 100%; border-top: 1px solid #eee; margin-top: 10px; padding-top: 20px;">
-                        <p style="color: <?php echo $note_color; ?>; font-size: 0.9em; font-weight: bold; margin: 0; text-align:center;"><em><?php echo $note_text; ?></em></p>
+                    <div id="account-view-<?php echo $sub->id; ?>">
+                        <p style="margin:0 0 8px 0; color:#231F20;"><strong>Order ID:</strong> <?php echo ($sub->wc_order_id > 0) ? '#' . esc_html($sub->wc_order_id) : 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT); ?></p>
+                        
+                        <p style="margin:0 0 8px 0; color:#231F20; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                            <strong>Name:</strong>
+                            <span id="name-val-<?php echo $sub->id; ?>"><?php echo esc_html($display_name); ?></span>
+                            <span id="recipient-row-<?php echo $sub->id; ?>" class="cmp-recipient-label-badge" style="display:<?php echo !empty($recipient_name) ? 'inline-flex' : 'none'; ?>;">
+                                Recipient: <strong id="recipient-val-<?php echo $sub->id; ?>"><?php echo esc_html($recipient_name); ?></strong>
+                            </span>
+                        </p>
+
+                        <p style="margin:0 0 8px 0; color:#231F20;"><strong>Email:</strong> <?php echo esc_html($email); ?></p>
+                        <p style="margin:0 0 8px 0; color:#231F20;"><strong>Phone:</strong> <?php echo esc_html($phone ?: 'N/A'); ?></p>
+                        <p style="margin:0; color:#231F20;"><strong>Address:</strong> <span id="address-val-<?php echo $sub->id; ?>"><?php echo esc_html($address); ?></span></p>
                     </div>
+
+                    <?php if (current_user_can('manage_options')): ?>
+                    <div id="account-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+                            <div style="flex:1; min-width:120px;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">First Name:</label>
+                                <input type="text" id="edit-fname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($fname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                            <div style="flex:1; min-width:120px;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#334155;">Last Name:</label>
+                                <input type="text" id="edit-lname-<?php echo $sub->id; ?>" value="<?php echo esc_attr($lname); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                            <div style="flex:1; min-width:140px;">
+                                <label style="font-size:0.85em; font-weight:bold; color:#1B5E20;">Recipient Name:</label>
+                                <input type="text" id="edit-recipient-<?php echo $sub->id; ?>" value="<?php echo esc_attr($recipient_name); ?>" placeholder="e.g. Sarah" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #68B946; background:#EEF7E3; border-radius:4px; box-sizing:border-box;">
+                            </div>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Full Address:</label>
+                            <input type="text" id="edit-address-<?php echo $sub->id; ?>" value="<?php echo esc_attr($address !== 'Address not provided' ? $address : ''); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                        </div>
+                        <button class="save-account-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
+                    </div>
+                    <?php endif; ?>
+
                 </div>
-            </div> <!-- End Mobile Drawer -->
+
+                <div style="flex:1; min-width:250px; background:#f8fafc; padding:15px; border-radius:8px; border:1px solid #e2e8f0; position:relative;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h3 style="margin:0; color:#1B5E20; font-size:1.1em;">Active Logistics</h3>
+                        <?php if ($can_bypass_date_lock): ?>
+                            <button class="toggle-logistics-edit" data-sub-id="<?php echo $sub->id; ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
+                        <?php endif; ?>
+                    </div>
+
+                    <div id="logistics-view-<?php echo $sub->id; ?>">
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Method:</strong> <?php echo esc_html($method_display); ?></p>
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Receive By:</strong> <span id="timing-val-<?php echo $sub->id; ?>"><?php echo esc_html($timing_display); ?></span></p>
+                        <p style="margin:0 0 8px 0; color:#475569;"><strong>Time Slot:</strong> <span id="time-slot-val-<?php echo $sub->id; ?>"><?php echo esc_html($time_slot_display); ?></span></p>
+                        <div style="margin-top:15px; padding-top:15px; border-top:1px dashed #cbd5e1;">
+                            <p style="margin:0; color:#b45309;"><strong>Allergies:</strong> <span id="allergies-val-<?php echo $sub->id; ?>"><?php echo !empty($allergies) ? esc_html($allergies) : 'No Allergies Recorded'; ?></span></p>
+                        </div>
+                    </div>
+
+                    <?php if ($can_bypass_date_lock): ?>
+                    <div id="logistics-edit-<?php echo $sub->id; ?>" style="display:none; margin-top:10px;">
+                        <div style="margin-bottom:8px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Receive By:</label>
+                            <select id="edit-timing-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                                <option value="Deliver Day Before" <?php selected($timing, 'Deliver Day Before'); ?>>Deliver Day Before</option>
+                                <option value="Deliver Same Day" <?php selected($timing, 'Deliver Same Day'); ?>>Deliver Same Day</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom:8px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Time Slot:</label>
+                            <select id="edit-timeslot-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                                <option value="5:00 AM to 6:00 AM" <?php selected($time_slot, '5:00 AM to 6:00 AM'); ?>>5:00 AM to 6:00 AM</option>
+                                <option value="6:00 AM to 7:00 AM" <?php selected($time_slot, '6:00 AM to 7:00 AM'); ?>>6:00 AM to 7:00 AM</option>
+                                <option value="7:00 AM to 8:00 AM" <?php selected($time_slot, '7:00 AM to 8:00 AM'); ?>>7:00 AM to 8:00 AM</option>
+                                <option value="8:00 AM to 9:00 AM" <?php selected($time_slot, '8:00 AM to 9:00 AM'); ?>>8:00 AM to 9:00 AM</option>
+                                <option value="5:00 PM to 8:00 PM" <?php selected($time_slot, '5:00 PM to 8:00 PM'); ?>>5:00 PM to 8:00 PM</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="font-size:0.85em; font-weight:bold; color:#334155;">Allergies:</label>
+                            <textarea id="edit-allergies-<?php echo $sub->id; ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;"><?php echo esc_textarea($allergies); ?></textarea>
+                        </div>
+                        <button class="save-logistics-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>" data-order-id="<?php echo $sub->wc_order_id; ?>" style="background:#379237; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Changes</button>
+                    </div>
+                    <?php endif; ?>
+
+                </div>
+
+                <div style="width: 100%; border-top: 1px solid #eee; margin-top: 10px; padding-top: 20px;">
+                    <p style="color: <?php echo $note_color; ?>; font-size: 0.9em; font-weight: bold; margin: 0; text-align:center;"><em><?php echo $note_text; ?></em></p>
+                </div>
+            </div>
 
             <?php if ($is_paused): ?>
             <div class="cmp-no-print" style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:15px; margin-bottom:20px; text-align:center;">
@@ -2288,17 +2163,7 @@ function cmp_render_customer_portal() {
                             } elseif ($log_id > 0 && !$saved_chefs_choice && !$is_chef_assigned) {
                                 $status_badge = '<span class="cmp-status-pill pill-meals-pending">Meals Pending</span>';
                             } elseif ($log_id > 0) {
-                                $status_badge = '<span class="cmp-status-pill pill-confirmed">Selected</span>';
-                            }
-                            
-                            // Staff POS Badge Injection
-                            $pos_badge_html = '';
-                            if ($is_staff_viewing && $log_id > 0) {
-                                if ($log->pos_updated == 1) {
-                                    $pos_badge_html = '<span class="cmp-pos-badge pos-done" title="POS Check Completed">POS ✓</span>';
-                                } else {
-                                    $pos_badge_html = '<span class="cmp-pos-badge pos-pend" title="Pending POS Check">POS Pending</span>';
-                                }
+                                $status_badge = '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
                             }
 
                             $default_macro_tiles = '
@@ -2314,14 +2179,8 @@ function cmp_render_customer_portal() {
                         ?>
                             <tr class="cmp-day-row <?php echo esc_attr($row_status_class); ?>" data-row="<?php echo $i; ?>" data-is-flexible="<?php echo $row_is_flexible; ?>" data-allow-custom="<?php echo $row_allow_custom; ?>">
                                 <td class="cmp-cell-day" title="Click to Expand / Collapse Day <?php echo $i; ?>">
-                                    <div class="cmp-cell-day-flex">
-                                        <strong>Day <?php echo $i; ?></strong>
-                                        <div>
-                                            <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
-                                            <?php echo $pos_badge_html; ?>
-                                        </div>
-                                    </div>
-                                    <div class="cmp-mobile-preview"></div>
+                                    <strong>Day <?php echo $i; ?></strong>
+                                    <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                 </td>
                                 <td class="cmp-cell-date">
                                     <span class="cmp-mobile-label">Date</span>
@@ -2410,7 +2269,6 @@ function cmp_render_customer_portal() {
                                     <span class="cmp-mobile-label">Status</span>
                                     <div class="cmp-status-box">
                                         <?php echo $status_badge; ?>
-                                        <?php echo $pos_badge_html; ?>
                                     </div>
                                 </td>
 
@@ -2471,48 +2329,6 @@ function cmp_render_customer_portal() {
                     </tbody>
                 </table>
             </div>
-
-            <!-- Customer Feedback Widget (Option 4B + D1) -->
-            <?php if (!$is_admin_override && !$is_chef_override): ?>
-            <div class="cmp-feedback-widget cmp-no-print">
-                <h4>Tell us how we're doing!</h4>
-                <div class="cmp-fb-row">
-                    <div class="cmp-fb-item">
-                        <label>Food Quality</label>
-                        <div class="cmp-fb-stars" data-group="food-<?php echo $sub->id; ?>">
-                            <input type="radio" id="star5-f-<?php echo $sub->id; ?>" name="food-<?php echo $sub->id; ?>" value="5" /><label for="star5-f-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star4-f-<?php echo $sub->id; ?>" name="food-<?php echo $sub->id; ?>" value="4" /><label for="star4-f-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star3-f-<?php echo $sub->id; ?>" name="food-<?php echo $sub->id; ?>" value="3" /><label for="star3-f-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star2-f-<?php echo $sub->id; ?>" name="food-<?php echo $sub->id; ?>" value="2" /><label for="star2-f-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star1-f-<?php echo $sub->id; ?>" name="food-<?php echo $sub->id; ?>" value="1" /><label for="star1-f-<?php echo $sub->id; ?>">★</label>
-                        </div>
-                    </div>
-                    <div class="cmp-fb-item">
-                        <label>Delivery Experience</label>
-                        <div class="cmp-fb-stars" data-group="delivery-<?php echo $sub->id; ?>">
-                            <input type="radio" id="star5-d-<?php echo $sub->id; ?>" name="delivery-<?php echo $sub->id; ?>" value="5" /><label for="star5-d-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star4-d-<?php echo $sub->id; ?>" name="delivery-<?php echo $sub->id; ?>" value="4" /><label for="star4-d-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star3-d-<?php echo $sub->id; ?>" name="delivery-<?php echo $sub->id; ?>" value="3" /><label for="star3-d-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star2-d-<?php echo $sub->id; ?>" name="delivery-<?php echo $sub->id; ?>" value="2" /><label for="star2-d-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star1-d-<?php echo $sub->id; ?>" name="delivery-<?php echo $sub->id; ?>" value="1" /><label for="star1-d-<?php echo $sub->id; ?>">★</label>
-                        </div>
-                    </div>
-                    <div class="cmp-fb-item">
-                        <label>Portal Ease of Use</label>
-                        <div class="cmp-fb-stars" data-group="portal-<?php echo $sub->id; ?>">
-                            <input type="radio" id="star5-p-<?php echo $sub->id; ?>" name="portal-<?php echo $sub->id; ?>" value="5" /><label for="star5-p-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star4-p-<?php echo $sub->id; ?>" name="portal-<?php echo $sub->id; ?>" value="4" /><label for="star4-p-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star3-p-<?php echo $sub->id; ?>" name="portal-<?php echo $sub->id; ?>" value="3" /><label for="star3-p-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star2-p-<?php echo $sub->id; ?>" name="portal-<?php echo $sub->id; ?>" value="2" /><label for="star2-p-<?php echo $sub->id; ?>">★</label>
-                            <input type="radio" id="star1-p-<?php echo $sub->id; ?>" name="portal-<?php echo $sub->id; ?>" value="1" /><label for="star1-p-<?php echo $sub->id; ?>">★</label>
-                        </div>
-                    </div>
-                </div>
-                <textarea id="cmp-fb-comments-<?php echo $sub->id; ?>" class="cmp-fb-textarea" placeholder="Any additional feedback, thoughts, or dish requests? (Optional)"></textarea>
-                <button type="button" class="cmp-util-btn primary-util cmp-submit-fb-btn" data-sub-id="<?php echo $sub->id; ?>" data-user-id="<?php echo $sub->user_id; ?>">Submit Feedback</button>
-            </div>
-            <?php endif; ?>
-
         </div>
         <?php endforeach; ?>
 
@@ -2555,7 +2371,7 @@ function cmp_render_customer_portal() {
 
     jQuery(document).ready(function($) {
         // Privilege Flags dynamically injected from WP Admin -> Meal Settings
-        var canBypassDateLock = <?php echo $canBypassDateLock ? 'true' : 'false'; ?>;
+        var canBypassDateLock = <?php echo $can_bypass_date_lock ? 'true' : 'false'; ?>;
         var canBypassQuota    = <?php echo $can_bypass_quota ? 'true' : 'false'; ?>;
         var isChefOverride    = <?php echo $is_chef_override ? 'true' : 'false'; ?>;
         var chefsChoiceLabel  = "<?php echo esc_js($label_chefs_choice); ?>";
@@ -2585,7 +2401,6 @@ function cmp_render_customer_portal() {
             var saveBtn = rowElement.find('.cmp-save-row');
             var logId   = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
             var currentBadgeHtml = rowElement.find('.cmp-status-box').html();
-            var mobileBadgeHtml  = rowElement.find('.cmp-mobile-status').html();
 
             rowElement.data('cmp-snapshot', {
                 date: (rowElement.find('.cmp-date-picker').val() || '').toString().trim(),
@@ -2594,8 +2409,7 @@ function cmp_render_customer_portal() {
                 logId: logId,
                 btnText: logId > 0 ? 'Update' : 'Save',
                 btnBg: logId > 0 ? '#1B5E20' : '#379237',
-                statusBadgeHtml: currentBadgeHtml,
-                mobileBadgeHtml: mobileBadgeHtml
+                statusBadgeHtml: currentBadgeHtml
             });
         }
 
@@ -2653,9 +2467,7 @@ function cmp_render_customer_portal() {
             }
             if (snap && snap.statusBadgeHtml) {
                 rowElement.find('.cmp-status-box').html(snap.statusBadgeHtml);
-            }
-            if (snap && snap.mobileBadgeHtml) {
-                rowElement.find('.cmp-mobile-status').html(snap.mobileBadgeHtml);
+                rowElement.find('.cmp-mobile-status').html(snap.statusBadgeHtml);
             }
 
             syncRowCompactAndSummary(rowElement);
@@ -2860,26 +2672,14 @@ function cmp_render_customer_portal() {
             evaluateRowDirtyState(rowElement);
         }
 
-        // Helper: Format date for preview (e.g. 2026-10-24 -> 24 Oct)
-        function formatPreviewDate(dateStr) {
-            if (!dateStr) return '';
-            var d = new Date(dateStr + 'T00:00:00');
-            if (isNaN(d.getTime())) return dateStr;
-            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            return d.getDate() + ' ' + months[d.getMonth()];
-        }
-
         // Helper: Sync Chef's Choice Compact Mode & Collapsed Summary Text
         function syncRowCompactAndSummary(rowElement) {
             var summaryTextEl = rowElement.find('.cmp-summary-text');
-            var mobilePreviewEl = rowElement.find('.cmp-mobile-preview');
-            
-            var rowDateRaw = rowElement.find('.cmp-date-picker').val();
-            var rowDateFmt = formatPreviewDate(rowDateRaw);
 
             if (rowElement.hasClass('status-void')) {
-                if (summaryTextEl.length) summaryTextEl.html('<span>This delivery was cancelled &mdash; a replacement day has been added to your schedule</span>');
-                if (mobilePreviewEl.length) mobilePreviewEl.html('Cancelled');
+                if (summaryTextEl.length) {
+                    summaryTextEl.html('<span>This delivery was cancelled &mdash; a replacement day has been added to your schedule</span>');
+                }
                 return;
             }
 
@@ -2912,7 +2712,6 @@ function cmp_render_customer_portal() {
                 rowElement.removeClass('is-chefs-choice-compact');
             }
 
-            // Desktop Summary Text
             if (summaryTextEl.length) {
                 var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
                 if (isChefsChoice && !hasValues) {
@@ -2923,31 +2722,6 @@ function cmp_render_customer_portal() {
                     summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
                 } else {
                     summaryTextEl.html(unsavedPrefix + 'Pending selection — Click to expand and choose meals');
-                }
-            }
-
-            // Mobile Compact Preview Line
-            if (mobilePreviewEl.length) {
-                if (!rowDateFmt) {
-                    mobilePreviewEl.html('');
-                    mobilePreviewEl.hide();
-                } else {
-                    var previewParts = [];
-                    previewParts.push('<strong>' + rowDateFmt + '</strong>');
-                    
-                    if (isChefsChoice && !hasValues) {
-                        previewParts.push(chefsChoiceLabel);
-                    } else if (pickedNames.length > 0) {
-                        previewParts.push(pickedNames.join(' &bull; '));
-                    } else if (logId > 0 && !isUnsaved) {
-                        previewParts.push('<em>Meals Pending</em>');
-                    } else {
-                        previewParts.push('<em>Pending</em>');
-                    }
-                    
-                    mobilePreviewEl.html(previewParts.join(' | '));
-                    // Let CSS display:none handle open/closed state
-                    mobilePreviewEl.css('display', '');
                 }
             }
         }
@@ -2976,13 +2750,8 @@ function cmp_render_customer_portal() {
             var subId = btn.data('sub-id');
             var userId = btn.data('user-id');
             var orderId = btn.data('order-id');
-            
-            var timingSelect = $('#edit-timing-select-' + subId).val();
-            var timing = (timingSelect === 'custom') ? $('#edit-timing-custom-' + subId).val() : timingSelect;
-            
-            var timeSlotSelect = $('#edit-timeslot-select-' + subId).val();
-            var timeSlot = (timeSlotSelect === 'custom') ? $('#edit-timeslot-custom-' + subId).val() : timeSlotSelect;
-            
+            var timing = $('#edit-timing-' + subId).val();
+            var timeSlot = $('#edit-timeslot-' + subId).val();
             var allergies = $('#edit-allergies-' + subId).val();
             var origText = btn.text();
 
@@ -2993,7 +2762,6 @@ function cmp_render_customer_portal() {
                 nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
                 user_id: userId,
                 order_id: orderId,
-                sub_id: subId,
                 delivery_timing: timing,
                 time_slot: timeSlot,
                 allergies: allergies
@@ -3796,7 +3564,7 @@ function cmp_render_customer_portal() {
 
                     var newBadge = (!isChefsChoice && !hasSavedMeals)
                         ? '<span class="cmp-status-pill pill-meals-pending">Meals Pending</span>'
-                        : '<span class="cmp-status-pill pill-confirmed">Selected</span>';
+                        : '<span class="cmp-status-pill pill-confirmed">Confirmed</span>';
                     rowElement.find('.cmp-status-box').html(newBadge);
                     rowElement.find('.cmp-mobile-status').html(newBadge);
 
@@ -3922,52 +3690,129 @@ function cmp_render_customer_portal() {
             });
         });
 
-        // CUSTOMER FEEDBACK AJAX HANDLER
-        $('.cmp-submit-fb-btn').on('click', function(e) {
-            e.preventDefault();
-            var btn = $(this);
-            var subId = btn.data('sub-id');
-            var userId = btn.data('user-id');
-            
-            var rFood   = $('input[name="food-' + subId + '"]:checked').val();
-            var rDeliv  = $('input[name="delivery-' + subId + '"]:checked').val();
-            var rPortal = $('input[name="portal-' + subId + '"]:checked').val();
-            var comments = $('#cmp-fb-comments-' + subId).val();
-            
-            if (!rFood || !rDeliv || !rPortal) {
-                alert('Please provide a star rating for all 3 categories before submitting. Thank you!');
-                return;
-            }
-            
-            var origText = btn.text();
-            btn.text('Submitting...').prop('disabled', true);
-            
-            var data = {
-                action: 'cmp_submit_customer_feedback',
-                nonce: '<?php echo wp_create_nonce("cmp_portal_nonce"); ?>',
-                sub_id: subId,
-                user_id: userId,
-                rating_food: rFood,
-                rating_delivery: rDeliv,
-                rating_portal: rPortal,
-                comments: comments
-            };
-            
-            $.post('<?php echo admin_url("admin-ajax.php"); ?>', data, function(response) {
-                if (response.success) {
-                    btn.closest('.cmp-feedback-widget').html('<div style="color:#1B5E20; padding:20px; font-weight:bold; font-size:1.1em;">✓ Thank you! Your feedback has been received.</div>');
-                } else {
-                    alert('Error: ' + response.data);
-                    btn.text(origText).prop('disabled', false);
-                }
-            }).fail(function() {
-                alert('Connection error. Please try again.');
-                btn.text(origText).prop('disabled', false);
-            });
-        });
-
     });
     </script>
     <?php
     return ob_get_clean();
+}
+
+// ==========================================
+// 3. EXPORT CUSTOMER MEAL PLAN TO CSV
+// ==========================================
+if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
+    add_action('wp_ajax_cmp_export_customer_csv', 'cmp_export_customer_csv');
+    add_action('wp_ajax_nopriv_cmp_export_customer_csv', 'cmp_export_customer_csv');
+
+    function cmp_export_customer_csv() {
+        if (!isset($_GET['sub_id'])) wp_die('No subscription ID provided.');
+        global $wpdb;
+        $sub_id = intval($_GET['sub_id']);
+
+        $is_admin = current_user_can('manage_options') || current_user_can('foh_manager') || current_user_can('kitchen_staff') || current_user_can('menu_manager');
+        $user_id = get_current_user_id();
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $sub_id));
+
+        if (!$sub || (!$is_admin && $sub->user_id != $user_id)) wp_die('Unauthorized Access');
+
+        $is_flexible  = isset($sub->is_flexible) ? intval($sub->is_flexible) : 0;
+        $allow_custom = isset($sub->allow_custom) ? intval($sub->allow_custom) : 0;
+
+        $order = wc_get_order($sub->wc_order_id);
+        $sub_user = get_userdata($sub->user_id);
+
+        $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
+        $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+        $fallback_name = trim($fname . ' ' . $lname);
+        if (empty($fallback_name)) $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
+
+        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
+        if (empty(trim($full_name))) { $full_name = $fallback_name; }
+
+        $email = $order ? $order->get_billing_email() : ($sub_user ? $sub_user->user_email : '');
+        $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
+
+        $timing = $order ? ($order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing')) : get_user_meta($sub->user_id, 'delivery_timing', true);
+        $time_slot = $order ? ($order->get_meta('_cmp_time_slot') ?: $order->get_meta('time_slot')) : get_user_meta($sub->user_id, 'time_slot', true);
+        $method = $order ? ($order->get_meta('_cmp_logistics_method') ?: $order->get_meta('delivery_method')) : get_user_meta($sub->user_id, 'delivery_method', true);
+        $pickup = $order ? ($order->get_meta('_cmp_pickup_location') ?: $order->get_meta('pickup_location')) : get_user_meta($sub->user_id, 'pickup_location', true);
+        $allergies = $order ? $order->get_customer_note() : get_user_meta($sub->user_id, 'allergies', true);
+
+        $address = 'Address not provided';
+        if ($order) {
+            $addr_parts = array_filter([$order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city()]);
+            if (empty($addr_parts)) $addr_parts = array_filter([$order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city()]);
+            if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
+        }
+        if ($address === 'Address not provided') {
+            $addr_parts = array_filter([get_user_meta($sub->user_id, 'billing_address_1', true), get_user_meta($sub->user_id, 'billing_address_2', true), get_user_meta($sub->user_id, 'billing_city', true)]);
+            if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
+        }
+        $method_display = $method === 'Pickup' && !empty($pickup) ? $method . ' (' . $pickup . ')' : $method;
+
+        $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
+        $foods = $wpdb->get_results("SELECT id, food_name FROM {$wpdb->prefix}cmp_foods");
+        $food_map = array(); foreach($foods as $f) { $food_map[$f->id] = $f->food_name; }
+
+        $is_juice = (stripos($sub->allowed_categories, 'Juices') !== false || stripos($sub->plan_name, 'juice') !== false || stripos($sub->plan_name, 'cleanse') !== false);
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="Meal_Schedule_' . esc_attr(str_replace(' ', '_', $sub->plan_name)) . '.csv"');
+        $output = fopen('php://output', 'w');
+        fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
+
+        fputcsv($output, array('CUSTOMER DETAILS'));
+        fputcsv($output, array('Name:', $full_name, 'Email:', $email, 'Phone:', $phone));
+        fputcsv($output, array('Address:', $address));
+        fputcsv($output, array('Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot));
+        fputcsv($output, array('Allergies:', $allergies ?: 'None'));
+        fputcsv($output, array('')); 
+
+        if ($is_juice) { 
+            fputcsv($output, array('Date', 'Juice 1', 'Juice 2', 'Juice 3', 'Chefs Choice', 'Delivery Status')); 
+        } else { 
+            $h1 = $is_flexible ? 'Meal 1' : 'Breakfast';
+            $h2 = $is_flexible ? 'Meal 2' : 'Lunch';
+            $h3 = $is_flexible ? 'Meal 3' : 'Dinner';
+            fputcsv($output, array('Date', $h1, $h2, $h3, 'Snack 1', 'Snack 2', 'Chefs Choice', 'Delivery Status')); 
+        }
+
+        foreach ($logs as $log) {
+            $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
+
+            $status = 'Pending';
+            if ($log->delivery_result === 'Successful') { $status = 'Successful'; }
+            elseif (in_array($log->delivery_result, ['Cancelled','Returned'])) { $status = $log->delivery_result; }
+            elseif ($log->id > 0) { $status = 'Confirmed'; }
+
+            $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || !empty($log->custom_breakfast) || !empty($log->custom_lunch) || !empty($log->custom_dinner) || !empty($log->custom_juice_1));
+            $chef_tag = $log->is_chefs_choice ? ' (Chef)' : '';
+            $pending_tag = "[Pending Chef]";
+
+            if ($is_juice) {
+                $j1 = '-'; $j2 = '-'; $j3 = '-';
+                if ($log->is_chefs_choice && !$is_assigned) {
+                    $j1 = $pending_tag; $j2 = $pending_tag; $j3 = $pending_tag;
+                } else {
+                    $j1 = !empty($log->custom_juice_1) ? $log->custom_juice_1 : ($log->juice_1_id ? ($food_map[$log->juice_1_id] ?? 'Unknown') . $chef_tag : '-');
+                    $j2 = !empty($log->custom_juice_2) ? $log->custom_juice_2 : ($log->juice_2_id ? ($food_map[$log->juice_2_id] ?? 'Unknown') . $chef_tag : '-');
+                    $j3 = !empty($log->custom_juice_3) ? $log->custom_juice_3 : ($log->juice_3_id ? ($food_map[$log->juice_3_id] ?? 'Unknown') . $chef_tag : '-');
+                }
+                fputcsv($output, array($log->target_date, $j1, $j2, $j3, $chefs, $status));
+
+            } else {
+                $b = '-'; $l = '-'; $d = '-'; $s1 = '-'; $s2 = '-';
+                if ($log->is_chefs_choice && !$is_assigned) {
+                    $b = $pending_tag; $l = $pending_tag; $d = $pending_tag; $s1 = $pending_tag; $s2 = $pending_tag;
+                } else {
+                    $b  = !empty($log->custom_breakfast) ? $log->custom_breakfast : ($log->breakfast_id ? ($food_map[$log->breakfast_id] ?? 'Unknown') . $chef_tag : '-');
+                    $l  = !empty($log->custom_lunch)     ? $log->custom_lunch     : ($log->lunch_id     ? ($food_map[$log->lunch_id]     ?? 'Unknown') . $chef_tag : '-');
+                    $d  = !empty($log->custom_dinner)    ? $log->custom_dinner    : ($log->dinner_id    ? ($food_map[$log->dinner_id]    ?? 'Unknown') . $chef_tag : '-');
+                    $s1 = !empty($log->custom_snack_1)   ? $log->custom_snack_1   : ($log->snack_1_id   ? ($food_map[$log->snack_1_id]   ?? 'Unknown') . $chef_tag : '-');
+                    $s2 = !empty($log->custom_snack_2)   ? $log->custom_snack_2   : ($log->snack_2_id   ? ($food_map[$log->snack_2_id]   ?? 'Unknown') . $chef_tag : '-');
+                }
+                fputcsv($output, array($log->target_date, $b, $l, $d, $s1, $s2, $chefs, $status));
+            }
+        }
+        fclose($output); exit;
+    }
 }
