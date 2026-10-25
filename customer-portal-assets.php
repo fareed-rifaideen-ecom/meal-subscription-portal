@@ -376,34 +376,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             .cmp-info-cards-grid {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 20px;
-                align-items: stretch;
-            }
-            .cmp-account-card-box {
-                background: #ffffff;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 16px 18px;
-            }
-            .cmp-logistics-card-box {
-                background: #f8fafc;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 16px 18px;
-                position: relative;
-            }
-            .cmp-kv-grid {
-                display: grid;
-                grid-template-columns: 100px minmax(0, 1fr);
-                row-gap: 7px;
-                column-gap: 10px;
-                font-size: 0.92rem;
-                line-height: 1.4;
-                color: #231F20;
-            }
-            .cmp-kv-label { font-weight: 700; color: #475569; }
-            .cmp-kv-val { font-weight: 600; color: #1e293b; word-break: break-word; }
-            .cmp-allergy-Dynamic-box {
+            .cmp-Allergy-Dynamic-box {
                 margin-top: 12px;
                 padding: 9px 12px;
                 background: #fffbeb;
@@ -412,6 +385,33 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 border-radius: 8px;
                 font-size: 0.88rem;
                 color: #92400e;
+            }
+            .cmp-saved-profile-bar {
+                margin-bottom: 10px;
+                padding: 8px 10px;
+                background: #EEF7E3;
+                border: 1px solid #68B946;
+                border-radius: 8px;
+            }
+            .cmp-saved-profile-bar label {
+                display: block;
+                font-size: 0.76rem;
+                font-weight: 800;
+                color: #1B5E20;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+                margin-bottom: 4px;
+            }
+            .cmp-saved-profile-select {
+                width: 100%;
+                padding: 6px 8px;
+                font-size: 0.85rem;
+                font-weight: 600;
+                color: #1e293b;
+                background: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                cursor: pointer;
             }
             .cmp-cutoff-callout {
                 margin-top: 14px;
@@ -528,26 +528,53 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 filter: brightness(1.08);
                 transform: translateY(-1px);
             }
-            .cmp-jump-btn-left {
+            .cmp-jump-pending-btn {
                 display: inline-flex !important;
                 align-items: center !important;
-                gap: 8px !important;
+                justify-content: space-between !important;
+                flex-wrap: nowrap !important;
+                letter-spacing: normal !important;
+                gap: 10px !important;
+            }
+            .cmp-jump-btn-left {
+                display: flex !important;
+                align-items: center !important;
+                gap: 7px !important;
+                flex: 1 1 auto !important;
                 min-width: 0 !important;
+                overflow: hidden !important;
+                text-align: left !important;
+            }
+            .cmp-jump-btn-left > span,
+            .cmp-jump-pending-btn > span:not(.cmp-pending-count-badge) {
+                display: block !important;
+                flex: 1 1 auto !important;
+                min-width: 0 !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+                white-space: nowrap !important;
+                letter-spacing: -0.01em !important;
+                line-height: 1.25 !important;
+                text-align: left !important;
             }
             .cmp-pending-count-badge {
+                position: static !important;
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
-                background: rgba(255, 255, 255, 0.22) !important;
+                flex: 0 0 auto !important;
+                background: rgba(15, 41, 18, 0.36) !important;
                 color: #ffffff !important;
-                border: 1px solid rgba(220, 236, 201, 0.65) !important;
+                border: 1px solid rgba(220, 236, 201, 0.75) !important;
                 border-radius: 999px !important;
                 padding: 3px 10px !important;
                 font-size: 0.74rem !important;
                 font-weight: 800 !important;
+                letter-spacing: 0 !important;
                 line-height: 1.1 !important;
                 white-space: nowrap !important;
                 flex-shrink: 0 !important;
+                margin-left: 8px !important;
             }
 
             /* Pulse Highlight When Scrolling to Pending Row */
@@ -1201,27 +1228,49 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 }
                 .cmp-jump-pending-btn {
                     width: 100% !important;
+                    max-width: 100% !important;
                     display: flex !important;
                     align-items: center !important;
                     justify-content: space-between !important;
-                    padding: 11px 16px !important;
-                    font-size: 0.88rem !important;
+                    flex-wrap: nowrap !important;
+                    padding: 10px 14px !important;
+                    font-size: 0.82rem !important;
+                    letter-spacing: -0.01em !important;
                     border-radius: 12px !important;
-                    gap: 10px !important;
-                    overflow: visible !important;
+                    gap: 8px !important;
+                    overflow: hidden !important;
+                    box-sizing: border-box !important;
+                }
+                .cmp-jump-btn-left {
+                    flex: 1 1 auto !important;
+                    min-width: 0 !important;
+                    max-width: calc(100% - 78px) !important;
+                    gap: 6px !important;
+                    overflow: hidden !important;
+                }
+                .cmp-jump-btn-left > span,
+                .cmp-jump-pending-btn > span:not(.cmp-pending-count-badge) {
+                    font-size: 0.82rem !important;
+                    letter-spacing: -0.01em !important;
+                    overflow: hidden !important;
+                    text-overflow: ellipsis !important;
+                    white-space: nowrap !important;
                 }
                 .cmp-jump-pending-btn svg.cmp-fixed-svg {
-                    width: 17px !important;
-                    height: 17px !important;
-                    min-width: 17px !important;
-                    min-height: 17px !important;
-                    margin-left: 2px !important;
+                    width: 16px !important;
+                    height: 16px !important;
+                    min-width: 16px !important;
+                    min-height: 16px !important;
+                    margin-left: 0 !important;
                     flex-shrink: 0 !important;
                 }
                 .cmp-pending-count-badge {
-                    padding: 4px 11px !important;
-                    font-size: 0.74rem !important;
-                    margin-left: auto !important;
+                    position: static !important;
+                    flex: 0 0 auto !important;
+                    padding: 4px 10px !important;
+                    font-size: 0.72rem !important;
+                    margin-left: 8px !important;
+                    background: rgba(15, 41, 18, 0.42) !important;
                 }
 
                 .cmp-table td.cmp-collapsed-summary { display: none !important; }
@@ -2613,6 +2662,36 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
+            // 1-Click Quick-Fill from Customer's Saved Logistics & Allergy Profile History
+            $(document).on('change', '.cmp-saved-profile-select', function() {
+                var $sel  = $(this);
+                var subId = $sel.data('sub-id');
+                var $opt  = $sel.find('option:selected');
+                if (!$opt.val()) return;
+
+                var profTiming    = ($opt.attr('data-timing') || '').toString();
+                var profSlot      = ($opt.attr('data-slot') || '').toString();
+                var profAllergies = ($opt.attr('data-allergies') || '').toString();
+
+                var $timingSelect = $('#edit-timing-' + subId);
+                var $slotSelect   = $('#edit-timeslot-' + subId);
+
+                if (profTiming) {
+                    if ($timingSelect.find('option[value="' + profTiming.replace(/"/g, '\\"') + '"]').length === 0) {
+                        $('<option>', { value: profTiming, text: profTiming }).insertBefore($timingSelect.find('option[value="__custom__"]'));
+                    }
+                    $timingSelect.val(profTiming).trigger('change');
+                }
+                if (profSlot) {
+                    if ($slotSelect.find('option[value="' + profSlot.replace(/"/g, '\\"') + '"]').length === 0) {
+                        $('<option>', { value: profSlot, text: profSlot }).insertBefore($slotSelect.find('option[value="__custom__"]'));
+                    }
+                    $slotSelect.val(profSlot).trigger('change');
+                }
+                $('#edit-allergies-' + subId).val(profAllergies);
+                cmpShowNotice('Loaded saved logistics & allergy profile into form. Click "Save Logistics Changes" to apply.', 'success');
+            });
+
             $(document).on('change', '.cmp-logistics-timing-select', function() {
                 var subId = $(this).data('sub-id');
                 if ($(this).val() === '__custom__') {
@@ -2700,8 +2779,31 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                             $('#custom-slot-input-' + subId).val('');
                         }
 
+                        // Refresh Saved Logistics Profile dropdowns across all plan tabs for this customer
+                        if (res.data.saved_profiles && Array.isArray(res.data.saved_profiles)) {
+                            $('.cmp-saved-profile-select[data-user-id="' + userId + '"]').each(function() {
+                                var $profSelect = $(this);
+                                $profSelect.empty().append('<option value="">— Quick-Fill from Customer\'s Saved Profiles —</option>');
+                                res.data.saved_profiles.forEach(function(p, idx) {
+                                    var labelParts = [];
+                                    if (p.plan_name) labelParts.push(p.plan_name);
+                                    if (p.timing)    labelParts.push(p.timing);
+                                    if (p.time_slot) labelParts.push('(' + p.time_slot + ')');
+                                    if (p.allergies) labelParts.push('• Allergies: ' + p.allergies);
+                                    $('<option>', {
+                                        value: 'prof_' + idx,
+                                        text: labelParts.join(' '),
+                                        'data-timing': p.timing || '',
+                                        'data-slot': p.time_slot || '',
+                                        'data-allergies': p.allergies || ''
+                                    }).appendTo($profSelect);
+                                });
+                                $profSelect.closest('.cmp-saved-profile-bar').show();
+                            });
+                        }
+
                         btn.text('✓ Saved').css('background', '#1B5E20');
-                        cmpShowNotice('Logistics updated successfully.', 'success');
+                        cmpShowNotice('Logistics updated for this plan.', 'success');
 
                         setTimeout(function() {
                             $('#logistics-edit-' + subId).hide();
