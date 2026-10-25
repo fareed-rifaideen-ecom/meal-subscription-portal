@@ -59,6 +59,354 @@ if ( ! function_exists( 'cmp_ensure_feedback_table_exists' ) ) {
 }
 
 /**
+ * Ensures `wp_cmp_subscriptions` has dedicated per-plan logistics & allergy columns
+ * and backfills existing subscriptions so multi-plan customers never overwrite each other.
+ */
+add_action( 'init', 'cmp_ensure_subscription_logistics_columns' );
+if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
+    function cmp_ensure_subscription_logistics_columns() {
+        if ( get_option( 'cmp_sub_logistics_cols_v1' ) === '1' ) {
+            return;
+        }
+
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+
+        // Verify table exists before inspecting columns
+        $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) );
+        if ( $table_exists !== $table_subs ) {
+            return;
+        }
+
+        $existing_cols = $wpdb->get_col( "DESC {$table_subs}", 0 );
+        if ( ! is_array( $existing_cols ) ) {
+            return;
+        }
+
+        $columns_to_add = array(
+            'delivery_method'  => "ALTER TABLE {$table_subs} ADD COLUMN delivery_method VARCHAR(100) DEFAULT ''",
+            'pickup_location'  => "ALTER TABLE {$table_subs} ADD COLUMN pickup_location VARCHAR(255) DEFAULT ''",
+            'delivery_timing'  => "ALTER TABLE {$table_subs} ADD COLUMN delivery_timing VARCHAR(100) DEFAULT ''",
+            'time_slot'        => "ALTER TABLE {$table_subs} ADD COLUMN time_slot VARCHAR(100) DEFAULT ''",
+            'allergies'        => "ALTER TABLE {$table_subs} ADD COLUMN allergies TEXT NULL",
+            'delivery_address' => "ALTER TABLE {$table_subs} ADD COLUMN delivery_address TEXT NULL",
+        );
+
+        foreach ( $columns_to_add as $col_name => $alter_sql ) {
+            if ( ! in_array( $col_name, $existing_cols, true ) ) {
+                $wpdb->query( $alter_sql );
+            }
+        }
+
+        // One-time backfill for existing subscriptions from Order Meta / User Meta
+        $subs = $wpdb->get_results( "SELECT * FROM {$table_subs} ORDER BY id ASC" );
+        if ( $subs ) {
+            foreach ( $subs as $sub ) {
+                $resolved = cmp_get_subscription_logistics( $sub );
+                $update   = array();
+
+                if ( empty( $sub->delivery_method ) && ! empty( $resolved['method'] ) ) {
+                    $update['delivery_method'] = $resolved['method'];
+                }
+                if ( empty( $sub->pickup_location ) && ! empty( $resolved['pickup'] ) ) {
+                    $update['pickup_location'] = $resolved['pickup'];
+                }
+                if ( empty( $sub->delivery_timing ) && ! empty( $resolved['timing'] ) ) {
+                    $update['delivery_timing'] = $resolved['timing'];
+                }
+                if ( empty( $sub->time_slot ) && ! empty( $resolved['time_slot'] ) ) {
+                    $update['time_slot'] = $resolved['time_slot'];
+                }
+                if ( ( ! isset( $sub->allergies ) || $sub->allergies === '' || $sub->allergies === null ) && ! empty( $resolved['allergies'] ) ) {
+                    $update['allergies'] = $resolved['allergies'];
+                }
+                if ( empty( $sub->delivery_address ) && ! empty( $resolved['address'] ) && $resolved['address'] !== 'Address not provided' ) {
+                    $update['delivery_address'] = $resolved['address'];
+                }
+
+                if ( ! empty( $update ) ) {
+                    $wpdb->update( $table_subs, $update, array( 'id' => intval( $sub->id ) ) );
+                }
+
+                // Seed the customer's saved logistics profile history for future renewals
+                if ( intval( $sub->user_id ) > 0 ) {
+                    cmp_save_user_logistics_profile_history(
+                        intval( $sub->user_id ),
+                        intval( $sub->id ),
+                        array(
+                            'plan_name' => $sub->plan_name,
+                            'method'    => $resolved['method'],
+                            'pickup'    => $resolved['pickup'],
+                            'timing'    => $resolved['timing'],
+                            'time_slot' => $resolved['time_slot'],
+                            'allergies' => $resolved['allergies'],
+                            'address'   => $resolved['address'],
+                        ),
+                        false
+                    );
+                }
+            }
+        }
+
+        update_option( 'cmp_sub_logistics_cols_v1', '1' );
+    }
+}
+
+/**
+ * Resolves a subscription's exact logistics & allergies using the 3-tier priority hierarchy:
+ * 1. Subscription Row (`wp_cmp_subscriptions`) -> 2. WooCommerce Order Meta -> 3. User Meta
+ *
+ * @param object $sub Subscription row from wp_cmp_subscriptions.
+ * @return array Associative array of resolved logistics fields.
+ */
+if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
+    function cmp_get_subscription_logistics( $sub ) {
+        $order    = ( ! empty( $sub->wc_order_id ) && function_exists( 'wc_get_order' ) ) ? wc_get_order( $sub->wc_order_id ) : false;
+        $user_id  = intval( $sub->user_id ?? 0 );
+        $sub_user = $user_id > 0 ? get_userdata( $user_id ) : false;
+
+        // 1. Delivery Timing (Receive By: Deliver Same Day / Deliver Day Before / Custom)
+        $timing = ! empty( $sub->delivery_timing ) ? $sub->delivery_timing : '';
+        if ( empty( $timing ) && $order ) {
+            $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
+        }
+        if ( empty( $timing ) && $user_id > 0 ) {
+            $timing = get_user_meta( $user_id, 'delivery_timing', true );
+        }
+
+        // 2. Time Slot
+        $time_slot = ! empty( $sub->time_slot ) ? $sub->time_slot : '';
+        if ( empty( $time_slot ) && $order ) {
+            $time_slot = $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' );
+        }
+        if ( empty( $time_slot ) && $user_id > 0 ) {
+            $time_slot = get_user_meta( $user_id, 'time_slot', true );
+        }
+
+        // 3. Delivery Method (Delivery vs Pickup)
+        $method = ! empty( $sub->delivery_method ) ? $sub->delivery_method : '';
+        if ( empty( $method ) && $order ) {
+            $method = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
+        }
+        if ( empty( $method ) && $user_id > 0 ) {
+            $method = get_user_meta( $user_id, 'delivery_method', true );
+        }
+
+        // 4. Pickup Location
+        $pickup = ! empty( $sub->pickup_location ) ? $sub->pickup_location : '';
+        if ( empty( $pickup ) && $order ) {
+            $pickup = $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' );
+        }
+        if ( empty( $pickup ) && $user_id > 0 ) {
+            $pickup = get_user_meta( $user_id, 'pickup_location', true );
+        }
+
+        // 5. Allergies (Per-Plan)
+        $allergies = '';
+        if ( isset( $sub->allergies ) && $sub->allergies !== null && $sub->allergies !== '' ) {
+            $allergies = ( $sub->allergies === '__NONE__' ) ? '' : $sub->allergies;
+        } else {
+            if ( $order ) {
+                $allergies = $order->get_meta( 'allergies' ) ?: $order->get_customer_note();
+            }
+            if ( empty( $allergies ) && $user_id > 0 ) {
+                $allergies = get_user_meta( $user_id, 'allergies', true );
+            }
+        }
+
+        // 6. Delivery Address (Per-Plan)
+        $address = ! empty( $sub->delivery_address ) ? $sub->delivery_address : '';
+        if ( empty( $address ) && $order ) {
+            $addr_parts = array_filter( array( $order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city() ) );
+            if ( empty( $addr_parts ) ) {
+                $addr_parts = array_filter( array( $order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city() ) );
+            }
+            if ( ! empty( $addr_parts ) ) {
+                $address = implode( ', ', $addr_parts );
+            }
+        }
+        if ( empty( $address ) && $user_id > 0 ) {
+            $addr_parts = array_filter( array(
+                get_user_meta( $user_id, 'billing_address_1', true ),
+                get_user_meta( $user_id, 'billing_address_2', true ),
+                get_user_meta( $user_id, 'billing_city', true ),
+            ) );
+            if ( ! empty( $addr_parts ) ) {
+                $address = implode( ', ', $addr_parts );
+            }
+        }
+        if ( empty( $address ) ) {
+            $address = 'Address not provided';
+        }
+
+        // 7. Customer Name, Email, Phone
+        $fname = $user_id > 0 ? ( get_user_meta( $user_id, 'first_name', true ) ?: get_user_meta( $user_id, 'billing_first_name', true ) ) : '';
+        $lname = $user_id > 0 ? ( get_user_meta( $user_id, 'last_name', true ) ?: get_user_meta( $user_id, 'billing_last_name', true ) ) : '';
+        if ( $order ) {
+            $fname = $order->get_billing_first_name() ?: $fname;
+            $lname = $order->get_billing_last_name() ?: $lname;
+        }
+        $full_name = trim( $fname . ' ' . $lname );
+        if ( empty( $full_name ) ) {
+            $full_name = $sub_user ? $sub_user->display_name : 'Customer';
+        }
+
+        $email = $order ? $order->get_billing_email() : ( $sub_user ? $sub_user->user_email : '' );
+        $phone = $order ? $order->get_billing_phone() : ( $user_id > 0 ? get_user_meta( $user_id, 'billing_phone', true ) : '' );
+
+        return array(
+            'fname'     => $fname,
+            'lname'     => $lname,
+            'full_name' => $full_name,
+            'email'     => $email,
+            'phone'     => $phone,
+            'method'    => $method,
+            'pickup'    => $pickup,
+            'timing'    => $timing,
+            'time_slot' => $time_slot,
+            'allergies' => $allergies,
+            'address'   => $address,
+        );
+    }
+}
+
+/**
+ * Records a customer's per-plan logistics and allergy profile into `wp_usermeta`
+ * (`_cmp_saved_logistics_profiles` and default renewal meta keys) so when the customer
+ * renews or subscribes to another plan, their previous logistics and allergies are preserved.
+ *
+ * @param int   $user_id             WordPress User ID.
+ * @param int   $sub_id              Subscription ID.
+ * @param array $profile_data        Array with keys: plan_name, method, pickup, timing, time_slot, allergies, address.
+ * @param bool  $update_default_meta Whether to also update the customer's default checkout user_meta.
+ */
+if ( ! function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
+    function cmp_save_user_logistics_profile_history( $user_id, $sub_id, $profile_data = array(), $update_default_meta = true ) {
+        $user_id = intval( $user_id );
+        $sub_id  = intval( $sub_id );
+        if ( $user_id <= 0 ) {
+            return;
+        }
+
+        $timing    = sanitize_text_field( $profile_data['timing'] ?? '' );
+        $time_slot = sanitize_text_field( $profile_data['time_slot'] ?? '' );
+        $allergies = sanitize_textarea_field( $profile_data['allergies'] ?? '' );
+        $method    = sanitize_text_field( $profile_data['method'] ?? '' );
+        $pickup    = sanitize_text_field( $profile_data['pickup'] ?? '' );
+        $address   = sanitize_text_field( $profile_data['address'] ?? '' );
+        $plan_name = sanitize_text_field( $profile_data['plan_name'] ?? '' );
+
+        // 1. Update default user_meta so Checkout / Renewal forms auto-populate the latest preference
+        if ( $update_default_meta ) {
+            if ( ! empty( $timing ) ) {
+                update_user_meta( $user_id, 'delivery_timing', $timing );
+            }
+            if ( ! empty( $time_slot ) ) {
+                update_user_meta( $user_id, 'time_slot', $time_slot );
+            }
+            update_user_meta( $user_id, 'allergies', $allergies );
+            if ( ! empty( $method ) ) {
+                update_user_meta( $user_id, 'delivery_method', $method );
+            }
+            if ( ! empty( $pickup ) ) {
+                update_user_meta( $user_id, 'pickup_location', $pickup );
+            }
+            if ( ! empty( $address ) && $address !== 'Address not provided' ) {
+                update_user_meta( $user_id, 'billing_address_1', $address );
+            }
+        }
+
+        // 2. Store in structured multi-plan history (`_cmp_saved_logistics_profiles`)
+        if ( empty( $timing ) && empty( $time_slot ) && empty( $allergies ) ) {
+            return;
+        }
+
+        $profiles = get_user_meta( $user_id, '_cmp_saved_logistics_profiles', true );
+        if ( ! is_array( $profiles ) ) {
+            $profiles = array();
+        }
+
+        $profile_key = 'sub_' . ( $sub_id > 0 ? $sub_id : md5( $plan_name . '|' . $timing . '|' . $time_slot ) );
+        $profiles[ $profile_key ] = array(
+            'sub_id'     => $sub_id,
+            'plan_name'  => $plan_name ?: ( 'Plan #' . $sub_id ),
+            'method'     => $method ?: get_user_meta( $user_id, 'delivery_method', true ),
+            'pickup'     => $pickup ?: get_user_meta( $user_id, 'pickup_location', true ),
+            'timing'     => $timing,
+            'time_slot'  => $time_slot,
+            'allergies'  => $allergies,
+            'address'    => ( ! empty( $address ) && $address !== 'Address not provided' ) ? $address : get_user_meta( $user_id, 'billing_address_1', true ),
+            'updated_at' => current_time( 'mysql' ),
+        );
+
+        // Keep most recent 15 profiles per user
+        if ( count( $profiles ) > 15 ) {
+            $profiles = array_slice( $profiles, -15, 15, true );
+        }
+
+        update_user_meta( $user_id, '_cmp_saved_logistics_profiles', $profiles );
+    }
+}
+
+/**
+ * Retrieves all saved logistics & allergy profiles for a customer (from both `_cmp_saved_logistics_profiles`
+ * and any historical rows in `wp_cmp_subscriptions`), ready for 1-click selection on renewals or edits.
+ *
+ * @param int $user_id WordPress User ID.
+ * @return array List of distinct logistics profiles.
+ */
+if ( ! function_exists( 'cmp_get_user_saved_logistics_profiles' ) ) {
+    function cmp_get_user_saved_logistics_profiles( $user_id ) {
+        $user_id = intval( $user_id );
+        if ( $user_id <= 0 ) {
+            return array();
+        }
+
+        $saved = get_user_meta( $user_id, '_cmp_saved_logistics_profiles', true );
+        if ( ! is_array( $saved ) ) {
+            $saved = array();
+        }
+
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $subs       = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE user_id = %d ORDER BY id DESC LIMIT 10", $user_id ) );
+
+        if ( $subs ) {
+            foreach ( $subs as $s ) {
+                $key = 'sub_' . intval( $s->id );
+                if ( ! isset( $saved[ $key ] ) && ( ! empty( $s->delivery_timing ) || ! empty( $s->time_slot ) || ! empty( $s->allergies ) ) ) {
+                    $saved[ $key ] = array(
+                        'sub_id'     => intval( $s->id ),
+                        'plan_name'  => $s->plan_name,
+                        'method'     => $s->delivery_method ?? '',
+                        'pickup'     => $s->pickup_location ?? '',
+                        'timing'     => $s->delivery_timing ?? '',
+                        'time_slot'  => $s->time_slot ?? '',
+                        'allergies'  => ( isset( $s->allergies ) && $s->allergies !== '__NONE__' ) ? $s->allergies : '',
+                        'address'    => $s->delivery_address ?? '',
+                        'updated_at' => $s->start_date ?? '',
+                    );
+                }
+            }
+        }
+
+        // Deduplicate identical timing + slot + allergy combinations while keeping the newest plan label
+        $unique_profiles = array();
+        foreach ( array_reverse( $saved, true ) as $k => $p ) {
+            if ( empty( $p['timing'] ) && empty( $p['time_slot'] ) ) {
+                continue;
+            }
+            $sig = strtolower( trim( ( $p['timing'] ?? '' ) . '|' . ( $p['time_slot'] ?? '' ) . '|' . ( $p['allergies'] ?? '' ) ) );
+            if ( ! isset( $unique_profiles[ $sig ] ) ) {
+                $unique_profiles[ $sig ] = $p;
+            }
+        }
+
+        return array_values( $unique_profiles );
+    }
+}
+
+/**
  * Checks if the current logged-in user belongs to any of the configured role slugs
  * saved under WP Admin -> Meal Portal -> Meal Settings.
  */
@@ -123,7 +471,7 @@ if ( ! function_exists( 'cmp_can_bypass_date_restrictions' ) ) {
 }
 
 /**
- * Checks whether the current user is FOH, Menu Manager, or Admin (for read-only POS Check visibility & Logistics editing).
+ * Checks whether the current user is FOH, Menu Manager, or Admin (Mode A: Staff-only Logistics Editing & POS Check visibility).
  */
 if ( ! function_exists( 'cmp_can_view_pos_and_edit_logistics' ) ) {
     function cmp_can_view_pos_and_edit_logistics() {
@@ -406,18 +754,23 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
     }
 }
 
-// 1.2 CUSTOMER PORTAL INLINE LOGISTICS EDITING (WITH HYBRID CUSTOM TIMING ENGINE)
+// 1.2 CUSTOMER PORTAL PER-PLAN LOGISTICS EDITING + RENEWAL HISTORY RECORDING
 add_action( 'wp_ajax_cmp_cp_update_customer_logistics', 'cmp_ajax_cp_update_customer_logistics' );
 if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
     function cmp_ajax_cp_update_customer_logistics() {
         check_ajax_referer( 'cmp_portal_nonce', 'nonce' );
 
+        // Mode A: Only FOH, Menu Manager, and Admins can edit per-plan logistics
         if ( ! cmp_can_view_pos_and_edit_logistics() ) {
             wp_send_json_error( 'Permission Denied' );
         }
 
-        $user_id            = intval( $_POST['user_id'] );
-        $order_id           = intval( $_POST['order_id'] );
+        cmp_ensure_subscription_logistics_columns();
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+
+        $user_id            = intval( $_POST['user_id'] ?? 0 );
+        $order_id           = intval( $_POST['order_id'] ?? 0 );
         $sub_id             = isset( $_POST['sub_id'] ) ? intval( $_POST['sub_id'] ) : 0;
         $timing             = sanitize_text_field( wp_unslash( $_POST['delivery_timing'] ?? '' ) );
         $time_slot          = sanitize_text_field( wp_unslash( $_POST['time_slot'] ?? '' ) );
@@ -463,50 +816,72 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             }
         }
 
-        if ( $user_id > 0 ) {
-            update_user_meta( $user_id, 'delivery_timing', $timing );
-            update_user_meta( $user_id, 'time_slot', $time_slot );
-            update_user_meta( $user_id, 'allergies', $allergies );
-        }
-
-        if ( $order_id > 0 && function_exists( 'wc_get_order' ) ) {
-            $order = wc_get_order( $order_id );
-            if ( $order ) {
-                $order->update_meta_data( 'delivery_timing', $timing );
-                $order->update_meta_data( '_cmp_delivery_timing', $timing );
-                $order->update_meta_data( 'time_slot', $time_slot );
-                $order->update_meta_data( '_cmp_time_slot', $time_slot );
-                $order->update_meta_data( 'allergies', $allergies );
-                $order->set_customer_note( $allergies );
-                $order->save();
-            }
-        }
-
-        // Safely update subscription columns if present
+        // 1. Primary Per-Plan Storage: Save directly to this specific subscription row (`sub_id`)
+        //    Use '__NONE__' sentinel when allergies are explicitly cleared so fallback doesn't pull another plan's allergies.
+        $sub_row   = null;
+        $plan_name = '';
         if ( $sub_id > 0 ) {
-            global $wpdb;
-            $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-            $cols       = $wpdb->get_col( "DESC {$table_subs}", 0 );
-            if ( is_array( $cols ) ) {
-                $sub_update = array();
-                if ( in_array( 'delivery_timing', $cols, true ) ) $sub_update['delivery_timing'] = $timing;
-                if ( in_array( 'time_slot', $cols, true ) )       $sub_update['time_slot']       = $time_slot;
-                if ( in_array( 'allergies', $cols, true ) )       $sub_update['allergies']       = $allergies;
-                if ( ! empty( $sub_update ) ) {
-                    $wpdb->update( $table_subs, $sub_update, array( 'id' => $sub_id ) );
+            $sub_row   = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+            $plan_name = $sub_row ? $sub_row->plan_name : '';
+
+            $wpdb->update(
+                $table_subs,
+                array(
+                    'delivery_timing' => $timing,
+                    'time_slot'       => $time_slot,
+                    'allergies'       => $allergies !== '' ? $allergies : '__NONE__',
+                ),
+                array( 'id' => $sub_id )
+            );
+        }
+
+        // 2. Update WooCommerce Order Meta ONLY if this order does not belong to multiple active plans
+        if ( $order_id > 0 && function_exists( 'wc_get_order' ) ) {
+            $order_sub_count = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE wc_order_id = %d", $order_id ) ) );
+            if ( $order_sub_count <= 1 ) {
+                $order = wc_get_order( $order_id );
+                if ( $order ) {
+                    $order->update_meta_data( 'delivery_timing', $timing );
+                    $order->update_meta_data( '_cmp_delivery_timing', $timing );
+                    $order->update_meta_data( 'time_slot', $time_slot );
+                    $order->update_meta_data( '_cmp_time_slot', $time_slot );
+                    $order->update_meta_data( 'allergies', $allergies );
+                    $order->set_customer_note( $allergies );
+                    $order->save();
                 }
             }
         }
 
+        // 3. Record into Customer's Backend Renewal Logistics & Allergy Profile History
+        //    (Updates default checkout pre-fill meta + saves distinct plan profile in `_cmp_saved_logistics_profiles`)
+        if ( $user_id > 0 ) {
+            cmp_save_user_logistics_profile_history(
+                $user_id,
+                $sub_id,
+                array(
+                    'plan_name' => $plan_name,
+                    'method'    => $sub_row ? ( $sub_row->delivery_method ?? '' ) : '',
+                    'pickup'    => $sub_row ? ( $sub_row->pickup_location ?? '' ) : '',
+                    'timing'    => $timing,
+                    'time_slot' => $time_slot,
+                    'allergies' => $allergies,
+                    'address'   => $sub_row ? ( $sub_row->delivery_address ?? '' ) : '',
+                ),
+                true
+            );
+        }
+
         wp_send_json_success( array(
-            'timing'    => $timing,
-            'time_slot' => $time_slot,
-            'allergies' => $allergies ?: 'No Allergies Recorded',
+            'sub_id'         => $sub_id,
+            'timing'         => $timing,
+            'time_slot'      => $time_slot,
+            'allergies'      => $allergies ?: 'No Allergies Recorded',
+            'saved_profiles' => cmp_get_user_saved_logistics_profiles( $user_id ),
         ) );
     }
 }
 
-// 1.3 CUSTOMER PORTAL ADMIN ACCOUNT DETAILS EDITING
+// 1.3 CUSTOMER PORTAL ADMIN ACCOUNT DETAILS EDITING (PER-PLAN RECIPIENT & ADDRESS SUPPORT)
 add_action( 'wp_ajax_cmp_cp_admin_update_account_details', 'cmp_ajax_cp_admin_update_account_details' );
 if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
     function cmp_ajax_cp_admin_update_account_details() {
@@ -516,14 +891,18 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
             wp_send_json_error( 'Permission Denied. Admins only.' );
         }
 
-        $user_id  = intval( $_POST['user_id'] );
-        $order_id = intval( $_POST['order_id'] );
+        cmp_ensure_subscription_logistics_columns();
+        global $wpdb;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+
+        $user_id  = intval( $_POST['user_id'] ?? 0 );
+        $order_id = intval( $_POST['order_id'] ?? 0 );
         $sub_id   = isset( $_POST['sub_id'] ) ? intval( $_POST['sub_id'] ) : 0;
 
-        $first_name     = sanitize_text_field( $_POST['first_name'] );
-        $last_name      = sanitize_text_field( $_POST['last_name'] );
-        $address        = sanitize_text_field( $_POST['address'] );
-        $recipient_name = sanitize_text_field( $_POST['recipient_name'] );
+        $first_name     = sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) );
+        $last_name      = sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) );
+        $address        = sanitize_text_field( wp_unslash( $_POST['address'] ?? '' ) );
+        $recipient_name = sanitize_text_field( wp_unslash( $_POST['recipient_name'] ?? '' ) );
 
         if ( $user_id > 0 ) {
             wp_update_user( array( 'ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name ) );
@@ -535,24 +914,24 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
         }
 
         if ( $order_id > 0 && function_exists( 'wc_get_order' ) ) {
-            $order = wc_get_order( $order_id );
-            if ( $order ) {
-                $order->set_billing_first_name( $first_name );
-                $order->set_billing_last_name( $last_name );
-                $order->set_shipping_first_name( $first_name );
-                $order->set_shipping_last_name( $last_name );
-                $order->set_billing_address_1( $address );
-                $order->set_shipping_address_1( $address );
-                $order->save();
+            $order_sub_count = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE wc_order_id = %d", $order_id ) ) );
+            if ( $order_sub_count <= 1 ) {
+                $order = wc_get_order( $order_id );
+                if ( $order ) {
+                    $order->set_billing_first_name( $first_name );
+                    $order->set_billing_last_name( $last_name );
+                    $order->set_shipping_first_name( $first_name );
+                    $order->set_shipping_last_name( $last_name );
+                    $order->set_billing_address_1( $address );
+                    $order->set_shipping_address_1( $address );
+                    $order->save();
+                }
             }
         }
 
         $new_plan_name = '';
         if ( $sub_id > 0 ) {
-            global $wpdb;
-            $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-
-            $sub = $wpdb->get_row( $wpdb->prepare( "SELECT plan_name FROM $table_subs WHERE id = %d", $sub_id ) );
+            $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
             if ( $sub ) {
                 $plan_parts          = explode( ' - ', $sub->plan_name );
                 $potential_recipient = end( $plan_parts );
@@ -568,7 +947,33 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
                     $new_plan_name .= ' - ' . $recipient_name;
                 }
 
-                $wpdb->update( $table_subs, array( 'plan_name' => $new_plan_name ), array( 'id' => $sub_id ) );
+                $wpdb->update(
+                    $table_subs,
+                    array(
+                        'plan_name'        => $new_plan_name,
+                        'delivery_address' => $address,
+                    ),
+                    array( 'id' => $sub_id )
+                );
+
+                // Sync updated address & plan name into the customer's renewal profile history
+                if ( $user_id > 0 ) {
+                    $resolved = cmp_get_subscription_logistics( $sub );
+                    cmp_save_user_logistics_profile_history(
+                        $user_id,
+                        $sub_id,
+                        array(
+                            'plan_name' => $new_plan_name,
+                            'method'    => $resolved['method'],
+                            'pickup'    => $resolved['pickup'],
+                            'timing'    => $resolved['timing'],
+                            'time_slot' => $resolved['time_slot'],
+                            'allergies' => $resolved['allergies'],
+                            'address'   => $address,
+                        ),
+                        true
+                    );
+                }
             }
         }
 
@@ -769,18 +1174,18 @@ if ( ! function_exists( 'cmp_ajax_submit_customer_feedback' ) ) {
             $target_uid  = $sub ? intval( $sub->user_id ) : get_current_user_id();
             $user_id     = $target_uid;
             $wc_order_id = $sub ? intval( $sub->wc_order_id ) : 0;
-            $u_obj       = get_userdata( $target_uid );
-            $order_obj   = ( $wc_order_id > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $wc_order_id ) : false;
 
-            $fname = get_user_meta( $target_uid, 'first_name', true ) ?: get_user_meta( $target_uid, 'billing_first_name', true );
-            $lname = get_user_meta( $target_uid, 'last_name', true ) ?: get_user_meta( $target_uid, 'billing_last_name', true );
-            if ( $order_obj ) {
-                $fname = $order_obj->get_billing_first_name() ?: $fname;
-                $lname = $order_obj->get_billing_last_name() ?: $lname;
+            if ( $sub ) {
+                $resolved       = cmp_get_subscription_logistics( $sub );
+                $customer_name  = $resolved['full_name'];
+                $customer_email = $resolved['email'];
+                $customer_phone = $resolved['phone'];
+            } else {
+                $u_obj          = get_userdata( $target_uid );
+                $customer_name  = $u_obj ? $u_obj->display_name : 'Customer';
+                $customer_email = $u_obj ? $u_obj->user_email : '';
+                $customer_phone = get_user_meta( $target_uid, 'billing_phone', true );
             }
-            $customer_name  = trim( $fname . ' ' . $lname ) ?: ( $u_obj ? $u_obj->display_name : 'Customer' );
-            $customer_email = $order_obj ? $order_obj->get_billing_email() : ( $u_obj ? $u_obj->user_email : '' );
-            $customer_phone = $order_obj ? $order_obj->get_billing_phone() : get_user_meta( $target_uid, 'billing_phone', true );
         }
 
         $wpdb->insert(
@@ -809,7 +1214,7 @@ if ( ! function_exists( 'cmp_ajax_submit_customer_feedback' ) ) {
 }
 
 // ==========================================
-// 2. EXPORT CUSTOMER MEAL PLAN TO CSV
+// 2. EXPORT CUSTOMER MEAL PLAN TO CSV (PER-PLAN LOGISTICS)
 // ==========================================
 if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
     add_action( 'wp_ajax_cmp_export_customer_csv', 'cmp_export_customer_csv' );
@@ -831,50 +1236,20 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
             wp_die( 'Unauthorized Access' );
         }
 
-        $is_flexible  = isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0;
-        $allow_custom = isset( $sub->allow_custom ) ? intval( $sub->allow_custom ) : 0;
+        $is_flexible = isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0;
 
-        $order    = function_exists( 'wc_get_order' ) ? wc_get_order( $sub->wc_order_id ) : false;
-        $sub_user = get_userdata( $sub->user_id );
-
-        $fname         = get_user_meta( $sub->user_id, 'first_name', true ) ?: get_user_meta( $sub->user_id, 'billing_first_name', true );
-        $lname         = get_user_meta( $sub->user_id, 'last_name', true ) ?: get_user_meta( $sub->user_id, 'billing_last_name', true );
-        $fallback_name = trim( $fname . ' ' . $lname );
-        if ( empty( $fallback_name ) ) {
-            $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
-        }
-
-        $full_name = $order ? trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() ) : $fallback_name;
-        if ( empty( trim( $full_name ) ) ) {
-            $full_name = $fallback_name;
-        }
-
-        $email = $order ? $order->get_billing_email() : ( $sub_user ? $sub_user->user_email : '' );
-        $phone = $order ? $order->get_billing_phone() : get_user_meta( $sub->user_id, 'billing_phone', true );
-
-        $timing    = $order ? ( $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' ) ) : get_user_meta( $sub->user_id, 'delivery_timing', true );
-        $time_slot = $order ? ( $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' ) ) : get_user_meta( $sub->user_id, 'time_slot', true );
-        $method    = $order ? ( $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' ) ) : get_user_meta( $sub->user_id, 'delivery_method', true );
-        $pickup    = $order ? ( $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' ) ) : get_user_meta( $sub->user_id, 'pickup_location', true );
-        $allergies = $order ? $order->get_customer_note() : get_user_meta( $sub->user_id, 'allergies', true );
-
-        $address = 'Address not provided';
-        if ( $order ) {
-            $addr_parts = array_filter( array( $order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city() ) );
-            if ( empty( $addr_parts ) ) {
-                $addr_parts = array_filter( array( $order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city() ) );
-            }
-            if ( ! empty( $addr_parts ) ) {
-                $address = implode( ', ', $addr_parts );
-            }
-        }
-        if ( $address === 'Address not provided' ) {
-            $addr_parts = array_filter( array( get_user_meta( $sub->user_id, 'billing_address_1', true ), get_user_meta( $sub->user_id, 'billing_address_2', true ), get_user_meta( $sub->user_id, 'billing_city', true ) ) );
-            if ( ! empty( $addr_parts ) ) {
-                $address = implode( ', ', $addr_parts );
-            }
-        }
-        $method_display = $method === 'Pickup' && ! empty( $pickup ) ? $method . ' (' . $pickup . ')' : $method;
+        // Read per-plan logistics from the subscription row first
+        $resolved       = cmp_get_subscription_logistics( $sub );
+        $full_name      = $resolved['full_name'];
+        $email          = $resolved['email'];
+        $phone          = $resolved['phone'];
+        $timing         = $resolved['timing'];
+        $time_slot      = $resolved['time_slot'];
+        $method         = $resolved['method'];
+        $pickup         = $resolved['pickup'];
+        $allergies      = $resolved['allergies'];
+        $address        = $resolved['address'];
+        $method_display = ( $method === 'Pickup' && ! empty( $pickup ) ) ? $method . ' (' . $pickup . ')' : $method;
 
         $logs     = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id ) );
         $foods    = $wpdb->get_results( "SELECT id, food_name FROM {$wpdb->prefix}cmp_foods" );
@@ -890,8 +1265,8 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         $output = fopen( 'php://output', 'w' );
         fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
 
-        fputcsv( $output, array( 'CUSTOMER DETAILS' ) );
-        fputcsv( $output, array( 'Name:', $full_name, 'Email:', $email, 'Phone:', $phone ) );
+        fputcsv( $output, array( 'CUSTOMER & PLAN DETAILS' ) );
+        fputcsv( $output, array( 'Plan:', $sub->plan_name, 'Name:', $full_name, 'Email:', $email, 'Phone:', $phone ) );
         fputcsv( $output, array( 'Address:', $address ) );
         fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot ) );
         fputcsv( $output, array( 'Allergies:', $allergies ?: 'None' ) );
@@ -985,10 +1360,6 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
 // 3. WP ADMIN: MEAL PORTAL -> CUSTOMER FEEDBACK SUBMENU & CSV EXPORT
 // ==========================================
 
-/**
- * Dynamically detects the registered parent slug for "Meal Portal" in WP Admin
- * so the Customer Feedback submenu always attaches cleanly.
- */
 if ( ! function_exists( 'cmp_get_meal_portal_parent_slug' ) ) {
     function cmp_get_meal_portal_parent_slug() {
         global $menu;
@@ -1012,9 +1383,6 @@ if ( ! function_exists( 'cmp_get_meal_portal_parent_slug' ) ) {
     }
 }
 
-/**
- * Registers the "Customer Feedback" submenu under WP Admin -> Meal Portal.
- */
 add_action( 'admin_menu', 'cmp_register_customer_feedback_submenu', 90 );
 if ( ! function_exists( 'cmp_register_customer_feedback_submenu' ) ) {
     function cmp_register_customer_feedback_submenu() {
@@ -1030,9 +1398,6 @@ if ( ! function_exists( 'cmp_register_customer_feedback_submenu' ) ) {
     }
 }
 
-/**
- * Handles exporting all customer feedback records to an Excel-ready CSV file.
- */
 add_action( 'wp_ajax_cmp_export_feedback_csv', 'cmp_export_feedback_csv' );
 if ( ! function_exists( 'cmp_export_feedback_csv' ) ) {
     function cmp_export_feedback_csv() {
@@ -1093,9 +1458,6 @@ if ( ! function_exists( 'cmp_export_feedback_csv' ) ) {
     }
 }
 
-/**
- * Renders the WP Admin -> Meal Portal -> Customer Feedback page.
- */
 if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
     function cmp_render_customer_feedback_admin_page() {
         if ( ! current_user_can( 'manage_options' ) ) {
@@ -1107,7 +1469,6 @@ if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
         $table_feedback = $wpdb->prefix . 'cmp_feedback';
         $admin_notice   = '';
 
-        // Handle Single Feedback Deletion
         if ( isset( $_GET['delete_feedback_id'], $_GET['_wpnonce'] ) ) {
             $del_id = intval( $_GET['delete_feedback_id'] );
             if ( wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'cmp_delete_feedback_' . $del_id ) ) {
@@ -1116,12 +1477,10 @@ if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
             }
         }
 
-        // Fetch Filter Parameters
         $search_query  = isset( $_GET['s_feedback'] ) ? sanitize_text_field( wp_unslash( $_GET['s_feedback'] ) ) : '';
         $identity_mode = isset( $_GET['mode_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['mode_filter'] ) ) : '';
         $rating_filter = isset( $_GET['rating_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['rating_filter'] ) ) : '';
 
-        // Fetch All Rows for KPI Calculation
         $all_rows       = $wpdb->get_results( "SELECT * FROM {$table_feedback} ORDER BY created_at DESC, id DESC" );
         $total_count    = is_array( $all_rows ) ? count( $all_rows ) : 0;
         $named_count    = 0;
@@ -1161,7 +1520,6 @@ if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
         arsort( $tag_frequency );
         $top_tag = ! empty( $tag_frequency ) ? key( $tag_frequency ) : 'No tags yet';
 
-        // Filter Rows for Table Display
         $filtered_rows = array();
         if ( $all_rows ) {
             foreach ( $all_rows as $r ) {
