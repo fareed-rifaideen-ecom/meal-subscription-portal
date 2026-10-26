@@ -1,9 +1,127 @@
 <?php
+/**
+ * Chef Assignment Desk Portal
+ * Synchronized with Per-Plan Logistics, Delivery Timing, Time Slots & Allergies (Stage 2)
+ */
+
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
+}
+
+// Load shared per-plan logistics & database helpers from customer-portal-backend.php if available
+if ( file_exists( __DIR__ . '/customer-portal-backend.php' ) ) {
+    require_once __DIR__ . '/customer-portal-backend.php';
+}
+
+// ==========================================
+// 0. FALLBACK PER-PLAN LOGISTICS RESOLVER
+//    (Guarantees standalone operation if loaded before customer-portal-backend.php)
+// ==========================================
+if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
+    function cmp_get_subscription_logistics( $sub ) {
+        $order    = ( ! empty( $sub->wc_order_id ) && function_exists( 'wc_get_order' ) ) ? wc_get_order( $sub->wc_order_id ) : false;
+        $user_id  = intval( $sub->user_id ?? 0 );
+        $sub_user = $user_id > 0 ? get_userdata( $user_id ) : false;
+
+        $timing = ! empty( $sub->delivery_timing ) ? $sub->delivery_timing : '';
+        if ( empty( $timing ) && $order ) {
+            $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
+        }
+        if ( empty( $timing ) && $user_id > 0 ) {
+            $timing = get_user_meta( $user_id, 'delivery_timing', true );
+        }
+
+        $time_slot = ! empty( $sub->time_slot ) ? $sub->time_slot : '';
+        if ( empty( $time_slot ) && $order ) {
+            $time_slot = $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' );
+        }
+        if ( empty( $time_slot ) && $user_id > 0 ) {
+            $time_slot = get_user_meta( $user_id, 'time_slot', true );
+        }
+
+        $method = ! empty( $sub->delivery_method ) ? $sub->delivery_method : '';
+        if ( empty( $method ) && $order ) {
+            $method = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
+        }
+        if ( empty( $method ) && $user_id > 0 ) {
+            $method = get_user_meta( $user_id, 'delivery_method', true );
+        }
+
+        $pickup = ! empty( $sub->pickup_location ) ? $sub->pickup_location : '';
+        if ( empty( $pickup ) && $order ) {
+            $pickup = $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' );
+        }
+        if ( empty( $pickup ) && $user_id > 0 ) {
+            $pickup = get_user_meta( $user_id, 'pickup_location', true );
+        }
+
+        $allergies = '';
+        if ( isset( $sub->allergies ) && $sub->allergies !== null && $sub->allergies !== '' ) {
+            $allergies = ( $sub->allergies === '__NONE__' ) ? '' : $sub->allergies;
+        } else {
+            if ( $order ) {
+                $allergies = $order->get_meta( 'allergies' ) ?: $order->get_customer_note();
+            }
+            if ( empty( $allergies ) && $user_id > 0 ) {
+                $allergies = get_user_meta( $user_id, 'allergies', true );
+            }
+        }
+
+        $address = ! empty( $sub->delivery_address ) ? $sub->delivery_address : '';
+        if ( empty( $address ) && $order ) {
+            $addr_parts = array_filter( array( $order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city() ) );
+            if ( empty( $addr_parts ) ) {
+                $addr_parts = array_filter( array( $order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city() ) );
+            }
+            if ( ! empty( $addr_parts ) ) {
+                $address = implode( ', ', $addr_parts );
+            }
+        }
+        if ( empty( $address ) && $user_id > 0 ) {
+            $addr_parts = array_filter( array(
+                get_user_meta( $user_id, 'billing_address_1', true ),
+                get_user_meta( $user_id, 'billing_address_2', true ),
+                get_user_meta( $user_id, 'billing_city', true ),
+            ) );
+            if ( ! empty( $addr_parts ) ) {
+                $address = implode( ', ', $addr_parts );
+            }
+        }
+        if ( empty( $address ) ) {
+            $address = 'Address not provided';
+        }
+
+        $fname = $user_id > 0 ? ( get_user_meta( $user_id, 'first_name', true ) ?: get_user_meta( $user_id, 'billing_first_name', true ) ) : '';
+        $lname = $user_id > 0 ? ( get_user_meta( $user_id, 'last_name', true ) ?: get_user_meta( $user_id, 'billing_last_name', true ) ) : '';
+        if ( $order ) {
+            $fname = $order->get_billing_first_name() ?: $fname;
+            $lname = $order->get_billing_last_name() ?: $lname;
+        }
+        $full_name = trim( $fname . ' ' . $lname );
+        if ( empty( $full_name ) ) {
+            $full_name = $sub_user ? $sub_user->display_name : ( $sub->display_name ?? 'Customer' );
+        }
+
+        $email = $order ? $order->get_billing_email() : ( $sub_user ? $sub_user->user_email : ( $sub->user_email ?? '' ) );
+        $phone = $order ? $order->get_billing_phone() : ( $user_id > 0 ? get_user_meta( $user_id, 'billing_phone', true ) : '' );
+
+        return array(
+            'fname'     => $fname,
+            'lname'     => $lname,
+            'full_name' => $full_name,
+            'email'     => $email,
+            'phone'     => $phone,
+            'method'    => $method,
+            'pickup'    => $pickup,
+            'timing'    => $timing,
+            'time_slot' => $time_slot,
+            'allergies' => $allergies,
+            'address'   => $address,
+        );
+    }
 }
 
 // ==========================================
@@ -16,7 +134,7 @@ function cmp_render_chef_assignment_desk() {
         define( 'DONOTCACHEPAGE', true );
     }
 
-    date_default_timezone_set('Asia/Dubai');
+    date_default_timezone_set( 'Asia/Dubai' );
 
     $has_chef_access = current_user_can( 'manage_options' ) || current_user_can( 'kitchen_staff' ) || current_user_can( 'menu_manager' ) || current_user_can( 'foh_manager' );
 
@@ -33,149 +151,139 @@ function cmp_render_chef_assignment_desk() {
         }
     }
 
+    if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
+        cmp_ensure_subscription_logistics_columns();
+    }
+
     global $wpdb;
-    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
 
-    $today_time = date('Y-m-d H:i:s');
-    $today_date = date('Y-m-d');
+    $today_time = date( 'Y-m-d H:i:s' );
+    $today_date = date( 'Y-m-d' );
 
-    // 3. Fetch Subs 
-    $raw_subs = $wpdb->get_results("SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status = 'active' ORDER BY s.id DESC");
+    // 2. Fetch Active Subscriptions
+    $raw_subs = $wpdb->get_results( "SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status = 'active' ORDER BY s.id DESC" );
 
     // Fetch all active food date ranges to prevent showing "Pending" for future locked quarters
-    $active_food_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1");
+    $active_food_ranges = $wpdb->get_results( "SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE is_active = 1" );
 
     $pending_customers = array();
-    $all_customers = array();
+    $all_customers     = array();
 
-    foreach ($raw_subs as $sub) {
-        
-        $usage_days = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
-        if ($usage_days >= $sub->total_days || $sub->expiry_date < $today_time) {
-            continue; 
+    foreach ( $raw_subs as $sub ) {
+        $usage_days = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
+        if ( $usage_days >= $sub->total_days || $sub->expiry_date < $today_time ) {
+            continue;
         }
 
-        $order = wc_get_order($sub->wc_order_id);
-        
-        $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
-        $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
-        $fallback_name = trim($fname . ' ' . $lname);
-        if (empty($fallback_name)) $fallback_name = $sub->display_name;
-        
-        $full_name = $order ? trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()) : $fallback_name;
-        if (empty(trim($full_name))) { $full_name = $fallback_name; }
+        // Resolve per-plan logistics (Subscription Row -> WC Order Meta -> User Meta)
+        $resolved = cmp_get_subscription_logistics( $sub );
 
-        $email = $order ? $order->get_billing_email() : $sub->user_email;
-        $phone = $order ? $order->get_billing_phone() : (get_user_meta($sub->user_id, 'billing_phone', true) ?: 'N/A');
+        $full_name = $resolved['full_name'];
+        $email     = $resolved['email'];
+        $phone     = ! empty( $resolved['phone'] ) ? $resolved['phone'] : 'N/A';
+        $address   = $resolved['address'];
 
-        $timing = !empty($sub->delivery_timing) ? $sub->delivery_timing : '';
-        if (empty($timing) && $order) $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing');
-        if (empty($timing)) $timing = get_user_meta($sub->user_id, 'delivery_timing', true) ?: 'N/A';
-
-        $method = !empty($sub->delivery_method) ? $sub->delivery_method : '';
-        if (empty($method) && $order) $method = $order->get_meta('_cmp_logistics_method') ?: $order->get_meta('delivery_method');
-        if (empty($method)) $method = get_user_meta($sub->user_id, 'delivery_method', true) ?: 'N/A';
-
-        $allergies = !empty($sub->allergies) ? $sub->allergies : '';
-        if (empty($allergies) && $order) $allergies = $order->get_customer_note();
-        if (empty($allergies)) $allergies = get_user_meta($sub->user_id, 'allergies', true) ?: 'None';
-
-        $address = 'Address not provided';
-        if ($order) {
-            $addr_parts = array_filter([$order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city()]);
-            if (empty($addr_parts)) $addr_parts = array_filter([$order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city()]);
-            if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
+        $method = ! empty( $resolved['method'] ) ? $resolved['method'] : 'N/A';
+        $pickup = $resolved['pickup'];
+        if ( $method === 'Pickup' && ! empty( $pickup ) ) {
+            $method .= ' (' . $pickup . ')';
         }
-        if ($address === 'Address not provided') {
-            $addr_parts = array_filter([get_user_meta($sub->user_id, 'billing_address_1', true), get_user_meta($sub->user_id, 'billing_address_2', true), get_user_meta($sub->user_id, 'billing_city', true)]);
-            if (!empty($addr_parts)) $address = implode(', ', $addr_parts);
-        }
+
+        $timing    = ! empty( $resolved['timing'] ) ? $resolved['timing'] : 'N/A';
+        $time_slot = ! empty( $resolved['time_slot'] ) ? $resolved['time_slot'] : '';
+        $allergies = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'None';
 
         // Recipient Extraction
-        $plan_parts = explode(' - ', $sub->plan_name);
-        $potential_recipient = end($plan_parts);
-        $recipient_badge = '';
-        
-        if (!preg_match('/(Meal|Day|Cleanse|Plans)/i', $potential_recipient) && count($plan_parts) > 1) {
-            $recipient_badge = '<span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html($potential_recipient) . '</span>';
-            array_pop($plan_parts);
-            $core_plan_name = implode(' - ', $plan_parts);
+        $plan_parts          = explode( ' - ', $sub->plan_name );
+        $potential_recipient = end( $plan_parts );
+        $recipient_badge     = '';
+        $raw_recipient       = '';
+
+        if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
+            $raw_recipient   = $potential_recipient;
+            $recipient_badge = '<span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' . esc_html( $potential_recipient ) . '</span>';
+            array_pop( $plan_parts );
+            $core_plan_name = implode( ' - ', $plan_parts );
         } else {
             $core_plan_name = $sub->plan_name;
         }
 
         // Dynamic Sequence Handling (Retroactive Manual)
         $display_order_id = 'Manual';
-        if ($sub->wc_order_id < 0) {
-            $display_order_id = 'M-' . str_pad(abs($sub->wc_order_id), 4, '0', STR_PAD_LEFT);
-        } elseif ($sub->wc_order_id > 0) {
+        if ( $sub->wc_order_id < 0 ) {
+            $display_order_id = 'M-' . str_pad( abs( $sub->wc_order_id ), 4, '0', STR_PAD_LEFT );
+        } elseif ( $sub->wc_order_id > 0 ) {
             $display_order_id = '#' . $sub->wc_order_id;
         } else {
-            $display_order_id = 'M-' . str_pad($sub->id, 4, '0', STR_PAD_LEFT);
+            $display_order_id = 'M-' . str_pad( $sub->id, 4, '0', STR_PAD_LEFT );
         }
 
         $customer_data = array(
             'id'              => $sub->id,
             'order_id'        => $display_order_id,
             'name'            => $full_name,
+            'raw_recipient'   => $raw_recipient,
             'email'           => $email,
             'phone'           => $phone,
             'address'         => $address,
             'method'          => $method,
             'timing'          => $timing,
+            'time_slot'       => $time_slot,
             'allergies'       => $allergies,
             'plan_name'       => $sub->plan_name,
             'core_plan_name'  => $core_plan_name,
             'recipient_badge' => $recipient_badge,
             'status'          => $sub->status,
-            'is_flexible'     => isset($sub->is_flexible) ? intval($sub->is_flexible) : 0,
-            'allow_custom'    => isset($sub->allow_custom) ? intval($sub->allow_custom) : 0
+            'is_flexible'     => isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0,
+            'allow_custom'    => isset( $sub->allow_custom ) ? intval( $sub->allow_custom ) : 0,
         );
 
         $all_customers[] = $customer_data;
 
-        // Phase 2 Fix: Safely ignore days that have been Cancelled or Returned by FOH
-        $chef_logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1 AND target_date >= %s AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id, $today_date));
+        // Safely ignore days that have been Cancelled or Returned by FOH
+        $chef_logs  = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d AND is_chefs_choice = 1 AND target_date >= %s AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id, $today_date ) );
         $is_pending = false;
-        
-        foreach($chef_logs as $log) {
+
+        foreach ( $chef_logs as $log ) {
             // Phase 7: Evaluate mode at the log level
-            $log_mode = ($log && !empty($log->plan_mode)) ? $log->plan_mode : null;
-            if ($log_mode) {
-                $row_allow_custom = ($log_mode === 'custom') ? 1 : 0;
+            $log_mode = ( $log && ! empty( $log->plan_mode ) ) ? $log->plan_mode : null;
+            if ( $log_mode ) {
+                $row_allow_custom = ( $log_mode === 'custom' ) ? 1 : 0;
             } else {
                 $row_allow_custom = $customer_data['allow_custom'];
             }
-            
-            $is_assigned = ($log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || !empty($log->custom_breakfast) || !empty($log->custom_lunch) || !empty($log->custom_dinner) || !empty($log->custom_juice_1));
 
-            if (!$is_assigned) {
+            $is_assigned = ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || ! empty( $log->custom_breakfast ) || ! empty( $log->custom_lunch ) || ! empty( $log->custom_dinner ) || ! empty( $log->custom_juice_1 ) );
+
+            if ( ! $is_assigned ) {
                 $menu_exists = false;
-                
-                if ($row_allow_custom) {
-                    $menu_exists = true; // Custom meals do not wait for menu releases!
+
+                if ( $row_allow_custom ) {
+                    $menu_exists = true; // Custom meals do not wait for menu releases
                 } else {
-                    foreach($active_food_ranges as $range) {
-                        if (empty($range->valid_from) || empty($range->valid_until)) {
-                            $menu_exists = true; break; 
+                    foreach ( $active_food_ranges as $range ) {
+                        if ( empty( $range->valid_from ) || empty( $range->valid_until ) ) {
+                            $menu_exists = true;
+                            break;
                         }
-                        if ($log->target_date >= $range->valid_from && $log->target_date <= $range->valid_until) {
+                        if ( $log->target_date >= $range->valid_from && $log->target_date <= $range->valid_until ) {
                             $menu_exists = true;
                             break;
                         }
                     }
                 }
-                
-                if ($menu_exists) {
+
+                if ( $menu_exists ) {
                     $is_pending = true;
                     break;
                 }
             }
         }
 
-        if ($is_pending) {
+        if ( $is_pending ) {
             $pending_customers[] = $customer_data;
         }
     }
@@ -254,21 +362,21 @@ function cmp_render_chef_assignment_desk() {
             </div>
             
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo site_url('/kitchen-command-center/'); ?>" target="_blank" style="background: #1B5E20; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight:bold; border: 1px solid rgba(220,236,201,0.5);">Kitchen Preparation Report ⇗</a>
+                <a href="<?php echo esc_url( site_url( '/kitchen-command-center/' ) ); ?>" target="_blank" style="background: #1B5E20; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight:bold; border: 1px solid rgba(220,236,201,0.5);">Kitchen Preparation Report ⇗</a>
                 <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight:bold;">Log Out</a>
             </div>
         </div>
 
         <div class="chef-tabs">
             <button class="chef-tab-btn active" onclick="switchChefTab(event, 'tab-pending')">
-                Pending Chef's Selections <span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em; margin-left:5px;"><?php echo count($pending_customers); ?></span>
+                Pending Chef's Selections <span style="background:#dc2626; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em; margin-left:5px;"><?php echo count( $pending_customers ); ?></span>
             </button>
             <button class="chef-tab-btn" onclick="switchChefTab(event, 'tab-all')">All Active Customers</button>
         </div>
 
         <!-- TAB 1: PENDING -->
         <div id="tab-pending" class="chef-tab-content active">
-            <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by order ID, name, email, or phone...">
+            <input type="text" id="search-pending" class="chef-search-bar" placeholder="🔍 Search pending customers by order ID, name, email, phone, plan, or allergy...">
             <div style="overflow-x: auto;">
                 <table class="chef-table" id="table-pending">
                     <thead>
@@ -281,34 +389,38 @@ function cmp_render_chef_assignment_desk() {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if(empty($pending_customers)): ?>
+                        <?php if ( empty( $pending_customers ) ) : ?>
                             <tr><td colspan="5" style="text-align:center; padding:30px; color:#666;">No pending assignments. The kitchen is fully prepped!</td></tr>
-                        <?php else: foreach($pending_customers as $c): 
-                            $search_str = strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
+                        <?php else : foreach ( $pending_customers as $c ) :
+                            $search_str = strtolower( $c['order_id'] . ' ' . $c['name'] . ' ' . $c['raw_recipient'] . ' ' . $c['email'] . ' ' . $c['phone'] . ' ' . $c['core_plan_name'] . ' ' . $c['allergies'] . ' ' . $c['timing'] );
                         ?>
-                            <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#231F20; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
+                            <tr class="chef-row" data-search="<?php echo esc_attr( $search_str ); ?>">
+                                <td><strong style="color:#231F20; font-size:1.1em;"><?php echo esc_html( $c['order_id'] ); ?></strong></td>
                                 <td>
                                     <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 4px;">
-                                        <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                        <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html( $c['name'] ); ?></strong>
                                         <?php echo $c['recipient_badge']; ?>
                                     </div>
-                                    <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html($c['email']); ?></span>
-                                    <span style="color: #666; display: block;"><?php echo esc_html($c['phone']); ?></span>
+                                    <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html( $c['email'] ); ?></span>
+                                    <span style="color: #666; display: block;"><?php echo esc_html( $c['phone'] ); ?></span>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($c['method']); ?></strong><br>
-                                    <span style="color: #666;"><?php echo esc_html($c['timing']); ?></span><br>
-                                    <span style="font-size:0.85em; color:#999; display: block; margin-top: 4px;"><?php echo esc_html($c['address']); ?></span>
+                                    <strong><?php echo esc_html( $c['method'] ); ?></strong><br>
+                                    <span style="color: #475569; font-weight: 600;"><?php echo esc_html( $c['timing'] ); ?></span>
+                                    <?php if ( ! empty( $c['time_slot'] ) ) : ?>
+                                        <span style="color: #64748b; font-size: 0.9em;">(<?php echo esc_html( $c['time_slot'] ); ?>)</span>
+                                    <?php endif; ?>
+                                    <br>
+                                    <span style="font-size:0.85em; color:#999; display: block; margin-top: 4px;"><?php echo esc_html( $c['address'] ); ?></span>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($c['core_plan_name']); ?></strong><br>
+                                    <strong><?php echo esc_html( $c['core_plan_name'] ); ?></strong><br>
                                     <span style="display:inline-block; margin-top:5px; background:<?php echo $c['allergies'] !== 'None' ? '#fff3cd' : '#f1f5f9'; ?>; color:<?php echo $c['allergies'] !== 'None' ? '#856404' : '#64748b'; ?>; padding:3px 8px; border-radius:4px; font-size:0.85em; font-weight:bold;">
-                                        Allergies: <?php echo esc_html($c['allergies']); ?>
+                                        Allergies: <?php echo esc_html( $c['allergies'] ); ?>
                                     </span>
                                 </td>
                                 <td style="vertical-align: middle; text-align:center;">
-                                    <a href="<?php echo site_url('/my-meal-portal/?chef_override_sub=') . $c['id']; ?>" target="_blank" class="chef-assign-btn">Assign Meals ⇗</a>
+                                    <a href="<?php echo esc_url( site_url( '/my-meal-portal/?chef_override_sub=' . $c['id'] ) ); ?>" target="_blank" class="chef-assign-btn">Assign Meals ⇗</a>
                                 </td>
                             </tr>
                         <?php endforeach; endif; ?>
@@ -319,7 +431,7 @@ function cmp_render_chef_assignment_desk() {
 
         <!-- TAB 2: ALL CUSTOMERS -->
         <div id="tab-all" class="chef-tab-content">
-            <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers by order ID, name, email, or phone...">
+            <input type="text" id="search-all" class="chef-search-bar" placeholder="🔍 Search all active customers by order ID, name, email, phone, plan, or allergy...">
             <div style="overflow-x: auto;">
                 <table class="chef-table" id="table-all">
                     <thead>
@@ -332,34 +444,38 @@ function cmp_render_chef_assignment_desk() {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if(empty($all_customers)): ?>
+                        <?php if ( empty( $all_customers ) ) : ?>
                             <tr><td colspan="5" style="text-align:center; padding:30px; color:#666;">No active customers found.</td></tr>
-                        <?php else: foreach($all_customers as $c): 
-                            $search_str = strtolower($c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone']);
+                        <?php else : foreach ( $all_customers as $c ) :
+                            $search_str = strtolower( $c['order_id'] . ' ' . $c['name'] . ' ' . $c['raw_recipient'] . ' ' . $c['email'] . ' ' . $c['phone'] . ' ' . $c['core_plan_name'] . ' ' . $c['allergies'] . ' ' . $c['timing'] );
                         ?>
-                            <tr class="chef-row" data-search="<?php echo esc_attr($search_str); ?>">
-                                <td><strong style="color:#231F20; font-size:1.1em;"><?php echo $c['order_id']; ?></strong></td>
+                            <tr class="chef-row" data-search="<?php echo esc_attr( $search_str ); ?>">
+                                <td><strong style="color:#231F20; font-size:1.1em;"><?php echo esc_html( $c['order_id'] ); ?></strong></td>
                                 <td>
                                     <div style="display:flex; align-items:center; flex-wrap:wrap; margin-bottom: 4px;">
-                                        <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html($c['name']); ?></strong>
+                                        <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html( $c['name'] ); ?></strong>
                                         <?php echo $c['recipient_badge']; ?>
                                     </div>
-                                    <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html($c['email']); ?></span>
-                                    <span style="color: #666; display: block;"><?php echo esc_html($c['phone']); ?></span>
+                                    <span style="color: #666; display: block; margin-bottom: 2px;"><?php echo esc_html( $c['email'] ); ?></span>
+                                    <span style="color: #666; display: block;"><?php echo esc_html( $c['phone'] ); ?></span>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($c['method']); ?></strong><br>
-                                    <span style="color: #666;"><?php echo esc_html($c['timing']); ?></span><br>
-                                    <span style="font-size:0.85em; color:#999; display: block; margin-top: 4px;"><?php echo esc_html($c['address']); ?></span>
+                                    <strong><?php echo esc_html( $c['method'] ); ?></strong><br>
+                                    <span style="color: #475569; font-weight: 600;"><?php echo esc_html( $c['timing'] ); ?></span>
+                                    <?php if ( ! empty( $c['time_slot'] ) ) : ?>
+                                        <span style="color: #64748b; font-size: 0.9em;">(<?php echo esc_html( $c['time_slot'] ); ?>)</span>
+                                    <?php endif; ?>
+                                    <br>
+                                    <span style="font-size:0.85em; color:#999; display: block; margin-top: 4px;"><?php echo esc_html( $c['address'] ); ?></span>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($c['core_plan_name']); ?></strong><br>
+                                    <strong><?php echo esc_html( $c['core_plan_name'] ); ?></strong><br>
                                     <span style="display:inline-block; margin-top:5px; background:<?php echo $c['allergies'] !== 'None' ? '#fff3cd' : '#f1f5f9'; ?>; color:<?php echo $c['allergies'] !== 'None' ? '#856404' : '#64748b'; ?>; padding:3px 8px; border-radius:4px; font-size:0.85em; font-weight:bold;">
-                                        Allergies: <?php echo esc_html($c['allergies']); ?>
+                                        Allergies: <?php echo esc_html( $c['allergies'] ); ?>
                                     </span>
                                 </td>
                                 <td style="vertical-align: middle; text-align:center;">
-                                    <a href="<?php echo site_url('/my-meal-portal/?chef_override_sub=') . $c['id']; ?>" target="_blank" class="chef-assign-btn" style="background:#475569;">View Portal ⇗</a>
+                                    <a href="<?php echo esc_url( site_url( '/my-meal-portal/?chef_override_sub=' . $c['id'] ) ); ?>" target="_blank" class="chef-assign-btn" style="background:#475569;">View Portal ⇗</a>
                                 </td>
                             </tr>
                         <?php endforeach; endif; ?>
@@ -385,7 +501,7 @@ function cmp_render_chef_assignment_desk() {
             $(inputId).on('keyup', function() {
                 var val = $(this).val().toLowerCase();
                 $(tableId + ' tbody .chef-row').each(function() {
-                    var searchData = $(this).data('search');
+                    var searchData = $(this).data('search') || '';
                     $(this).toggle(searchData.indexOf(val) > -1);
                 });
             });
