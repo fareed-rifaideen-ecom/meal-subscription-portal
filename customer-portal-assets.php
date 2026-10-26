@@ -376,7 +376,41 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             .cmp-info-cards-grid {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
-            .cmp-Allergy-Dynamic-box {
+                gap: 20px;
+                align-items: stretch;
+            }
+            .cmp-account-card-box {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 16px 18px;
+            }
+            .cmp-logistics-card-box {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                padding: 16px 18px;
+                position: relative;
+            }
+            .cmp-kv-grid {
+                display: grid;
+                grid-template-columns: 100px minmax(0, 1fr);
+                row-gap: 7px;
+                column-gap: 10px;
+                font-size: 0.92rem;
+                line-height: 1.4;
+                color: #231F20;
+            }
+            .cmp-kv-label {
+                font-weight: 700;
+                color: #475569;
+            }
+            .cmp-kv-val {
+                font-weight: 600;
+                color: #1e293b;
+                word-break: break-word;
+            }
+            .cmp-allergy-Dynamic-box {
                 margin-top: 12px;
                 padding: 9px 12px;
                 background: #fffbeb;
@@ -528,53 +562,67 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 filter: brightness(1.08);
                 transform: translateY(-1px);
             }
-            .cmp-jump-pending-btn {
-                display: inline-flex !important;
+            /* Strict 2-Column Grid for "Go to Pending Selection" — Prevents Theme Letter-Spacing & Badge Overlap */
+            .cmp-dashboard-wrap button.cmp-jump-pending-btn {
+                display: grid !important;
+                grid-template-columns: minmax(0, 1fr) auto !important;
                 align-items: center !important;
-                justify-content: space-between !important;
-                flex-wrap: nowrap !important;
-                letter-spacing: normal !important;
-                gap: 10px !important;
+                column-gap: 12px !important;
+                padding: 9px 14px !important;
+                letter-spacing: 0px !important;
+                word-spacing: 0px !important;
+                text-transform: none !important;
+                line-height: 1.2 !important;
+                text-align: left !important;
+            }
+            .cmp-dashboard-wrap button.cmp-jump-pending-btn * {
+                letter-spacing: 0px !important;
+                word-spacing: 0px !important;
+                text-transform: none !important;
             }
             .cmp-jump-btn-left {
-                display: flex !important;
+                grid-column: 1 !important;
+                display: inline-flex !important;
                 align-items: center !important;
-                gap: 7px !important;
-                flex: 1 1 auto !important;
+                justify-content: flex-start !important;
+                gap: 8px !important;
                 min-width: 0 !important;
+                max-width: 100% !important;
                 overflow: hidden !important;
                 text-align: left !important;
             }
-            .cmp-jump-btn-left > span,
-            .cmp-jump-pending-btn > span:not(.cmp-pending-count-badge) {
+            .cmp-jump-btn-left > span {
                 display: block !important;
                 flex: 1 1 auto !important;
                 min-width: 0 !important;
                 overflow: hidden !important;
                 text-overflow: ellipsis !important;
                 white-space: nowrap !important;
-                letter-spacing: -0.01em !important;
+                font-size: 0.86rem !important;
+                font-weight: 800 !important;
                 line-height: 1.25 !important;
                 text-align: left !important;
             }
             .cmp-pending-count-badge {
+                grid-column: 2 !important;
+                justify-self: end !important;
                 position: static !important;
+                transform: none !important;
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
-                flex: 0 0 auto !important;
-                background: rgba(15, 41, 18, 0.36) !important;
+                background: #144918 !important;
                 color: #ffffff !important;
-                border: 1px solid rgba(220, 236, 201, 0.75) !important;
+                border: 1.5px solid #86efac !important;
                 border-radius: 999px !important;
-                padding: 3px 10px !important;
+                padding: 4px 11px !important;
                 font-size: 0.74rem !important;
                 font-weight: 800 !important;
-                letter-spacing: 0 !important;
                 line-height: 1.1 !important;
                 white-space: nowrap !important;
                 flex-shrink: 0 !important;
-                margin-left: 8px !important;
+                margin: 0 !important;
+                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16) !important;
             }
 
             /* Pulse Highlight When Scrolling to Pending Row */
@@ -1226,32 +1274,27 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-toolbar-actions {
                     width: 100% !important;
                 }
-                .cmp-jump-pending-btn {
+                .cmp-dashboard-wrap button.cmp-jump-pending-btn {
                     width: 100% !important;
                     max-width: 100% !important;
-                    display: flex !important;
+                    display: grid !important;
+                    grid-template-columns: minmax(0, 1fr) auto !important;
                     align-items: center !important;
-                    justify-content: space-between !important;
-                    flex-wrap: nowrap !important;
-                    padding: 10px 14px !important;
-                    font-size: 0.82rem !important;
-                    letter-spacing: -0.01em !important;
+                    column-gap: 10px !important;
+                    padding: 11px 14px !important;
                     border-radius: 12px !important;
-                    gap: 8px !important;
                     overflow: hidden !important;
                     box-sizing: border-box !important;
                 }
                 .cmp-jump-btn-left {
-                    flex: 1 1 auto !important;
+                    grid-column: 1 !important;
                     min-width: 0 !important;
-                    max-width: calc(100% - 78px) !important;
-                    gap: 6px !important;
+                    max-width: 100% !important;
+                    gap: 7px !important;
                     overflow: hidden !important;
                 }
-                .cmp-jump-btn-left > span,
-                .cmp-jump-pending-btn > span:not(.cmp-pending-count-badge) {
-                    font-size: 0.82rem !important;
-                    letter-spacing: -0.01em !important;
+                .cmp-jump-btn-left > span {
+                    font-size: 0.84rem !important;
                     overflow: hidden !important;
                     text-overflow: ellipsis !important;
                     white-space: nowrap !important;
@@ -1261,16 +1304,18 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     height: 16px !important;
                     min-width: 16px !important;
                     min-height: 16px !important;
-                    margin-left: 0 !important;
+                    margin: 0 !important;
                     flex-shrink: 0 !important;
                 }
                 .cmp-pending-count-badge {
+                    grid-column: 2 !important;
+                    justify-self: end !important;
                     position: static !important;
-                    flex: 0 0 auto !important;
                     padding: 4px 10px !important;
-                    font-size: 0.72rem !important;
-                    margin-left: 8px !important;
-                    background: rgba(15, 41, 18, 0.42) !important;
+                    font-size: 0.73rem !important;
+                    margin: 0 !important;
+                    background: #144918 !important;
+                    border: 1.5px solid #86efac !important;
                 }
 
                 .cmp-table td.cmp-collapsed-summary { display: none !important; }
@@ -2669,13 +2714,22 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var $opt  = $sel.find('option:selected');
                 if (!$opt.val()) return;
 
+                var profMethod    = ($opt.attr('data-method') || '').toString();
+                var profPickup    = ($opt.attr('data-pickup') || '').toString();
                 var profTiming    = ($opt.attr('data-timing') || '').toString();
                 var profSlot      = ($opt.attr('data-slot') || '').toString();
                 var profAllergies = ($opt.attr('data-allergies') || '').toString();
 
+                var $methodSelect = $('#edit-method-' + subId);
                 var $timingSelect = $('#edit-timing-' + subId);
                 var $slotSelect   = $('#edit-timeslot-' + subId);
 
+                if (profMethod && $methodSelect.length) {
+                    $methodSelect.val(profMethod).trigger('change');
+                }
+                if ($('#edit-pickup-' + subId).length) {
+                    $('#edit-pickup-' + subId).val(profPickup);
+                }
                 if (profTiming) {
                     if ($timingSelect.find('option[value="' + profTiming.replace(/"/g, '\\"') + '"]').length === 0) {
                         $('<option>', { value: profTiming, text: profTiming }).insertBefore($timingSelect.find('option[value="__custom__"]'));
@@ -2690,6 +2744,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
                 $('#edit-allergies-' + subId).val(profAllergies);
                 cmpShowNotice('Loaded saved logistics & allergy profile into form. Click "Save Logistics Changes" to apply.', 'success');
+            });
+
+            $(document).on('change', '.cmp-logistics-method-select', function() {
+                var subId = $(this).data('sub-id');
+                if ($(this).val() === 'Pickup') {
+                    $('#pickup-location-wrap-' + subId).slideDown(150);
+                } else {
+                    $('#pickup-location-wrap-' + subId).slideUp(150);
+                }
             });
 
             $(document).on('change', '.cmp-logistics-timing-select', function() {
@@ -2718,6 +2781,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var subId = btn.data('sub-id');
                 var userId = btn.data('user-id');
                 var orderId = btn.data('order-id');
+
+                var methodSelect = $('#edit-method-' + subId);
+                var methodVal    = methodSelect.length ? methodSelect.val() : '';
+                var pickupVal    = ($('#edit-pickup-' + subId).val() || '').trim();
 
                 var timingSelect = $('#edit-timing-' + subId);
                 var slotSelect   = $('#edit-timeslot-' + subId);
@@ -2748,6 +2815,8 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     user_id: userId,
                     order_id: orderId,
                     sub_id: subId,
+                    delivery_method: methodVal,
+                    pickup_location: pickupVal,
                     delivery_timing: timing,
                     time_slot: timeSlot,
                     allergies: allergies,
@@ -2757,6 +2826,9 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                 $.post(ajaxUrl, data, function(res) {
                     if (res.success) {
+                        if (res.data.method_display) {
+                            $('#method-val-' + subId).text(res.data.method_display);
+                        }
                         $('#timing-val-' + subId).text(res.data.timing);
                         $('#time-slot-val-' + subId).text(res.data.time_slot);
                         $('#allergies-val-' + subId).text(res.data.allergies);
@@ -2793,6 +2865,8 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                                     $('<option>', {
                                         value: 'prof_' + idx,
                                         text: labelParts.join(' '),
+                                        'data-method': p.method || '',
+                                        'data-pickup': p.pickup || '',
                                         'data-timing': p.timing || '',
                                         'data-slot': p.time_slot || '',
                                         'data-allergies': p.allergies || ''
@@ -2803,7 +2877,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         }
 
                         btn.text('✓ Saved').css('background', '#1B5E20');
-                        cmpShowNotice('Logistics updated for this plan.', 'success');
+                        cmpShowNotice('Logistics saved specifically for this meal plan.', 'success');
 
                         setTimeout(function() {
                             $('#logistics-edit-' + subId).hide();
