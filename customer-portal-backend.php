@@ -772,6 +772,8 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         $user_id            = intval( $_POST['user_id'] ?? 0 );
         $order_id           = intval( $_POST['order_id'] ?? 0 );
         $sub_id             = isset( $_POST['sub_id'] ) ? intval( $_POST['sub_id'] ) : 0;
+        $method             = sanitize_text_field( wp_unslash( $_POST['delivery_method'] ?? '' ) );
+        $pickup             = sanitize_text_field( wp_unslash( $_POST['pickup_location'] ?? '' ) );
         $timing             = sanitize_text_field( wp_unslash( $_POST['delivery_timing'] ?? '' ) );
         $time_slot          = sanitize_text_field( wp_unslash( $_POST['time_slot'] ?? '' ) );
         $allergies          = sanitize_textarea_field( wp_unslash( $_POST['allergies'] ?? '' ) );
@@ -824,15 +826,28 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             $sub_row   = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
             $plan_name = $sub_row ? $sub_row->plan_name : '';
 
+            $update_cols = array(
+                'delivery_timing' => $timing,
+                'time_slot'       => $time_slot,
+                'allergies'       => $allergies !== '' ? $allergies : '__NONE__',
+            );
+            if ( ! empty( $method ) ) {
+                $update_cols['delivery_method'] = $method;
+                $update_cols['pickup_location'] = ( $method === 'Pickup' ) ? $pickup : '';
+            }
+
             $wpdb->update(
                 $table_subs,
-                array(
-                    'delivery_timing' => $timing,
-                    'time_slot'       => $time_slot,
-                    'allergies'       => $allergies !== '' ? $allergies : '__NONE__',
-                ),
+                $update_cols,
                 array( 'id' => $sub_id )
             );
+        }
+
+        $effective_method = ! empty( $method ) ? $method : ( $sub_row ? ( $sub_row->delivery_method ?? '' ) : '' );
+        $effective_pickup = ( $effective_method === 'Pickup' ) ? ( ! empty( $method ) ? $pickup : ( $sub_row ? ( $sub_row->pickup_location ?? '' ) : '' ) ) : '';
+        $method_display   = $effective_method ?: 'N/A';
+        if ( $effective_method === 'Pickup' && ! empty( $effective_pickup ) ) {
+            $method_display .= ' (' . $effective_pickup . ')';
         }
 
         // 2. Update WooCommerce Order Meta ONLY if this order does not belong to multiple active plans
@@ -841,6 +856,12 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             if ( $order_sub_count <= 1 ) {
                 $order = wc_get_order( $order_id );
                 if ( $order ) {
+                    if ( ! empty( $effective_method ) ) {
+                        $order->update_meta_data( 'delivery_method', $effective_method );
+                        $order->update_meta_data( '_cmp_logistics_method', $effective_method );
+                        $order->update_meta_data( 'pickup_location', $effective_pickup );
+                        $order->update_meta_data( '_cmp_pickup_location', $effective_pickup );
+                    }
                     $order->update_meta_data( 'delivery_timing', $timing );
                     $order->update_meta_data( '_cmp_delivery_timing', $timing );
                     $order->update_meta_data( 'time_slot', $time_slot );
@@ -853,26 +874,30 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         }
 
         // 3. Record into Customer's Backend Renewal Logistics & Allergy Profile History
-        //    (Updates default checkout pre-fill meta + saves distinct plan profile in `_cmp_saved_logistics_profiles`)
+        //    Only overwrite global user_meta if the customer has 1 active plan; otherwise preserve each plan's isolation
         if ( $user_id > 0 ) {
+            $active_user_subs = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')", $user_id ) ) );
+            $should_update_global_usermeta = ( $active_user_subs <= 1 );
+
             cmp_save_user_logistics_profile_history(
                 $user_id,
                 $sub_id,
                 array(
                     'plan_name' => $plan_name,
-                    'method'    => $sub_row ? ( $sub_row->delivery_method ?? '' ) : '',
-                    'pickup'    => $sub_row ? ( $sub_row->pickup_location ?? '' ) : '',
+                    'method'    => $effective_method,
+                    'pickup'    => $effective_pickup,
                     'timing'    => $timing,
                     'time_slot' => $time_slot,
                     'allergies' => $allergies,
                     'address'   => $sub_row ? ( $sub_row->delivery_address ?? '' ) : '',
                 ),
-                true
+                $should_update_global_usermeta
             );
         }
 
         wp_send_json_success( array(
             'sub_id'         => $sub_id,
+            'method_display' => $method_display,
             'timing'         => $timing,
             'time_slot'      => $time_slot,
             'allergies'      => $allergies ?: 'No Allergies Recorded',
