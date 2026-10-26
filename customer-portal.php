@@ -390,7 +390,12 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                             <!-- Active Logistics Card (With Staff Hybrid Custom Timing & Slot Engine) -->
                             <div class="cmp-logistics-card-box">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                                    <h3 style="margin:0; color:#1B5E20; font-size:1.15em; font-weight:800;">Active Logistics</h3>
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        <h3 style="margin:0; color:#1B5E20; font-size:1.15em; font-weight:800;">Active Logistics</h3>
+                                        <?php if ( count( $subs ) > 1 ) : ?>
+                                            <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #68B946; border-radius:999px; padding:2px 8px; font-size:0.7rem; font-weight:800;">Plan-Specific</span>
+                                        <?php endif; ?>
+                                    </div>
                                     <?php if ( $can_edit_staff_logistics ) : ?>
                                         <button type="button" class="toggle-logistics-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
                                     <?php endif; ?>
@@ -399,7 +404,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                 <div id="logistics-view-<?php echo esc_attr( $sub->id ); ?>">
                                     <div class="cmp-kv-grid">
                                         <div class="cmp-kv-label">Method:</div>
-                                        <div class="cmp-kv-val"><?php echo esc_html( $method_display ); ?></div>
+                                        <div class="cmp-kv-val"><span id="method-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $method_display ); ?></span></div>
 
                                         <div class="cmp-kv-label">Receive By:</div>
                                         <div class="cmp-kv-val"><span id="timing-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $timing_display ); ?></span></div>
@@ -427,11 +432,23 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                 if ( ! empty( $prof['time_slot'] ) ) $prof_label_parts[] = '(' . $prof['time_slot'] . ')';
                                                 if ( ! empty( $prof['allergies'] ) ) $prof_label_parts[] = '• Allergies: ' . $prof['allergies'];
                                             ?>
-                                                <option value="prof_<?php echo esc_attr( $p_idx ); ?>" data-timing="<?php echo esc_attr( $prof['timing'] ?? '' ); ?>" data-slot="<?php echo esc_attr( $prof['time_slot'] ?? '' ); ?>" data-allergies="<?php echo esc_attr( $prof['allergies'] ?? '' ); ?>">
+                                                <option value="prof_<?php echo esc_attr( $p_idx ); ?>" data-method="<?php echo esc_attr( $prof['method'] ?? '' ); ?>" data-pickup="<?php echo esc_attr( $prof['pickup'] ?? '' ); ?>" data-timing="<?php echo esc_attr( $prof['timing'] ?? '' ); ?>" data-slot="<?php echo esc_attr( $prof['time_slot'] ?? '' ); ?>" data-allergies="<?php echo esc_attr( $prof['allergies'] ?? '' ); ?>">
                                                     <?php echo esc_html( implode( ' ', $prof_label_parts ) ); ?>
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
+                                    </div>
+
+                                    <!-- Delivery Method & Pickup Location Selector (Per-Plan) -->
+                                    <div style="margin-bottom:10px;">
+                                        <label style="font-size:0.82em; font-weight:bold; color:#334155; display:block; margin-bottom:4px;">Delivery Method:</label>
+                                        <select id="edit-method-<?php echo esc_attr( $sub->id ); ?>" class="cmp-logistics-method-select" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="width:100%; padding:7px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;">
+                                            <option value="Delivery" <?php selected( $method ?: 'Delivery', 'Delivery' ); ?>>Home/Office Delivery</option>
+                                            <option value="Pickup" <?php selected( $method, 'Pickup' ); ?>>Store Pick-up</option>
+                                        </select>
+                                        <div id="pickup-location-wrap-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo ( $method === 'Pickup' ) ? 'block' : 'none'; ?>; margin-top:6px;">
+                                            <input type="text" id="edit-pickup-<?php echo esc_attr( $sub->id ); ?>" value="<?php echo esc_attr( $pickup ); ?>" placeholder="Pickup Location (e.g. Al Barari / Motor City)" style="width:100%; padding:6px 8px; font-size:0.88em; border:1px solid #cbd5e1; border-radius:5px; box-sizing:border-box;">
+                                        </div>
                                     </div>
 
                                     <!-- Receive By (Delivery Timing) Hybrid Preset + Custom Selector -->
