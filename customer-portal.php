@@ -219,21 +219,27 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 $active_class   = $first_content ? 'active' : '';
                 $first_content  = false;
 
-                $order    = function_exists( 'wc_get_order' ) ? wc_get_order( $sub->wc_order_id ) : false;
-                $sub_user = get_userdata( $sub->user_id );
+                // Resolve per-plan logistics, address & allergies (Subscription Row -> WC Order Meta -> User Meta)
+                $resolved = function_exists( 'cmp_get_subscription_logistics' )
+                    ? cmp_get_subscription_logistics( $sub )
+                    : array();
 
-                $fname = get_user_meta( $sub->user_id, 'first_name', true ) ?: get_user_meta( $sub->user_id, 'billing_first_name', true );
-                $lname = get_user_meta( $sub->user_id, 'last_name', true ) ?: get_user_meta( $sub->user_id, 'billing_last_name', true );
-                if ( $order ) {
-                    $fname = $order->get_billing_first_name() ?: $fname;
-                    $lname = $order->get_billing_last_name() ?: $lname;
-                }
+                $fname        = $resolved['fname'] ?? ( get_user_meta( $sub->user_id, 'first_name', true ) ?: get_user_meta( $sub->user_id, 'billing_first_name', true ) );
+                $lname        = $resolved['lname'] ?? ( get_user_meta( $sub->user_id, 'last_name', true ) ?: get_user_meta( $sub->user_id, 'billing_last_name', true ) );
+                $display_name = $resolved['full_name'] ?? 'Customer';
+                $email        = $resolved['email'] ?? '';
+                $phone        = $resolved['phone'] ?? '';
+                $timing       = $resolved['timing'] ?? '';
+                $time_slot    = $resolved['time_slot'] ?? '';
+                $method       = $resolved['method'] ?? '';
+                $pickup       = $resolved['pickup'] ?? '';
+                $allergies    = $resolved['allergies'] ?? '';
+                $address      = $resolved['address'] ?? 'Address not provided';
 
-                $fallback_name = trim( $fname . ' ' . $lname );
-                if ( empty( $fallback_name ) ) {
-                    $fallback_name = $sub_user ? $sub_user->display_name : 'Customer';
-                }
-                $display_name = $fallback_name;
+                // Load saved renewal/multi-plan logistics profiles for this customer
+                $saved_logistics_profiles = function_exists( 'cmp_get_user_saved_logistics_profiles' )
+                    ? cmp_get_user_saved_logistics_profiles( $sub->user_id )
+                    : array();
 
                 // Recipient Extraction
                 $plan_parts          = explode( ' - ', $sub->plan_name );
@@ -247,69 +253,6 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 } else {
                     $core_plan_name = $sub->plan_name;
                 }
-
-                $timing = ! empty( $sub->delivery_timing ) ? $sub->delivery_timing : '';
-                if ( empty( $timing ) && $order ) {
-                    $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
-                }
-                if ( empty( $timing ) ) {
-                    $timing = get_user_meta( $sub->user_id, 'delivery_timing', true );
-                }
-
-                $time_slot = ! empty( $sub->time_slot ) ? $sub->time_slot : '';
-                if ( empty( $time_slot ) && $order ) {
-                    $time_slot = $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' );
-                }
-                if ( empty( $time_slot ) ) {
-                    $time_slot = get_user_meta( $sub->user_id, 'time_slot', true );
-                }
-
-                $method = ! empty( $sub->delivery_method ) ? $sub->delivery_method : '';
-                if ( empty( $method ) && $order ) {
-                    $method = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
-                }
-                if ( empty( $method ) ) {
-                    $method = get_user_meta( $sub->user_id, 'delivery_method', true );
-                }
-
-                $pickup = ! empty( $sub->pickup_location ) ? $sub->pickup_location : '';
-                if ( empty( $pickup ) && $order ) {
-                    $pickup = $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' );
-                }
-                if ( empty( $pickup ) ) {
-                    $pickup = get_user_meta( $sub->user_id, 'pickup_location', true );
-                }
-
-                $allergies = ! empty( $sub->allergies ) ? $sub->allergies : '';
-                if ( empty( $allergies ) && $order ) {
-                    $allergies = $order->get_customer_note();
-                }
-                if ( empty( $allergies ) ) {
-                    $allergies = get_user_meta( $sub->user_id, 'allergies', true );
-                }
-
-                $address = 'Address not provided';
-                if ( $order ) {
-                    $addr_parts = array_filter( array( $order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city() ) );
-                    if ( empty( $addr_parts ) ) {
-                        $addr_parts = array_filter( array( $order->get_billing_address_1(), $order->get_billing_address_2(), $order->get_billing_city() ) );
-                    }
-                    if ( ! empty( $addr_parts ) ) {
-                        $address = implode( ', ', $addr_parts );
-                    }
-                }
-                if ( $address === 'Address not provided' ) {
-                    $addr1      = get_user_meta( $sub->user_id, 'billing_address_1', true );
-                    $addr2      = get_user_meta( $sub->user_id, 'billing_address_2', true );
-                    $city       = get_user_meta( $sub->user_id, 'billing_city', true );
-                    $addr_parts = array_filter( array( $addr1, $addr2, $city ) );
-                    if ( ! empty( $addr_parts ) ) {
-                        $address = implode( ', ', $addr_parts );
-                    }
-                }
-
-                $email = $order ? $order->get_billing_email() : ( $sub_user ? $sub_user->user_email : '' );
-                $phone = $order ? $order->get_billing_phone() : get_user_meta( $sub->user_id, 'billing_phone', true );
 
                 $method_display = $method ?: 'N/A';
                 if ( $method === 'Pickup' && ! empty( $pickup ) ) {
@@ -472,6 +415,25 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
 
                                 <?php if ( $can_edit_staff_logistics ) : ?>
                                 <div id="logistics-edit-<?php echo esc_attr( $sub->id ); ?>" style="display:none; margin-top:10px;">
+                                    <!-- 1-Click Quick-Fill from Customer's Saved Renewal / Multi-Plan Profiles -->
+                                    <div class="cmp-saved-profile-bar" style="display:<?php echo ! empty( $saved_logistics_profiles ) ? 'block' : 'none'; ?>;">
+                                        <label for="saved-profile-select-<?php echo esc_attr( $sub->id ); ?>">Saved Customer Logistics &amp; Allergy Profiles:</label>
+                                        <select id="saved-profile-select-<?php echo esc_attr( $sub->id ); ?>" class="cmp-saved-profile-select" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-user-id="<?php echo esc_attr( $sub->user_id ); ?>">
+                                            <option value="">&mdash; Quick-Fill from Customer's Saved Profiles &mdash;</option>
+                                            <?php foreach ( $saved_logistics_profiles as $p_idx => $prof ) :
+                                                $prof_label_parts = array();
+                                                if ( ! empty( $prof['plan_name'] ) ) $prof_label_parts[] = $prof['plan_name'];
+                                                if ( ! empty( $prof['timing'] ) )    $prof_label_parts[] = $prof['timing'];
+                                                if ( ! empty( $prof['time_slot'] ) ) $prof_label_parts[] = '(' . $prof['time_slot'] . ')';
+                                                if ( ! empty( $prof['allergies'] ) ) $prof_label_parts[] = '• Allergies: ' . $prof['allergies'];
+                                            ?>
+                                                <option value="prof_<?php echo esc_attr( $p_idx ); ?>" data-timing="<?php echo esc_attr( $prof['timing'] ?? '' ); ?>" data-slot="<?php echo esc_attr( $prof['time_slot'] ?? '' ); ?>" data-allergies="<?php echo esc_attr( $prof['allergies'] ?? '' ); ?>">
+                                                    <?php echo esc_html( implode( ' ', $prof_label_parts ) ); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+
                                     <!-- Receive By (Delivery Timing) Hybrid Preset + Custom Selector -->
                                     <div style="margin-bottom:10px;">
                                         <label style="font-size:0.82em; font-weight:bold; color:#334155; display:block; margin-bottom:4px;">Receive By (Delivery Timing):</label>
