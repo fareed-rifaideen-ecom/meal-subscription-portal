@@ -2,6 +2,7 @@
 /**
  * Customer Portal - Backend Engine, AJAX Handlers, CSV Exporters & Feedback Admin
  * Part 1 of the 3-file Customer Portal modular architecture.
+ * Phase 3: Row-Level Staff Audit Stamps (Option 2B), Admin-Only Cancellation Reset (Option 3A) & Activity Logging (Option 4B)
  */
 
 // Prevent direct file access
@@ -18,9 +19,41 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 }
 
 // ==========================================
-// 0. ROLE, QUOTA, DATE LOCK & DB HELPER FUNCTIONS
+// 0. ROLE, QUOTA, DATE LOCK, AUDIT & DB HELPER FUNCTIONS
 //    (CONNECTED TO WP ADMIN -> MEAL SETTINGS)
 // ==========================================
+
+/**
+ * Checks if the current logged-in user is staff (FOH, Kitchen, Menu Manager, or Admin)
+ * who is permitted to see the Option 2B micro-footer audit stamp on meal cards.
+ */
+if ( ! function_exists( 'cmp_can_view_staff_audit_log' ) ) {
+    function cmp_can_view_staff_audit_log() {
+        if ( ! is_user_logged_in() ) {
+            return false;
+        }
+        return current_user_can( 'manage_options' )
+            || current_user_can( 'foh_manager' )
+            || current_user_can( 'kitchen_staff' )
+            || current_user_can( 'menu_manager' );
+    }
+}
+
+/**
+ * Formats the Option 2B micro-footer audit stamp for a daily meal log row.
+ */
+if ( ! function_exists( 'cmp_format_row_audit_stamp' ) ) {
+    function cmp_format_row_audit_stamp( $action_type, $actor_name, $actor_role, $updated_at ) {
+        if ( empty( $actor_name ) || empty( $updated_at ) || $updated_at === '0000-00-00 00:00:00' ) {
+            return '';
+        }
+        $action_label = ! empty( $action_type ) ? $action_type : 'Updated';
+        $role_part    = ! empty( $actor_role ) ? ' (' . $actor_role . ')' : '';
+        $time_part    = date( 'd M Y, h:i A', strtotime( $updated_at ) );
+
+        return sprintf( '%s by %s%s • %s', $action_label, $actor_name, $role_part, $time_part );
+    }
+}
 
 /**
  * Ensures the customer feedback table exists without requiring plugin reactivation.
@@ -72,7 +105,6 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
         global $wpdb;
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
-        // Verify table exists before inspecting columns
         $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) );
         if ( $table_exists !== $table_subs ) {
             return;
@@ -128,7 +160,6 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
                     $wpdb->update( $table_subs, $update, array( 'id' => intval( $sub->id ) ) );
                 }
 
-                // Seed the customer's saved logistics profile history for future renewals
                 if ( intval( $sub->user_id ) > 0 ) {
                     cmp_save_user_logistics_profile_history(
                         intval( $sub->user_id ),
@@ -155,9 +186,6 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
 /**
  * Resolves a subscription's exact logistics & allergies using the 3-tier priority hierarchy:
  * 1. Subscription Row (`wp_cmp_subscriptions`) -> 2. WooCommerce Order Meta -> 3. User Meta
- *
- * @param object $sub Subscription row from wp_cmp_subscriptions.
- * @return array Associative array of resolved logistics fields.
  */
 if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
     function cmp_get_subscription_logistics( $sub ) {
@@ -165,7 +193,7 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
         $user_id  = intval( $sub->user_id ?? 0 );
         $sub_user = $user_id > 0 ? get_userdata( $user_id ) : false;
 
-        // 1. Delivery Timing (Receive By: Deliver Same Day / Deliver Day Before / Custom)
+        // 1. Delivery Timing
         $timing = ! empty( $sub->delivery_timing ) ? $sub->delivery_timing : '';
         if ( empty( $timing ) && $order ) {
             $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
@@ -183,7 +211,7 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             $time_slot = get_user_meta( $user_id, 'time_slot', true );
         }
 
-        // 3. Delivery Method (Delivery vs Pickup)
+        // 3. Delivery Method
         $method = ! empty( $sub->delivery_method ) ? $sub->delivery_method : '';
         if ( empty( $method ) && $order ) {
             $method = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
@@ -271,14 +299,7 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
 }
 
 /**
- * Records a customer's per-plan logistics and allergy profile into `wp_usermeta`
- * (`_cmp_saved_logistics_profiles` and default renewal meta keys) so when the customer
- * renews or subscribes to another plan, their previous logistics and allergies are preserved.
- *
- * @param int   $user_id             WordPress User ID.
- * @param int   $sub_id              Subscription ID.
- * @param array $profile_data        Array with keys: plan_name, method, pickup, timing, time_slot, allergies, address.
- * @param bool  $update_default_meta Whether to also update the customer's default checkout user_meta.
+ * Records a customer's per-plan logistics and allergy profile into `wp_usermeta`.
  */
 if ( ! function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
     function cmp_save_user_logistics_profile_history( $user_id, $sub_id, $profile_data = array(), $update_default_meta = true ) {
@@ -296,7 +317,6 @@ if ( ! function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
         $address   = sanitize_text_field( $profile_data['address'] ?? '' );
         $plan_name = sanitize_text_field( $profile_data['plan_name'] ?? '' );
 
-        // 1. Update default user_meta so Checkout / Renewal forms auto-populate the latest preference
         if ( $update_default_meta ) {
             if ( ! empty( $timing ) ) {
                 update_user_meta( $user_id, 'delivery_timing', $timing );
@@ -316,7 +336,6 @@ if ( ! function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
             }
         }
 
-        // 2. Store in structured multi-plan history (`_cmp_saved_logistics_profiles`)
         if ( empty( $timing ) && empty( $time_slot ) && empty( $allergies ) ) {
             return;
         }
@@ -339,7 +358,6 @@ if ( ! function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
             'updated_at' => current_time( 'mysql' ),
         );
 
-        // Keep most recent 15 profiles per user
         if ( count( $profiles ) > 15 ) {
             $profiles = array_slice( $profiles, -15, 15, true );
         }
@@ -349,11 +367,7 @@ if ( ! function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
 }
 
 /**
- * Retrieves all saved logistics & allergy profiles for a customer (from both `_cmp_saved_logistics_profiles`
- * and any historical rows in `wp_cmp_subscriptions`), ready for 1-click selection on renewals or edits.
- *
- * @param int $user_id WordPress User ID.
- * @return array List of distinct logistics profiles.
+ * Retrieves all saved logistics & allergy profiles for a customer.
  */
 if ( ! function_exists( 'cmp_get_user_saved_logistics_profiles' ) ) {
     function cmp_get_user_saved_logistics_profiles( $user_id ) {
@@ -390,7 +404,6 @@ if ( ! function_exists( 'cmp_get_user_saved_logistics_profiles' ) ) {
             }
         }
 
-        // Deduplicate identical timing + slot + allergy combinations while keeping the newest plan label
         $unique_profiles = array();
         foreach ( array_reverse( $saved, true ) as $k => $p ) {
             if ( empty( $p['timing'] ) && empty( $p['time_slot'] ) ) {
@@ -407,8 +420,7 @@ if ( ! function_exists( 'cmp_get_user_saved_logistics_profiles' ) ) {
 }
 
 /**
- * Checks if the current logged-in user belongs to any of the configured role slugs
- * saved under WP Admin -> Meal Portal -> Meal Settings.
+ * Checks if the current logged-in user belongs to any of the configured role slugs.
  */
 if ( ! function_exists( 'cmp_user_matches_configured_roles' ) ) {
     function cmp_user_matches_configured_roles( $option_key, $default_roles = array( 'administrator' ) ) {
@@ -438,7 +450,6 @@ if ( ! function_exists( 'cmp_user_matches_configured_roles' ) ) {
 
 /**
  * Dynamically checks WP Admin -> Meal Settings ('cmp_adjust_days_roles')
- * Default: Administrator & Menu Manager (FOH excluded).
  */
 if ( ! function_exists( 'cmp_can_adjust_plan_days' ) ) {
     function cmp_can_adjust_plan_days() {
@@ -448,13 +459,12 @@ if ( ! function_exists( 'cmp_can_adjust_plan_days' ) ) {
 
 /**
  * Dynamically checks WP Admin -> Meal Settings ('cmp_strict_quota_enabled' & 'cmp_quota_bypass_roles')
- * Default: Strict Quota Enabled ('1'); Only Administrator can bypass meal/snack/juice quotas.
  */
 if ( ! function_exists( 'cmp_can_bypass_meal_quota' ) ) {
     function cmp_can_bypass_meal_quota() {
         $strict_enabled = get_option( 'cmp_strict_quota_enabled', '1' );
         if ( (string) $strict_enabled === '0' ) {
-            return true; // Global strict quota enforcement is turned off in WP Admin
+            return true;
         }
         return cmp_user_matches_configured_roles( 'cmp_quota_bypass_roles', array( 'administrator' ) );
     }
@@ -462,7 +472,6 @@ if ( ! function_exists( 'cmp_can_bypass_meal_quota' ) ) {
 
 /**
  * Dynamically checks WP Admin -> Meal Settings ('cmp_date_exempt_roles')
- * Default: Administrator, FOH Manager & Menu Manager are exempt from date & cut-off locks.
  */
 if ( ! function_exists( 'cmp_can_bypass_date_restrictions' ) ) {
     function cmp_can_bypass_date_restrictions() {
@@ -483,9 +492,7 @@ if ( ! function_exists( 'cmp_can_view_pos_and_edit_logistics' ) ) {
 }
 
 /**
- * Returns the earliest allowed YYYY-MM-DD date a customer can modify, reset, or cancel
- * based on Asia/Dubai timezone and the configured daily cut-off hour.
- * Past dates and today's date are ALWAYS locked for customers. Tomorrow is locked if current hour >= cutoff.
+ * Returns the earliest allowed YYYY-MM-DD date a customer can modify, reset, or cancel.
  */
 if ( ! function_exists( 'cmp_get_earliest_customer_allowed_date' ) ) {
     function cmp_get_earliest_customer_allowed_date() {
@@ -523,7 +530,7 @@ if ( ! function_exists( 'cmp_is_date_locked_for_customer' ) ) {
 // 1. AJAX HANDLERS
 // ==========================================
 
-// 1.1 SAVE OR UPDATE DAILY MEAL LOG
+// 1.1 SAVE OR UPDATE DAILY MEAL LOG (WITH OPTION 2B AUDIT STAMP & OPTION 4B ACTIVITY LOGGING)
 add_action( 'wp_ajax_cmp_save_daily_log', 'cmp_ajax_save_daily_log' );
 if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
     function cmp_ajax_save_daily_log() {
@@ -532,6 +539,10 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
 
         if ( ! is_user_logged_in() ) {
             wp_send_json_error( 'Not logged in.' );
+        }
+
+        if ( function_exists( 'cmp_auto_patch_database' ) ) {
+            cmp_auto_patch_database();
         }
 
         $log_id           = isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : 0;
@@ -543,7 +554,6 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             wp_send_json_error( 'Please select a valid date first.' );
         }
 
-        // Separate Date/Cut-off Privilege from Quota Bypass Privilege (Read from WP Admin Settings)
         $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can( 'kitchen_staff' ) && $is_override_mode === 1 );
         $can_bypass_quota = cmp_can_bypass_meal_quota();
 
@@ -576,9 +586,10 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             wp_send_json_error( 'Unauthorized access to this subscription.' );
         }
 
-        // --- LOG-LEVEL SNAPSHOT LOGIC (Phase 7) ---
+        // Fetch existing log row before update for Old Status snapshot & Plan Mode
+        $existing_log = null;
         if ( $log_id > 0 ) {
-            $existing_log = $wpdb->get_row( $wpdb->prepare( "SELECT plan_mode, pos_updated FROM $table_logs WHERE id = %d", $log_id ) );
+            $existing_log = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM $table_logs WHERE id = %d", $log_id ) );
             $plan_mode    = ( $existing_log && ! empty( $existing_log->plan_mode ) ) ? $existing_log->plan_mode : 'standard';
             $pos_updated  = ( $existing_log && ! empty( $existing_log->pos_updated ) ) ? 1 : 0;
         } else {
@@ -587,6 +598,10 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             if ( ! empty( $sub->allow_custom ) ) $plan_mode = 'custom';
             $pos_updated = 0;
         }
+
+        $old_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+            ? cmp_format_log_meal_snapshot( $existing_log )
+            : ( $existing_log ? 'Selected (' . $existing_log->target_date . ')' : 'Pending Selection (Unscheduled)' );
 
         $row_is_flexible  = ( $plan_mode === 'flexible' ) ? 1 : 0;
         $row_allow_custom = ( $plan_mode === 'custom' ) ? 1 : 0;
@@ -609,7 +624,6 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
                 wp_send_json_error( 'The menu for this date is pending release. Specific meals cannot be selected yet.' );
             }
 
-            // Non-bypass users cannot save an empty Menu Pending date unless Chef's Choice is selected
             if ( $is_menu_pending && ! $is_chefs_choice && ! $can_bypass_quota ) {
                 wp_send_json_error( 'The specific menu is not available yet for this date. Please select "Chef\'s Choice" to secure this date.' );
             }
@@ -642,7 +656,7 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             $snack_quota = ( $allowed_quota >= 2 ) ? 2 : 1;
         }
 
-        // --- STRICT SELECTION QUOTA ENFORCEMENT (GOVERNED BY WP ADMIN SETTINGS) ---
+        // --- STRICT SELECTION QUOTA ENFORCEMENT ---
         if ( ! $can_bypass_quota && ! $is_chefs_choice && ! $is_menu_pending ) {
             if ( $is_juice ) {
                 if ( $row_allow_custom ) {
@@ -685,13 +699,31 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             }
         }
 
+        // Determine Actor & Timestamp for Option 2B Row Audit Stamp + Option 4B Activity Log
+        $actor = function_exists( 'cmp_get_current_actor_info' )
+            ? cmp_get_current_actor_info( $sub->user_id )
+            : array(
+                'id'   => get_current_user_id(),
+                'name' => wp_get_current_user()->display_name,
+                'role' => current_user_can( 'manage_options' ) ? 'Admin' : 'Customer',
+            );
+
+        $tz           = new DateTimeZone( 'Asia/Dubai' );
+        $now_datetime = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d H:i:s' );
+        $row_action   = ( $log_id > 0 ) ? 'Updated' : 'Selected';
+
         $data = array(
-            'user_id'         => $sub->user_id,
-            'subscription_id' => $sub_id,
-            'target_date'     => $target_date,
-            'is_chefs_choice' => $is_chefs_choice,
-            'is_locked'       => 1,
-            'plan_mode'       => $plan_mode,
+            'user_id'          => $sub->user_id,
+            'subscription_id'  => $sub_id,
+            'target_date'      => $target_date,
+            'is_chefs_choice'  => $is_chefs_choice,
+            'is_locked'        => 1,
+            'plan_mode'        => $plan_mode,
+            'updated_by_id'    => $actor['id'],
+            'updated_by_name'  => $actor['name'],
+            'updated_by_role'  => $actor['role'],
+            'last_action_type' => $row_action,
+            'updated_at'       => $now_datetime,
         );
 
         if ( $row_allow_custom ) {
@@ -734,11 +766,38 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
 
         if ( $log_id > 0 ) {
             $wpdb->update( $table_logs, $data, array( 'id' => $log_id ) );
-            $response_data = array( 'msg' => 'Updated', 'new_log_id' => $log_id, 'pos_updated' => $pos_updated );
+            $saved_log_id = $log_id;
         } else {
             $wpdb->insert( $table_logs, $data );
-            $response_data = array( 'new_log_id' => $wpdb->insert_id, 'pos_updated' => 0 );
+            $saved_log_id = intval( $wpdb->insert_id );
         }
+
+        // Build New Status Snapshot & Record in Meal Portal > Customer Logs
+        $new_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+            ? cmp_format_log_meal_snapshot( $data )
+            : 'Selected (' . $target_date . ')';
+
+        if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+            cmp_record_customer_activity_log( array(
+                'subscription_id' => $sub_id,
+                'action_type'     => ( $log_id > 0 ) ? 'Meal Updated' : 'Meal Selected',
+                'target_date'     => $target_date,
+                'old_status'      => $old_snapshot,
+                'new_status'      => $new_snapshot,
+                'actor_id'        => $actor['id'],
+                'actor_name'      => $actor['name'],
+                'actor_role'      => $actor['role'],
+            ) );
+        }
+
+        $audit_stamp = cmp_format_row_audit_stamp( $row_action, $actor['name'], $actor['role'], $now_datetime );
+
+        $response_data = array(
+            'msg'         => ( $log_id > 0 ) ? 'Updated' : 'Saved',
+            'new_log_id'  => $saved_log_id,
+            'pos_updated' => $pos_updated,
+            'audit_stamp' => cmp_can_view_staff_audit_log() ? $audit_stamp : '',
+        );
 
         $updated_subs_queue = get_option( 'cmp_daily_updated_subs', array() );
         if ( ! is_array( $updated_subs_queue ) ) {
@@ -760,7 +819,6 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
     function cmp_ajax_cp_update_customer_logistics() {
         check_ajax_referer( 'cmp_portal_nonce', 'nonce' );
 
-        // Mode A: Only FOH, Menu Manager, and Admins can edit per-plan logistics
         if ( ! cmp_can_view_pos_and_edit_logistics() ) {
             wp_send_json_error( 'Permission Denied' );
         }
@@ -787,7 +845,6 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             wp_send_json_error( 'Please provide a valid Time Slot option.' );
         }
 
-        // Persist new custom timing / time slot into reusable WP Options preset lists if requested
         if ( $save_custom_timing ) {
             $saved_timings = get_option( 'cmp_custom_delivery_timings', array() );
             if ( ! is_array( $saved_timings ) ) {
@@ -818,13 +875,13 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             }
         }
 
-        // 1. Primary Per-Plan Storage: Save directly to this specific subscription row (`sub_id`)
-        //    Use '__NONE__' sentinel when allergies are explicitly cleared so fallback doesn't pull another plan's allergies.
-        $sub_row   = null;
-        $plan_name = '';
+        $sub_row      = null;
+        $plan_name    = '';
+        $old_resolved = array();
         if ( $sub_id > 0 ) {
-            $sub_row   = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
-            $plan_name = $sub_row ? $sub_row->plan_name : '';
+            $sub_row      = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+            $plan_name    = $sub_row ? $sub_row->plan_name : '';
+            $old_resolved = $sub_row ? cmp_get_subscription_logistics( $sub_row ) : array();
 
             $update_cols = array(
                 'delivery_timing' => $timing,
@@ -850,7 +907,29 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             $method_display .= ' (' . $effective_pickup . ')';
         }
 
-        // 2. Update WooCommerce Order Meta ONLY if this order does not belong to multiple active plans
+        if ( $sub_id > 0 && function_exists( 'cmp_record_customer_activity_log' ) ) {
+            $old_log_str = sprintf(
+                'Method: %s | Receive: %s (%s) | Allergies: %s',
+                $old_resolved['method'] ?? 'N/A',
+                $old_resolved['timing'] ?? 'N/A',
+                $old_resolved['time_slot'] ?? 'N/A',
+                ! empty( $old_resolved['allergies'] ) ? $old_resolved['allergies'] : 'None'
+            );
+            $new_log_str = sprintf(
+                'Method: %s | Receive: %s (%s) | Allergies: %s',
+                $method_display,
+                $timing,
+                $time_slot,
+                $allergies !== '' ? $allergies : 'None'
+            );
+            cmp_record_customer_activity_log( array(
+                'subscription_id' => $sub_id,
+                'action_type'     => 'Logistics Updated',
+                'old_status'      => $old_log_str,
+                'new_status'      => $new_log_str,
+            ) );
+        }
+
         if ( $order_id > 0 && function_exists( 'wc_get_order' ) ) {
             $order_sub_count = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE wc_order_id = %d", $order_id ) ) );
             if ( $order_sub_count <= 1 ) {
@@ -873,8 +952,6 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             }
         }
 
-        // 3. Record into Customer's Backend Renewal Logistics & Allergy Profile History
-        //    Only overwrite global user_meta if the customer has 1 active plan; otherwise preserve each plan's isolation
         if ( $user_id > 0 ) {
             $active_user_subs = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')", $user_id ) ) );
             $should_update_global_usermeta = ( $active_user_subs <= 1 );
@@ -958,6 +1035,8 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
         if ( $sub_id > 0 ) {
             $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
             if ( $sub ) {
+                $old_resolved = cmp_get_subscription_logistics( $sub );
+
                 $plan_parts          = explode( ' - ', $sub->plan_name );
                 $potential_recipient = end( $plan_parts );
                 if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
@@ -981,7 +1060,15 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
                     array( 'id' => $sub_id )
                 );
 
-                // Sync updated address & plan name into the customer's renewal profile history
+                if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+                    cmp_record_customer_activity_log( array(
+                        'subscription_id' => $sub_id,
+                        'action_type'     => 'Account Details Updated',
+                        'old_status'      => 'Name: ' . ( $old_resolved['full_name'] ?? '' ) . ' | Plan: ' . $sub->plan_name . ' | Address: ' . ( $old_resolved['address'] ?? '' ),
+                        'new_status'      => 'Name: ' . trim( $first_name . ' ' . $last_name ) . ' | Plan: ' . $new_plan_name . ' | Address: ' . $address,
+                    ) );
+                }
+
                 if ( $user_id > 0 ) {
                     $resolved = cmp_get_subscription_logistics( $sub );
                     cmp_save_user_logistics_profile_history(
@@ -1031,7 +1118,8 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_adjust_days' ) ) {
             wp_send_json_error( 'Subscription not found.' );
         }
 
-        $new_days       = intval( $sub->total_days );
+        $old_days       = intval( $sub->total_days );
+        $new_days       = $old_days;
         $current_expiry = new DateTime( $sub->expiry_date );
 
         if ( $operation === 'add' ) {
@@ -1056,11 +1144,20 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_adjust_days' ) ) {
             array( 'id' => $sub_id )
         );
 
+        if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+            cmp_record_customer_activity_log( array(
+                'subscription_id' => $sub_id,
+                'action_type'     => ( $operation === 'add' ) ? 'Extra Day Added' : 'Plan Day Removed',
+                'old_status'      => 'Total Quota: ' . $old_days . ' Days',
+                'new_status'      => 'Total Quota: ' . $new_days . ' Days',
+            ) );
+        }
+
         wp_send_json_success( array( 'new_days' => $new_days ) );
     }
 }
 
-// 1.5 CLEAR / RESET DAILY SELECTION
+// 1.5 CLEAR / RESET DAILY SELECTION (INCLUDES OPTION 3A: ADMIN-ONLY CANCELLATION RESET & EXTRA DAY REVERSAL)
 add_action( 'wp_ajax_cmp_clear_daily_log', 'cmp_ajax_clear_daily_log' );
 if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
     function cmp_ajax_clear_daily_log() {
@@ -1088,24 +1185,62 @@ if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
             wp_send_json_error( 'Subscription not found.' );
         }
 
-        $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can( 'kitchen_staff' ) && $is_override_mode === 1 );
+        $is_cancelled_row = in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true );
 
-        if ( ! $can_bypass_dates && intval( $sub->user_id ) !== get_current_user_id() ) {
-            wp_send_json_error( 'Unauthorized access to this subscription.' );
-        }
+        // OPTION 3A: Strictly allow ONLY Super Admins (`manage_options`) to reset/clear a Cancelled row
+        if ( $is_cancelled_row ) {
+            if ( ! current_user_can( 'manage_options' ) ) {
+                wp_send_json_error( 'Permission Denied: Only Administrators can reset a cancelled meal selection.' );
+            }
+        } else {
+            $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can( 'kitchen_staff' ) && $is_override_mode === 1 );
 
-        if ( ! $can_bypass_dates ) {
-            if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
-                wp_send_json_error( 'Past dates, today\'s date, and dates past the daily cut-off time cannot be reset.' );
+            if ( ! $can_bypass_dates && intval( $sub->user_id ) !== get_current_user_id() ) {
+                wp_send_json_error( 'Unauthorized access to this subscription.' );
+            }
+
+            if ( ! $can_bypass_dates ) {
+                if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
+                    wp_send_json_error( 'Past dates, today\'s date, and dates past the daily cut-off time cannot be reset.' );
+                }
             }
         }
 
+        $old_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+            ? cmp_format_log_meal_snapshot( $log )
+            : ( $is_cancelled_row ? 'Cancelled (' . $log->target_date . ')' : 'Selected (' . $log->target_date . ')' );
+
+        // Deleting the row from wp_cmp_daily_logs:
+        // 1. Removes the cancelled entry from the Kitchen Portal immediately.
+        // 2. Reduces $void_count by 1, reversing the extra compensation day and restoring this slot as a Pending Selection.
         $wpdb->delete( $table_logs, array( 'id' => $log_id ) );
-        wp_send_json_success( array( 'msg' => 'Cleared' ) );
+
+        if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+            cmp_record_customer_activity_log( array(
+                'subscription_id' => $sub_id,
+                'action_type'     => $is_cancelled_row ? 'Cancellation Reset' : 'Meal Reset',
+                'target_date'     => $log->target_date,
+                'old_status'      => $old_snapshot,
+                'new_status'      => $is_cancelled_row
+                    ? 'Pending Selection (Cancellation Cleared & Extra Day Reversed)'
+                    : 'Pending Selection (Cleared)',
+            ) );
+        }
+
+        $updated_subs_queue = get_option( 'cmp_daily_updated_subs', array() );
+        if ( ! is_array( $updated_subs_queue ) ) {
+            $updated_subs_queue = array();
+        }
+        if ( ! in_array( $sub_id, $updated_subs_queue, true ) ) {
+            $updated_subs_queue[] = $sub_id;
+            update_option( 'cmp_daily_updated_subs', $updated_subs_queue );
+        }
+
+        wp_send_json_success( array( 'msg' => $is_cancelled_row ? 'Cancellation Reset' : 'Cleared' ) );
     }
 }
 
-// 1.6 CUSTOMER / FOH CANCEL SPECIFIC DAY
+// 1.6 CUSTOMER / FOH CANCEL SPECIFIC DAY (STAMPS ACTOR & RECORDS ACTIVITY LOG)
 add_action( 'wp_ajax_cmp_cancel_daily_log', 'cmp_ajax_cancel_daily_log' );
 if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
     function cmp_ajax_cancel_daily_log() {
@@ -1114,6 +1249,10 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
 
         if ( ! is_user_logged_in() ) {
             wp_send_json_error( 'Not logged in.' );
+        }
+
+        if ( function_exists( 'cmp_auto_patch_database' ) ) {
+            cmp_auto_patch_database();
         }
 
         $log_id           = intval( $_POST['log_id'] );
@@ -1145,7 +1284,46 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
             }
         }
 
-        $wpdb->update( $table_logs, array( 'delivery_result' => 'Cancelled' ), array( 'id' => $log_id ) );
+        $old_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+            ? cmp_format_log_meal_snapshot( $log )
+            : 'Selected (' . $log->target_date . ')';
+
+        $actor = function_exists( 'cmp_get_current_actor_info' )
+            ? cmp_get_current_actor_info( $sub->user_id )
+            : array(
+                'id'   => get_current_user_id(),
+                'name' => wp_get_current_user()->display_name,
+                'role' => current_user_can( 'manage_options' ) ? 'Admin' : 'Customer',
+            );
+
+        $tz           = new DateTimeZone( 'Asia/Dubai' );
+        $now_datetime = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d H:i:s' );
+
+        $wpdb->update(
+            $table_logs,
+            array(
+                'delivery_result'  => 'Cancelled',
+                'updated_by_id'    => $actor['id'],
+                'updated_by_name'  => $actor['name'],
+                'updated_by_role'  => $actor['role'],
+                'last_action_type' => 'Cancelled',
+                'updated_at'       => $now_datetime,
+            ),
+            array( 'id' => $log_id )
+        );
+
+        if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+            cmp_record_customer_activity_log( array(
+                'subscription_id' => $sub_id,
+                'action_type'     => 'Meal Cancelled',
+                'target_date'     => $log->target_date,
+                'old_status'      => $old_snapshot,
+                'new_status'      => 'Cancelled (' . $log->target_date . ')',
+                'actor_id'        => $actor['id'],
+                'actor_name'      => $actor['name'],
+                'actor_role'      => $actor['role'],
+            ) );
+        }
 
         $updated_subs_queue = get_option( 'cmp_daily_updated_subs', array() );
         if ( ! is_array( $updated_subs_queue ) ) {
@@ -1263,7 +1441,6 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
 
         $is_flexible = isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0;
 
-        // Read per-plan logistics from the subscription row first
         $resolved       = cmp_get_subscription_logistics( $sub );
         $full_name      = $resolved['full_name'];
         $email          = $resolved['email'];
@@ -1301,6 +1478,7 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
             $headers = array( 'Date', 'Juice 1', 'Juice 2', 'Juice 3', 'Chefs Choice', 'Delivery Status' );
             if ( $can_view_pos ) {
                 $headers[] = 'POS Check';
+                $headers[] = 'Last Updated By';
             }
             fputcsv( $output, $headers );
         } else {
@@ -1310,6 +1488,7 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
             $headers = array( 'Date', $h1, $h2, $h3, 'Snack 1', 'Snack 2', 'Chefs Choice', 'Delivery Status' );
             if ( $can_view_pos ) {
                 $headers[] = 'POS Check';
+                $headers[] = 'Last Updated By';
             }
             fputcsv( $output, $headers );
         }
@@ -1326,7 +1505,13 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
                 $status = 'Selected';
             }
 
-            $pos_status = ( ! empty( $log->pos_updated ) ) ? 'Checked' : 'Pending';
+            $pos_status  = ( ! empty( $log->pos_updated ) ) ? 'Checked' : 'Pending';
+            $audit_stamp = cmp_format_row_audit_stamp(
+                $log->last_action_type ?? '',
+                $log->updated_by_name ?? '',
+                $log->updated_by_role ?? '',
+                $log->updated_at ?? ''
+            );
 
             $is_assigned = ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || ! empty( $log->custom_breakfast ) || ! empty( $log->custom_lunch ) || ! empty( $log->custom_dinner ) || ! empty( $log->custom_juice_1 ) );
             $chef_tag    = $log->is_chefs_choice ? ' (Chef)' : '';
@@ -1348,6 +1533,7 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
                 $row_out = array( $log->target_date, $j1, $j2, $j3, $chefs, $status );
                 if ( $can_view_pos ) {
                     $row_out[] = $pos_status;
+                    $row_out[] = $audit_stamp ?: '-';
                 }
                 fputcsv( $output, $row_out );
             } else {
@@ -1372,6 +1558,7 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
                 $row_out = array( $log->target_date, $b, $l, $d, $s1, $s2, $chefs, $status );
                 if ( $can_view_pos ) {
                     $row_out[] = $pos_status;
+                    $row_out[] = $audit_stamp ?: '-';
                 }
                 fputcsv( $output, $row_out );
             }
@@ -1388,12 +1575,13 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
 if ( ! function_exists( 'cmp_get_meal_portal_parent_slug' ) ) {
     function cmp_get_meal_portal_parent_slug() {
         global $menu;
-        $default_slug = 'meal-subscription-portal';
+        $default_slug = 'cmp-menu-manager';
         if ( is_array( $menu ) ) {
             foreach ( $menu as $item ) {
                 $slug  = $item[2] ?? '';
                 $title = wp_strip_all_tags( $item[0] ?? '' );
                 if (
+                    $slug === 'cmp-menu-manager' ||
                     $slug === 'meal-subscription-portal' ||
                     $slug === 'cmp-meal-portal' ||
                     $slug === 'cmp_meal_portal' ||
