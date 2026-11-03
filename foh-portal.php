@@ -1,7 +1,7 @@
 <?php
 /**
  * Front of House (FOH) Command Center Portal
- * Synchronized with Per-Plan Logistics, Delivery Timing, Time Slots & Allergies (Stage 2)
+ * Phase 2: Inline Recipient Pill Badge (Option 1A), Streamlined Plan Column & Activity Audit Logging
  */
 
 // Prevent direct file access
@@ -138,11 +138,28 @@ function cmp_ajax_foh_update_expiry() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $sub_id     = intval( $_POST['sub_id'] );
+    $new_expiry = sanitize_text_field( $_POST['new_expiry'] );
+
+    $old_sub    = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+    $old_expiry = $old_sub ? date( 'Y-m-d', strtotime( $old_sub->expiry_date ) ) : 'N/A';
+
     $wpdb->update(
         $table_subs,
-        array( 'expiry_date' => sanitize_text_field( $_POST['new_expiry'] ) . ' 23:59:59' ),
-        array( 'id' => intval( $_POST['sub_id'] ) )
+        array( 'expiry_date' => $new_expiry . ' 23:59:59' ),
+        array( 'id' => $sub_id )
     );
+
+    if ( $old_sub && function_exists( 'cmp_record_customer_activity_log' ) && $old_expiry !== $new_expiry ) {
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $sub_id,
+            'action_type'     => 'Expiry Updated',
+            'target_date'     => $new_expiry,
+            'old_status'      => 'Expiry Date: ' . $old_expiry,
+            'new_status'      => 'Expiry Date: ' . $new_expiry,
+        ) );
+    }
+
     wp_send_json_success();
 }
 
@@ -155,11 +172,28 @@ function cmp_ajax_foh_toggle_status() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $sub_id     = intval( $_POST['sub_id'] );
+    $new_status = sanitize_text_field( $_POST['new_status'] );
+
+    $old_sub    = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+    $old_status = $old_sub ? ucfirst( $old_sub->status ) : 'Active';
+
     $wpdb->update(
         $table_subs,
-        array( 'status' => sanitize_text_field( $_POST['new_status'] ) ),
-        array( 'id' => intval( $_POST['sub_id'] ) )
+        array( 'status' => $new_status ),
+        array( 'id' => $sub_id )
     );
+
+    if ( $old_sub && function_exists( 'cmp_record_customer_activity_log' ) ) {
+        $action_label = ( $new_status === 'paused' ) ? 'Plan Paused' : 'Plan Resumed';
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $sub_id,
+            'action_type'     => $action_label,
+            'old_status'      => 'Plan Status: ' . $old_status,
+            'new_status'      => 'Plan Status: ' . ucfirst( $new_status ),
+        ) );
+    }
+
     wp_send_json_success();
 }
 
@@ -195,7 +229,7 @@ function cmp_ajax_foh_update_financials() {
     wp_send_json_success( array( 'price' => $price, 'discount' => $discount ) );
 }
 
-// 5. AJAX HANDLER: Update Account Details, Plan Mode & Per-Plan Logistics (FOH, Menu Manager, Admin)
+// 5. AJAX HANDLER: Update Account Details, Recipient & Plan Mode (FOH, Menu Manager, Admin)
 add_action( 'wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details' );
 function cmp_ajax_foh_update_account_details() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -223,7 +257,7 @@ function cmp_ajax_foh_update_account_details() {
     $is_flexible  = ( $plan_mode === 'flexible' ) ? 1 : 0;
     $allow_custom = ( $plan_mode === 'custom' ) ? 1 : 0;
 
-    // Optional per-plan logistics fields submitted from FOH inline edit
+    // Optional per-plan logistics fields if passed
     $has_logistics_payload = isset( $_POST['delivery_timing'] ) || isset( $_POST['time_slot'] ) || isset( $_POST['allergies'] );
     $delivery_timing       = sanitize_text_field( wp_unslash( $_POST['delivery_timing'] ?? '' ) );
     $time_slot             = sanitize_text_field( wp_unslash( $_POST['time_slot'] ?? '' ) );
@@ -266,6 +300,10 @@ function cmp_ajax_foh_update_account_details() {
     if ( $sub_id > 0 ) {
         $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
         if ( $sub ) {
+            $old_mode = 'Standard';
+            if ( ! empty( $sub->is_flexible ) )  $old_mode = 'Flexible';
+            if ( ! empty( $sub->allow_custom ) ) $old_mode = 'Custom';
+
             $plan_parts          = explode( ' - ', $sub->plan_name );
             $potential_recipient = end( $plan_parts );
             if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
@@ -298,6 +336,15 @@ function cmp_ajax_foh_update_account_details() {
 
             $wpdb->update( $table_subs, $update_data, array( 'id' => $sub_id ) );
 
+            if ( function_exists( 'cmp_record_customer_activity_log' ) && ( $sub->plan_name !== $new_plan_name || strtolower( $old_mode ) !== strtolower( $plan_mode ) ) ) {
+                cmp_record_customer_activity_log( array(
+                    'subscription_id' => $sub_id,
+                    'action_type'     => 'Plan Details Updated',
+                    'old_status'      => $sub->plan_name . ' | Mode: ' . $old_mode,
+                    'new_status'      => $new_plan_name . ' | Mode: ' . ucfirst( $plan_mode ),
+                ) );
+            }
+
             // Record into customer's saved logistics profile history
             if ( $user_id > 0 && function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
                 $active_user_subs = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')", $user_id ) ) );
@@ -327,9 +374,6 @@ function cmp_ajax_foh_update_account_details() {
         'recipient' => $recipient_name,
         'plan_name' => $new_plan_name,
         'plan_mode' => $plan_mode,
-        'timing'    => $delivery_timing,
-        'time_slot' => $time_slot,
-        'allergies' => $allergies !== '' ? $allergies : 'No Allergies',
     ) );
 }
 
@@ -575,7 +619,7 @@ function cmp_foh_fetch_upcoming_meals() {
     wp_send_json_success( $data );
 }
 
-// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day)
+// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day & Records Audit Logs)
 add_action( 'wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_foh_bulk_cancel_days' );
 function cmp_foh_bulk_cancel_days() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -592,12 +636,58 @@ function cmp_foh_bulk_cancel_days() {
         wp_send_json_error( 'No days selected.' );
     }
 
+    $table_logs      = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs      = $wpdb->prefix . 'cmp_subscriptions';
     $today           = date( 'Y-m-d' );
+    $now_datetime    = date( 'Y-m-d H:i:s' );
     $ids_placeholder = implode( ',', array_fill( 0, count( $log_ids ), '%d' ) );
 
-    $query_params = array_merge( array( $sub_id ), $log_ids, array( $today ) );
-    $query        = $wpdb->prepare( "UPDATE {$wpdb->prefix}cmp_daily_logs SET delivery_result = 'Cancelled' WHERE subscription_id = %d AND id IN ($ids_placeholder) AND target_date > %s", $query_params );
-    $wpdb->query( $query );
+    $sub_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+    $actor   = function_exists( 'cmp_get_current_actor_info' )
+        ? cmp_get_current_actor_info( $sub_row ? $sub_row->user_id : 0 )
+        : array( 'id' => get_current_user_id(), 'name' => wp_get_current_user()->display_name, 'role' => 'FOH' );
+
+    // Fetch existing rows before cancelling so we can log their exact "Old Status"
+    $select_params = array_merge( array( $sub_id ), $log_ids, array( $today ) );
+    $target_logs   = $wpdb->get_results( $wpdb->prepare(
+        "SELECT * FROM {$table_logs} WHERE subscription_id = %d AND id IN ($ids_placeholder) AND target_date > %s",
+        $select_params
+    ) );
+
+    if ( ! empty( $target_logs ) ) {
+        $existing_cols = $wpdb->get_col( "DESC {$table_logs}", 0 );
+        $has_audit_col = is_array( $existing_cols ) && in_array( 'updated_by_name', $existing_cols, true );
+
+        foreach ( $target_logs as $old_log ) {
+            $old_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+                ? cmp_format_log_meal_snapshot( $old_log )
+                : 'Selected (' . $old_log->target_date . ')';
+
+            $update_fields = array( 'delivery_result' => 'Cancelled' );
+            if ( $has_audit_col ) {
+                $update_fields['updated_by_id']    = $actor['id'];
+                $update_fields['updated_by_name']  = $actor['name'];
+                $update_fields['updated_by_role']  = $actor['role'];
+                $update_fields['last_action_type'] = 'Cancelled';
+                $update_fields['updated_at']       = $now_datetime;
+            }
+
+            $wpdb->update( $table_logs, $update_fields, array( 'id' => intval( $old_log->id ) ) );
+
+            if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+                cmp_record_customer_activity_log( array(
+                    'subscription_id' => $sub_id,
+                    'action_type'     => 'Meal Cancelled',
+                    'target_date'     => $old_log->target_date,
+                    'old_status'      => $old_snapshot,
+                    'new_status'      => 'Cancelled (' . $old_log->target_date . ')',
+                    'actor_id'        => $actor['id'],
+                    'actor_name'      => $actor['name'],
+                    'actor_role'      => $actor['role'],
+                ) );
+            }
+        }
+    }
 
     $updated_subs_queue = get_option( 'cmp_daily_updated_subs', array() );
     if ( ! is_array( $updated_subs_queue ) ) {
@@ -643,16 +733,6 @@ function cmp_render_foh_portal() {
         $wpdb->query( "ALTER TABLE {$table_subs} ADD foh_remarks TEXT NULL AFTER status" );
     }
 
-    // Load custom saved timings & time slots for FOH quick selection
-    $custom_saved_timings = get_option( 'cmp_custom_delivery_timings', array() );
-    if ( ! is_array( $custom_saved_timings ) ) {
-        $custom_saved_timings = array();
-    }
-    $custom_saved_slots = get_option( 'cmp_custom_time_slots', array() );
-    if ( ! is_array( $custom_saved_slots ) ) {
-        $custom_saved_slots = array();
-    }
-
     $all_subs = $wpdb->get_results( "SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC" );
 
     $tabs       = array( 'active' => array(), 'paused' => array(), 'inactive' => array() );
@@ -664,11 +744,11 @@ function cmp_render_foh_portal() {
         $usage_days          = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
         $last_scheduled_date = $wpdb->get_var( $wpdb->prepare( "SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
 
-        $total_days_int          = intval( $sub->total_days );
-        $sub->filled             = $filled_days;
-        $sub->usage              = $usage_days;
-        $sub->balance            = max( 0, $total_days_int - $usage_days );
-        $sub->pending_fill       = max( 0, $total_days_int - $filled_days );
+        $total_days_int           = intval( $sub->total_days );
+        $sub->filled              = $filled_days;
+        $sub->usage               = $usage_days;
+        $sub->balance             = max( 0, $total_days_int - $usage_days );
+        $sub->pending_fill        = max( 0, $total_days_int - $filled_days );
         $sub->last_scheduled_date = $last_scheduled_date;
 
         if ( ! empty( $last_scheduled_date ) ) {
@@ -858,27 +938,26 @@ function cmp_render_foh_portal() {
         .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
         .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
 
-        /* Per-Plan Logistics Strip inside FOH Row */
-        .foh-plan-logistics-strip {
-            margin-top: 6px;
-            padding: 5px 8px;
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-radius: 6px;
-            font-size: 0.82em;
-            color: #166534;
-            line-height: 1.35;
+        /* Option 1A: Inline Recipient Pill Badge next to Customer First & Last Name */
+        .foh-name-inline-wrap {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            line-height: 1.3;
         }
-        .foh-plan-allergy-badge {
-            display: inline-block;
-            margin-top: 4px;
-            padding: 2px 7px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            font-weight: 700;
-            background: #fffbeb;
-            color: #b45309;
-            border: 1px solid #fde68a;
+        .foh-recipient-pill {
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #DCECC9;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.78em;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            line-height: 1.2;
+            white-space: nowrap;
         }
 
         /* Prevent WordPress wp-emoji from stretching to 100% container width */
@@ -1050,10 +1129,8 @@ function cmp_render_foh_portal() {
                 word-break: break-word;
             }
             .foh-recipient-pill {
-                font-size: 0.78em !important;
+                font-size: 0.74em !important;
                 padding: 1px 6px !important;
-                margin-left: 0 !important;
-                margin-top: 2px;
             }
             .foh-plan-title {
                 font-size: 0.98em !important;
@@ -1340,7 +1417,7 @@ function cmp_render_foh_portal() {
         <!-- SEARCH AND SORT BAR -->
         <div style="background: #f8fafc; padding: 15px; border-radius: 10px; border: 1px solid #DCECC9; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 250px;">
-                <input type="text" id="fohSearch" placeholder="Search by Order ID, Name, Email, Phone, Plan, Timing, or Allergy..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
+                <input type="text" id="fohSearch" placeholder="Search by Order ID, Name, Recipient, Email, Phone, or Plan..." style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; box-shadow: inset 0 1px 3px rgba(0,0,0,0.03); box-sizing: border-box;">
             </div>
             <div style="min-width: 260px;">
                 <select id="fohSort" style="width: 100%; padding: 12px 15px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 1.05em; background: #fff; cursor:pointer; box-sizing: border-box;">
@@ -1381,28 +1458,7 @@ function cmp_render_foh_portal() {
                             $allergies = $resolved['allergies'];
                             $is_paused = ( $sub->status === 'paused' );
 
-                            $timing_short = str_ireplace( array( 'Deliver Day Before', 'Deliver Same Day' ), array( 'Day Before', 'Same Day' ), $timing );
-
-                            // Build per-plan timing & slot option lists
-                            $row_timing_options = array_values( array_unique( array_merge(
-                                array( 'Deliver Day Before', 'Deliver Same Day' ),
-                                $custom_saved_timings,
-                                ( ! empty( $timing ) && $timing !== 'N/A' ) ? array( $timing ) : array()
-                            ) ) );
-
-                            $row_slot_options = array_values( array_unique( array_merge(
-                                array(
-                                    '5:00 AM to 6:00 AM',
-                                    '6:00 AM to 7:00 AM',
-                                    '7:00 AM to 8:00 AM',
-                                    '8:00 AM to 9:00 AM',
-                                    '5:00 PM to 8:00 PM',
-                                ),
-                                $custom_saved_slots,
-                                ( ! empty( $time_slot ) && $time_slot !== 'N/A' ) ? array( $time_slot ) : array()
-                            ) ) );
-
-                            // Recipient Extraction
+                            // Recipient Extraction (Option 1A: Inline Pill Badge next to First & Last Name without "For:")
                             $plan_parts          = explode( ' - ', $sub->plan_name );
                             $potential_recipient = end( $plan_parts );
                             $recipient_badge     = '';
@@ -1410,7 +1466,7 @@ function cmp_render_foh_portal() {
 
                             if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
                                 $raw_recipient   = $potential_recipient;
-                                $recipient_badge = ' <span class="foh-recipient-pill" style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; margin-left:8px; display:inline-block; margin-bottom: 5px;">For: <strong>' . esc_html( $potential_recipient ) . '</strong></span>';
+                                $recipient_badge = '<span class="foh-recipient-pill">' . esc_html( $potential_recipient ) . '</span>';
                                 array_pop( $plan_parts );
                                 $core_plan_name = implode( ' - ', $plan_parts );
                             } else {
@@ -1516,29 +1572,30 @@ function cmp_render_foh_portal() {
                             <td>
                                 <span class="foh-mobile-label">Customer Info</span>
                                 <div style="display: flex; flex-direction: column;">
-                                    <div style="display:flex; justify-content:space-between; align-items:center; gap: 4px;">
-                                        <div>
+                                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap: 6px;">
+                                        <!-- OPTION 1A: Customer Name + Inline Recipient Pill Badge -->
+                                        <div class="foh-name-inline-wrap">
                                             <a href="<?php echo esc_url( site_url( '/my-meal-portal/?admin_edit_sub=' . $sub->id ) ); ?>" target="_blank" style="text-decoration: none;" title="Open Customer Portal in New Tab">
-                                                <strong class="foh-customer-name" style="font-size: 1.1em; color: #379237; border-bottom: 1px dotted #379237; transition: color 0.2s;" id="name-val-<?php echo esc_attr( $sub->id ); ?>" onmouseover="this.style.color='#1B5E20'" onmouseout="this.style.color='#379237'"><?php echo esc_html( $full_name ?: 'Customer' ); ?></strong>
+                                                <strong class="foh-customer-name" style="font-size: 1.08em; color: #379237; border-bottom: 1px dotted #379237; transition: color 0.2s;" id="name-val-<?php echo esc_attr( $sub->id ); ?>" onmouseover="this.style.color='#1B5E20'" onmouseout="this.style.color='#379237'"><?php echo esc_html( $full_name ?: 'Customer' ); ?></strong>
                                             </a>
+                                            <span id="recipient-row-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo ! empty( $recipient_badge ) ? 'inline-flex' : 'none'; ?>; align-items:center;">
+                                                <span id="recipient-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo $recipient_badge; ?></span>
+                                            </span>
                                         </div>
                                         <?php if ( $can_edit_details ) : ?>
-                                            <button class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:0; display:inline-flex; align-items:center; flex-shrink:0; transition:color 0.2s;" title="Edit Account, Plan Mode & Logistics">
+                                            <button class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:2px 0 0 0; display:inline-flex; align-items:center; flex-shrink:0; transition:color 0.2s;" title="Edit Customer Name, Recipient & Plan Mode">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                             </button>
                                         <?php endif; ?>
                                     </div>
-                                    <div id="recipient-row-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo ! empty( $recipient_badge ) ? 'block' : 'none'; ?>">
-                                        <span id="recipient-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo $recipient_badge; ?></span>
-                                    </div>
-                                    <span class="foh-customer-meta" style="color: #555;"><?php echo esc_html( $sub->user_email ); ?></span>
+                                    <span class="foh-customer-meta" style="color: #555; margin-top: 3px;"><?php echo esc_html( $sub->user_email ); ?></span>
                                     <span class="foh-customer-meta" style="color: #555; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px;">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" style="flex-shrink:0;" viewBox="0 0 24 24" fill="none" stroke="#379237" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                                         <?php echo esc_html( $phone ); ?>
                                     </span>
                                 </div>
                                 
-                                <!-- ACCOUNT, PLAN MODE & PER-PLAN LOGISTICS INLINE EDIT BOX -->
+                                <!-- ACCOUNT, RECIPIENT & PLAN MODE INLINE EDIT BOX -->
                                 <?php if ( $can_edit_details ) : ?>
                                 <div id="account-edit-<?php echo esc_attr( $sub->id ); ?>" style="display:none; margin-top:10px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:6px;">
                                     <div style="display:flex; gap:6px; margin-bottom:8px;">
@@ -1558,25 +1615,6 @@ function cmp_render_foh_portal() {
                                         </select>
                                     </div>
 
-                                    <div style="margin-bottom:8px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
-                                        <label style="font-size:0.78em; font-weight:bold; display:block; margin-bottom: 3px; color:#1B5E20;">Receive By (Plan-Specific):</label>
-                                        <select id="edit-timing-<?php echo esc_attr( $sub->id ); ?>" style="width:100%; padding:5px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box; margin-bottom:6px;">
-                                            <?php foreach ( $row_timing_options as $t_opt ) : ?>
-                                                <option value="<?php echo esc_attr( $t_opt ); ?>" <?php selected( $timing, $t_opt ); ?>><?php echo esc_html( $t_opt ); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-
-                                        <label style="font-size:0.78em; font-weight:bold; display:block; margin-bottom: 3px; color:#1B5E20;">Time Slot (Plan-Specific):</label>
-                                        <select id="edit-timeslot-<?php echo esc_attr( $sub->id ); ?>" style="width:100%; padding:5px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box; margin-bottom:6px;">
-                                            <?php foreach ( $row_slot_options as $s_opt ) : ?>
-                                                <option value="<?php echo esc_attr( $s_opt ); ?>" <?php selected( $time_slot, $s_opt ); ?>><?php echo esc_html( $s_opt ); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-
-                                        <label style="font-size:0.78em; font-weight:bold; display:block; margin-bottom: 3px; color:#b45309;">Allergies (Plan-Specific):</label>
-                                        <input type="text" id="edit-allergies-<?php echo esc_attr( $sub->id ); ?>" value="<?php echo esc_attr( $allergies ); ?>" placeholder="No Allergies" style="width:100%; padding:5px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
-                                    </div>
-
                                     <button class="save-account-btn" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-user-id="<?php echo esc_attr( $sub->user_id ); ?>" data-order-id="<?php echo esc_attr( $sub->wc_order_id ); ?>" style="background:#379237; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
                                 </div>
                                 <?php endif; ?>
@@ -1594,15 +1632,6 @@ function cmp_render_foh_portal() {
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                         </button>
                                     <?php endif; ?>
-                                </div>
-
-                                <!-- Per-Plan Delivery Timing, Slot & Allergy Summary -->
-                                <div class="foh-plan-logistics-strip">
-                                    <strong>Receive:</strong> <span id="foh-timing-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $timing_short ); ?></span>
-                                    <span style="opacity:0.75;">(<span id="foh-slot-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $time_slot ); ?></span>)</span>
-                                </div>
-                                <div id="foh-allergy-wrap-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo ! empty( $allergies ) ? 'block' : 'none'; ?>;">
-                                    <span class="foh-plan-allergy-badge">Allergies: <span id="foh-allergy-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $allergies ); ?></span></span>
                                 </div>
 
                                 <?php if ( current_user_can( 'manage_options' ) || current_user_can( 'menu_manager' ) ) : ?>
@@ -1860,6 +1889,15 @@ function cmp_render_foh_portal() {
         box.appendChild(btnRow);
         backdrop.appendChild(box);
         document.body.appendChild(backdrop);
+    }
+
+    function escapeHtml(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
     document.addEventListener("DOMContentLoaded", function() {
@@ -2274,7 +2312,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Save Account Details, Plan Mode & Per-Plan Logistics
+        // Save Account Details, Recipient & Plan Mode (Option 1A Inline Pill Update)
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -2286,9 +2324,6 @@ function cmp_render_foh_portal() {
                 const lName = document.getElementById('edit-lname-' + subId).value.trim();
                 const recipient = document.getElementById('edit-recipient-' + subId).value.trim();
                 const planMode = document.getElementById('edit-plan-mode-' + subId).value;
-                const timingEl = document.getElementById('edit-timing-' + subId);
-                const slotEl = document.getElementById('edit-timeslot-' + subId);
-                const allergyEl = document.getElementById('edit-allergies-' + subId);
 
                 const originalText = this.innerText;
 
@@ -2310,9 +2345,6 @@ function cmp_render_foh_portal() {
                 formData.append('last_name', lName);
                 formData.append('recipient_name', recipient);
                 formData.append('plan_mode', planMode);
-                if (timingEl) formData.append('delivery_timing', timingEl.value);
-                if (slotEl) formData.append('time_slot', slotEl.value);
-                if (allergyEl) formData.append('allergies', allergyEl.value.trim());
 
                 fetch(fohAjaxUrl, { method: 'POST', body: formData })
                 .then(res => res.json())
@@ -2324,9 +2356,10 @@ function cmp_render_foh_portal() {
                         let badgeVal = document.getElementById('recipient-val-' + subId);
                         
                         if (response.data.recipient) {
-                            badgeVal.innerHTML = ' <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; margin-left:8px; vertical-align:middle; display:inline-block;">For: ' + response.data.recipient + '</span>';
-                            badgeContainer.style.display = 'block';
+                            badgeVal.innerHTML = '<span class="foh-recipient-pill">' + escapeHtml(response.data.recipient) + '</span>';
+                            badgeContainer.style.display = 'inline-flex';
                         } else {
+                            badgeVal.innerHTML = '';
                             badgeContainer.style.display = 'none';
                         }
 
@@ -2335,31 +2368,10 @@ function cmp_render_foh_portal() {
                             if (response.data.recipient && coreName.length > 1) coreName.pop();
                             document.getElementById('tab-title-' + subId).innerText = coreName.join(' - ');
                         }
-
-                        if (response.data.timing) {
-                            const shortTiming = response.data.timing.replace(/Deliver /i, '');
-                            const tValEl = document.getElementById('foh-timing-val-' + subId);
-                            if (tValEl) tValEl.innerText = shortTiming;
-                        }
-                        if (response.data.time_slot) {
-                            const sValEl = document.getElementById('foh-slot-val-' + subId);
-                            if (sValEl) sValEl.innerText = response.data.time_slot;
-                        }
-
-                        const aWrapEl = document.getElementById('foh-allergy-wrap-' + subId);
-                        const aValEl  = document.getElementById('foh-allergy-val-' + subId);
-                        if (aWrapEl && aValEl) {
-                            if (response.data.allergies && response.data.allergies !== 'No Allergies') {
-                                aValEl.innerText = response.data.allergies;
-                                aWrapEl.style.display = 'block';
-                            } else {
-                                aWrapEl.style.display = 'none';
-                            }
-                        }
                         
                         this.innerText = '✓ Saved';
                         this.style.background = '#1B5E20';
-                        fohShowNotice('Plan details and logistics updated.', 'success');
+                        fohShowNotice('Customer details and plan mode updated.', 'success');
                         
                         setTimeout(() => {
                             document.getElementById('account-edit-' + subId).style.display = 'none';
