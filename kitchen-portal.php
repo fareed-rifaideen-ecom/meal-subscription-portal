@@ -5,7 +5,7 @@
  * Phase 4 Upgrades:
  *  - Removed "Completed Assignments" Tab
  *  - Added "Pending Preparation" Tab with live dynamic counter badge
- *  - Option 5A: Added "Full Customer Roster" Tab showing all active subscribers (including "No Food Selection Today")
+ *  - Option 5A: Added "Full Customer Roster" Tab showing all Active & Paused subscribers (including "No Food Selection Today")
  *  - Displays Cancelled status with Who cancelled it (Name & Role) and When (Date & Time)
  *  - Inline Recipient Pill Badge next to Customer Name (without "For:")
  *  - Synchronized with Customer Activity Logs (Meal Portal > Customer Logs)
@@ -417,7 +417,7 @@ function cmp_export_kitchen_csv() {
     $target_date = date( 'Y-m-d', strtotime( $prep_date . ' + 1 day' ) );
     $today_dt    = date( 'Y-m-d H:i:s' );
 
-    // Include scheduled logs (including Cancelled so staff have full visibility in CSV)
+    // Include scheduled logs for active subscriptions (including Cancelled so staff have full visibility in CSV)
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.expiry_date, s.foh_remarks, s.is_flexible, s.allow_custom,
                 s.delivery_method, s.pickup_location, s.delivery_timing, s.time_slot, s.allergies, s.delivery_address,
@@ -596,7 +596,7 @@ function cmp_export_kitchen_csv() {
         );
     }
 
-    // If exporting Full Customer Roster (Option 5A), append all unscheduled active & paused customers
+    // If exporting Full Customer Roster (Option 5A), append all unscheduled Active & Paused customers
     if ( $export_type === 'roster' ) {
         $roster_subs = $wpdb->get_results(
             "SELECT s.*, u.display_name, u.user_email
@@ -616,7 +616,9 @@ function cmp_export_kitchen_csv() {
                     "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'",
                     $sub->id
                 ) );
-                if ( $usage_days >= intval( $sub->total_days ) || ( ! $is_paused_sub && $sub->expiry_date < $today_dt ) ) {
+
+                // Match FOH Portal logic: Paused subscriptions are always included; Active subscriptions must not be expired/completed
+                if ( ! $is_paused_sub && ( $usage_days >= intval( $sub->total_days ) || $sub->expiry_date < $today_dt ) ) {
                     continue;
                 }
 
@@ -742,7 +744,7 @@ function cmp_render_kitchen_portal() {
     $prev_date     = date( 'Y-m-d', strtotime( $selected_date . ' - 1 day' ) );
     $next_date     = date( 'Y-m-d', strtotime( $selected_date . ' + 1 day' ) );
 
-    // Fetch all locked daily logs for target_date (excluding paused subscriptions, but INCLUDING Cancelled rows so the Kitchen sees who & when cancelled)
+    // Fetch all locked daily logs for target_date (excluding paused subscriptions from active prep, but INCLUDING Cancelled rows so the Kitchen sees who & when cancelled)
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.foh_remarks, s.expiry_date, s.is_flexible, s.allow_custom,
                 s.delivery_method, s.pickup_location, s.delivery_timing, s.time_slot, s.allergies, s.delivery_address,
@@ -934,8 +936,8 @@ function cmp_render_kitchen_portal() {
                 $sub->id
             ) );
 
-            // Include active plans that haven't expired/completed, and include all paused plans with remaining balance days
-            if ( $usage_days >= intval( $sub->total_days ) || ( ! $is_paused_sub && $sub->expiry_date < $today_dt ) ) {
+            // Match FOH Portal logic: Paused subscriptions are always included; Active subscriptions must not be expired/completed
+            if ( ! $is_paused_sub && ( $usage_days >= intval( $sub->total_days ) || $sub->expiry_date < $today_dt ) ) {
                 continue;
             }
 
@@ -1197,6 +1199,26 @@ function cmp_render_kitchen_portal() {
             border-left: 5px solid #e11d48;
             border-radius: 8px;
             padding: 10px 12px;
+            color: #9f1239;
+            margin-bottom: 8px;
+        }
+        .kp-cancelled-title {
+            font-size: 0.96em;
+            font-weight: 800;
+            color: #be123c;
+            letter-spacing: 0.02em;
+            margin-bottom: 4px;
+        }
+        .kp-cancelled-meta {
+            font-size: 0.84em;
+            font-weight: 700;
+            color: #881337;
+            line-height: 1.35;
+        }
+        .k-row.row-is-cancelled {
+            background: #fffafa;
+        }
+
         /* Option 5A: "No Food Selection Today" & "Plan Paused" Badges inside Full Customer Roster */
         .kp-no-selection-box {
             background: #f8fafc;
@@ -1289,8 +1311,23 @@ function cmp_render_kitchen_portal() {
             opacity: 0.88;
         }
 
-        .k-customer-meta { margin: 2px 0; color: #555; display: flex; align-items: center; gap: 5px; }
-        .k-customer-meta svg { width: 12px; height: 12px; flex-shrink: 0; color: #379237; }
+        .k-customer-meta {
+            margin: 2px 0;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .k-customer-meta svg {
+            width: 13px !important;
+            height: 13px !important;
+            min-width: 13px !important;
+            max-width: 13px !important;
+            max-height: 13px !important;
+            flex-shrink: 0 !important;
+            color: #379237 !important;
+            display: inline-block !important;
+        }
         
         .logistics-box { margin-top: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; line-height: 1.3; }
         
@@ -1570,7 +1607,7 @@ function cmp_render_kitchen_portal() {
                 
                 <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date ) ); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
                 <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date ) ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
-                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=roster&prep_date=' . $selected_date ) ); ?>" style="background: #0f766e; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;" title="Export all active customers including No Food Selection Today">Export Full Roster CSV</a>
+                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=roster&prep_date=' . $selected_date ) ); ?>" style="background: #0f766e; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;" title="Export all active and paused customers including No Food Selection Today">Export Full Roster CSV</a>
                 
                 <button onclick="window.print()" style="background: #475569; color: white; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: bold;">Print PDF</button>
                 <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Log Out</a>
@@ -1586,7 +1623,7 @@ function cmp_render_kitchen_portal() {
              1. All Orders
              2. Pending Preparation (New)
              3. Pending Chef's Choice
-             4. Full Customer Roster (Option 5A - Includes "No Food Selection Today")
+             4. Full Customer Roster (Option 5A - Includes Active & Paused with "No Food Selection Today")
              ("Completed Assignments" Tab Removed) -->
         <div class="cmp-no-print k-filter-bar">
             <div class="k-tabs-container" style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -1606,7 +1643,7 @@ function cmp_render_kitchen_portal() {
                         <span class="k-tab-pill-count" style="background:#e2e8f0; color:#475569;">0</span>
                     <?php endif; ?>
                 </button>
-                <button type="button" class="k-tab-btn" data-filter="roster" title="View all active customers, including those with No Food Selection Today">
+                <button type="button" class="k-tab-btn" data-filter="roster" title="View all active and paused customers, including those with No Food Selection Today">
                     <span>Full Customer Roster</span>
                     <span class="k-tab-pill-count" style="background:#0f766e; color:#fff;"><?php echo intval( $count_full_roster ); ?></span>
                 </button>
@@ -1722,15 +1759,15 @@ function cmp_render_kitchen_portal() {
                                         Order: <?php echo esc_html( $c['order_id'] ); ?>
                                     </span>
                                     <span class="k-customer-meta">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                                        <svg width="13" height="13" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
                                         <?php echo esc_html( $c['email'] ); ?>
                                     </span>
                                     <span class="k-customer-meta">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                                        <svg width="13" height="13" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
                                         <?php echo esc_html( $c['phone'] ); ?>
                                     </span>
                                     <span class="k-customer-meta" style="align-items: flex-start;">
-                                        <svg xmlns="http://www.w3.org/2000/svg" style="margin-top: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                                        <svg width="13" height="13" xmlns="http://www.w3.org/2000/svg" style="margin-top: 2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
                                         <?php echo esc_html( $c['address'] ); ?>
                                     </span>
                                 </div>
