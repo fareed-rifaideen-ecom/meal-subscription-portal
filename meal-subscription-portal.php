@@ -1,9 +1,11 @@
 <?php
 /**
  * Plugin Name: Meal Subscription Portal
+ * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-subscription-portal
  * Description: A custom meal subscription and kitchen reporting engine.
  * Version: 2.9.9
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
+ * Author URI: https://fareed-rifaideen.netlify.app
  */
 
 // Prevent direct file access
