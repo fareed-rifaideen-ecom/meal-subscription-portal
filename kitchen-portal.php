@@ -596,26 +596,27 @@ function cmp_export_kitchen_csv() {
         );
     }
 
-    // If exporting Full Customer Roster (Option 5A), append all unscheduled active customers with "No Food Selection Today"
+    // If exporting Full Customer Roster (Option 5A), append all unscheduled active & paused customers
     if ( $export_type === 'roster' ) {
-        $active_subs = $wpdb->get_results(
+        $roster_subs = $wpdb->get_results(
             "SELECT s.*, u.display_name, u.user_email
              FROM {$wpdb->prefix}cmp_subscriptions s
              JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-             WHERE s.status = 'active'
+             WHERE s.status IN ('active', 'paused')
              ORDER BY s.id DESC"
         );
 
-        if ( $active_subs ) {
-            foreach ( $active_subs as $sub ) {
+        if ( $roster_subs ) {
+            foreach ( $roster_subs as $sub ) {
                 if ( isset( $scheduled_sub_ids[ intval( $sub->id ) ] ) ) {
                     continue;
                 }
-                $usage_days = (int) $wpdb->get_var( $wpdb->prepare(
+                $is_paused_sub = ( $sub->status === 'paused' );
+                $usage_days    = (int) $wpdb->get_var( $wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'",
                     $sub->id
                 ) );
-                if ( $usage_days >= intval( $sub->total_days ) || $sub->expiry_date < $today_dt ) {
+                if ( $usage_days >= intval( $sub->total_days ) || ( ! $is_paused_sub && $sub->expiry_date < $today_dt ) ) {
                     continue;
                 }
 
@@ -641,13 +642,14 @@ function cmp_export_kitchen_csv() {
                 } else {
                     $core_plan_name = $sub->plan_name;
                 }
-                $plan_string = $core_plan_name . " ({$usage_days}/{$sub->total_days} Used)";
+                $plan_string = $core_plan_name . " ({$usage_days}/{$sub->total_days} Used)" . ( $is_paused_sub ? ' [PAUSED]' : '' );
 
                 $order_id_display = ( $sub->wc_order_id < 0 )
                     ? 'M-' . str_pad( abs( $sub->wc_order_id ), 4, '0', STR_PAD_LEFT )
                     : ( $sub->wc_order_id > 0 ? '#' . $sub->wc_order_id : 'M-' . str_pad( $sub->id, 4, '0', STR_PAD_LEFT ) );
 
-                $foh_note = ! empty( $sub->foh_remarks ) ? wp_strip_all_tags( $sub->foh_remarks ) : 'None';
+                $foh_note          = ! empty( $sub->foh_remarks ) ? wp_strip_all_tags( $sub->foh_remarks ) : 'None';
+                $roster_status_txt = $is_paused_sub ? 'Plan Paused (No Food Selection Today)' : 'No Food Selection Today';
 
                 $row_data = array(
                     $order_id_display,
@@ -664,14 +666,14 @@ function cmp_export_kitchen_csv() {
                     $allergies,
                     $foh_note,
                     $plan_string,
-                    'No Food Selection Today',
+                    $roster_status_txt,
                     '-',
                     '-',
                     '-',
                     '-',
                     'N/A',
                     'N/A',
-                    'No Food Selection Today',
+                    $roster_status_txt,
                     'N/A',
                 );
 
@@ -891,6 +893,7 @@ function cmp_render_kitchen_portal() {
             'is_cancelled'       => $is_cancelled,
             'cancelled_stamp'    => $cancelled_stamp,
             'is_unscheduled'     => false,
+            'is_paused'          => false,
             'prepared'           => $log->is_prepared,
             'dispatch'           => $log->dispatch_status,
             'delivery'           => $log->delivery_result,
@@ -909,29 +912,30 @@ function cmp_render_kitchen_portal() {
     }
 
     // =========================================================================
-    // OPTION 5A: FETCH ALL ACTIVE SUBSCRIBERS WITHOUT A FOOD SELECTION FOR TODAY
+    // OPTION 5A: FETCH ALL ACTIVE & PAUSED SUBSCRIBERS FOR FULL CUSTOMER ROSTER
     // =========================================================================
-    $active_subs = $wpdb->get_results(
+    $roster_subs = $wpdb->get_results(
         "SELECT s.*, u.display_name, u.user_email
          FROM {$table_subs} s
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-         WHERE s.status = 'active'
+         WHERE s.status IN ('active', 'paused')
          ORDER BY s.id DESC"
     );
 
-    if ( $active_subs ) {
-        foreach ( $active_subs as $sub ) {
+    if ( $roster_subs ) {
+        foreach ( $roster_subs as $sub ) {
             if ( isset( $scheduled_sub_ids[ intval( $sub->id ) ] ) ) {
                 continue;
             }
 
-            $usage_days = (int) $wpdb->get_var( $wpdb->prepare(
+            $is_paused_sub = ( $sub->status === 'paused' );
+            $usage_days    = (int) $wpdb->get_var( $wpdb->prepare(
                 "SELECT COUNT(*) FROM {$table_logs} WHERE subscription_id = %d AND delivery_result = 'Successful'",
                 $sub->id
             ) );
 
-            // Only include active plans that still have remaining balance days and haven't expired
-            if ( $usage_days >= intval( $sub->total_days ) || $sub->expiry_date < $today_dt ) {
+            // Include active plans that haven't expired/completed, and include all paused plans with remaining balance days
+            if ( $usage_days >= intval( $sub->total_days ) || ( ! $is_paused_sub && $sub->expiry_date < $today_dt ) ) {
                 continue;
             }
 
@@ -1001,6 +1005,7 @@ function cmp_render_kitchen_portal() {
                 'is_cancelled'       => false,
                 'cancelled_stamp'    => '',
                 'is_unscheduled'     => true,
+                'is_paused'          => $is_paused_sub,
                 'prepared'           => 0,
                 'dispatch'           => 0,
                 'delivery'           => 'Pending',
@@ -1192,27 +1197,7 @@ function cmp_render_kitchen_portal() {
             border-left: 5px solid #e11d48;
             border-radius: 8px;
             padding: 10px 12px;
-            color: #9f1239;
-            margin-bottom: 8px;
-        }
-        .kp-cancelled-title {
-            font-size: 0.96em;
-            font-weight: 800;
-            color: #be123c;
-            letter-spacing: 0.02em;
-            margin-bottom: 4px;
-        }
-        .kp-cancelled-meta {
-            font-size: 0.84em;
-            font-weight: 700;
-            color: #881337;
-            line-height: 1.35;
-        }
-        .k-row.row-is-cancelled {
-            background: #fffafa;
-        }
-
-        /* Option 5A: "No Food Selection Today" Badge inside Full Customer Roster */
+        /* Option 5A: "No Food Selection Today" & "Plan Paused" Badges inside Full Customer Roster */
         .kp-no-selection-box {
             background: #f8fafc;
             border: 1.5px dashed #cbd5e1;
@@ -1221,6 +1206,12 @@ function cmp_render_kitchen_portal() {
             padding: 12px;
             text-align: center;
             color: #334155;
+        }
+        .kp-no-selection-box.is-paused-box {
+            background: #fffbeb;
+            border: 1.5px dashed #fcd34d;
+            border-left: 4px solid #f59e0b;
+            color: #92400e;
         }
         .kp-no-selection-badge {
             display: inline-block;
@@ -1232,8 +1223,22 @@ function cmp_render_kitchen_portal() {
             border-radius: 999px;
             margin-bottom: 5px;
         }
+        .kp-paused-roster-badge {
+            display: inline-block;
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #f59e0b;
+            font-weight: 800;
+            font-size: 0.9em;
+            padding: 4px 12px;
+            border-radius: 999px;
+            margin-bottom: 5px;
+        }
         .k-row.filter-unscheduled {
             background: #fcfcfd;
+        }
+        .k-row.row-is-paused {
+            background: #fffdf5;
         }
 
         /* ==========================================
@@ -1630,6 +1635,7 @@ function cmp_render_kitchen_portal() {
                     <tbody>
                         <?php foreach ( $customers as $c ) :
                             $is_unscheduled = ! empty( $c['is_unscheduled'] );
+                            $is_paused_cust = ! empty( $c['is_paused'] );
                             $is_cancelled   = ! empty( $c['is_cancelled'] );
                             $is_expired     = ! empty( $c['is_expired'] );
 
@@ -1645,6 +1651,9 @@ function cmp_render_kitchen_portal() {
                             $row_classes = array( 'k-row' );
                             if ( $is_unscheduled ) {
                                 $row_classes[] = 'filter-unscheduled';
+                                if ( $is_paused_cust ) {
+                                    $row_classes[] = 'row-is-paused';
+                                }
                             } elseif ( $is_cancelled ) {
                                 $row_classes[] = 'row-is-cancelled';
                             } elseif ( $c['is_chefs_choice'] && ! $is_expired ) {
@@ -1666,6 +1675,7 @@ function cmp_render_kitchen_portal() {
                                 $c['allergies'] . ' ' .
                                 $c['timing'] . ' ' .
                                 ( $is_unscheduled ? 'no food selection today unscheduled' : '' ) . ' ' .
+                                ( $is_paused_cust ? 'paused plan on hold' : '' ) . ' ' .
                                 ( $is_cancelled ? 'cancelled ' . $c['cancelled_stamp'] : '' )
                             ) );
 
@@ -1734,7 +1744,7 @@ function cmp_render_kitchen_portal() {
                                     <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html( $c['time_slot'] ); ?></span>
                                 </div>
                                 <div style="text-align: left;">
-                                    <div style="background: <?php echo $is_unscheduled ? '#64748b' : ( $is_cancelled ? '#e11d48' : '#379237' ); ?>; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+                                    <div style="background: <?php echo $is_paused_cust ? '#d97706' : ( $is_unscheduled ? '#64748b' : ( $is_cancelled ? '#e11d48' : '#379237' ) ); ?>; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
                                         Delivery: <?php echo date( 'D, M j', strtotime( $c['delivery_date'] ) ); ?>
                                     </div>
                                     <br>
@@ -1746,12 +1756,19 @@ function cmp_render_kitchen_portal() {
 
                             <td>
                                 <?php if ( $is_unscheduled ) : ?>
-                                    <!-- OPTION 5A: Active Customer with No Food Selection Today -->
-                                    <div class="kp-no-selection-box">
-                                        <span class="kp-no-selection-badge">No Food Selection Today</span>
-                                        <div style="font-size:0.84em; color:#64748b; margin-top:2px;">
-                                            No meal scheduled for Eating Date: <strong><?php echo esc_html( date( 'D, M j', strtotime( $c['target_date'] ) ) ); ?></strong>
-                                        </div>
+                                    <!-- OPTION 5A: Active or Paused Customer with No Food Selection Today -->
+                                    <div class="kp-no-selection-box <?php echo $is_paused_cust ? 'is-paused-box' : ''; ?>">
+                                        <?php if ( $is_paused_cust ) : ?>
+                                            <span class="kp-paused-roster-badge">&#9208; Plan Paused &mdash; No Food Selection Today</span>
+                                            <div style="font-size:0.84em; color:#92400e; margin-top:2px;">
+                                                Subscription is currently <strong>Paused</strong> for Eating Date: <strong><?php echo esc_html( date( 'D, M j', strtotime( $c['target_date'] ) ) ); ?></strong>
+                                            </div>
+                                        <?php else : ?>
+                                            <span class="kp-no-selection-badge">No Food Selection Today</span>
+                                            <div style="font-size:0.84em; color:#64748b; margin-top:2px;">
+                                                No meal scheduled for Eating Date: <strong><?php echo esc_html( date( 'D, M j', strtotime( $c['target_date'] ) ) ); ?></strong>
+                                            </div>
+                                        <?php endif; ?>
                                         <div class="cmp-no-print" style="margin-top:7px;">
                                             <a href="<?php echo esc_url( site_url( '/my-meal-portal/?admin_edit_sub=' . $c['sub_id'] ) ); ?>" target="_blank" style="font-size:0.82em; color:#379237; font-weight:700; text-decoration:underline;">Open Customer Portal ⇗</a>
                                         </div>
@@ -1913,7 +1930,9 @@ function cmp_render_kitchen_portal() {
                             <td style="background:#fcfcfc;">
                                 <span class="kp-mob-cell-label">Delivery</span>
                                 <?php if ( $is_unscheduled ) : ?>
-                                    <span style="color:#94a3b8; font-size:0.85em; font-weight:700; display:block; text-align:center;">No Selection</span>
+                                    <span style="color:<?php echo $is_paused_cust ? '#b45309' : '#94a3b8'; ?>; font-size:0.85em; font-weight:700; display:block; text-align:center;">
+                                        <?php echo $is_paused_cust ? 'Plan Paused' : 'No Selection'; ?>
+                                    </span>
                                 <?php else : ?>
                                     <select class="cmp-delivery-box" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;" <?php echo $delivery_disabled; ?>>
                                         <option value="Pending" <?php selected( $c['delivery'], 'Pending' ); ?>>Pending</option>
