@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meal Subscription Portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 2.9.2
+ * Version: 2.9.9
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  */
 
