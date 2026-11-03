@@ -2,6 +2,7 @@
 /**
  * Customer Portal - Frontend Styles (CSS) & Interactive Scripts (JS)
  * Part 2 of the 3-file Customer Portal modular architecture.
+ * Phase 3: Staff-Only Micro-Footer Audit Strip (Option 2B) & Admin Cancellation Reset (Option 3A)
  */
 
 // Prevent direct file access
@@ -165,13 +166,13 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 gap: 8px !important;
                 overflow-x: auto !important;
                 -webkit-overflow-scrolling: touch !important;
-                scrollbar-width: none !important; /* Firefox */
-                -ms-overflow-style: none !important; /* IE/Edge */
+                scrollbar-width: none !important;
+                -ms-overflow-style: none !important;
                 align-items: stretch !important;
                 border-radius: 0 0 14px 14px !important;
             }
             .cmp-tab-nav::-webkit-scrollbar {
-                display: none !important; /* Chrome, Safari, iOS */
+                display: none !important;
                 width: 0 !important;
                 height: 0 !important;
             }
@@ -282,7 +283,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     font-size: 0.8rem !important;
                 }
 
-                /* Mobile Plan Tabs: Clean Full-Width / Multi-Card Pill Layout with Zero Text Clipping */
                 .cmp-tab-nav {
                     padding: 8px 10px !important;
                     display: flex !important;
@@ -562,7 +562,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 filter: brightness(1.08);
                 transform: translateY(-1px);
             }
-            /* Strict 2-Column Grid for "Go to Pending Selection" — Prevents Theme Letter-Spacing & Badge Overlap */
             .cmp-dashboard-wrap button.cmp-jump-pending-btn {
                 display: grid !important;
                 grid-template-columns: minmax(0, 1fr) auto !important;
@@ -625,7 +624,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16) !important;
             }
 
-            /* Pulse Highlight When Scrolling to Pending Row */
             @keyframes cmpPendingPulse {
                 0%   { box-shadow: 0 0 0 0 rgba(55, 146, 55, 0.55); }
                 50%  { box-shadow: 0 0 0 10px rgba(55, 146, 55, 0); }
@@ -770,7 +768,8 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             }
 
             /* =========================================================
-               4. UNIFIED STACKED DAY CARD LAYOUT & POS CHECK BADGES
+               4. UNIFIED STACKED DAY CARD LAYOUT, OPTION 2B MICRO-FOOTER
+                  & OPTION 3A ADMIN CANCELLATION RESET BUTTON
                ========================================================= */
             .cmp-table-responsive {
                 overflow: visible !important;
@@ -794,11 +793,62 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             }
             .cmp-table tr.cmp-day-row.status-pending:not(.is-unsaved) { border-color: #fde68a !important; }
             .cmp-table tr.cmp-day-row.status-saved:not(.is-unsaved) { border-color: #bbf7d0 !important; }
-            .cmp-table tr.cmp-day-row.status-void { border-color: #fecdd3 !important; opacity: 0.82; }
+            .cmp-table tr.cmp-day-row.status-void { border-color: #fecdd3 !important; opacity: 0.88; }
 
             .cmp-table tr.cmp-day-row:focus-within:not(.is-unsaved) {
                 border-color: #379237 !important;
                 box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.22), 0 10px 25px rgba(27, 94, 32, 0.10) !important;
+            }
+
+            /* OPTION 2B: Full-Width Micro-Footer Strip on the Row (Staff Only) */
+            .cmp-table td.cmp-audit-footer-cell {
+                display: none !important;
+                grid-column: 1 / span 12 !important;
+                padding-top: 6px !important;
+                margin-top: 2px !important;
+                border-top: 1px dotted #e2e8f0 !important;
+                text-align: right !important;
+                line-height: 1.25 !important;
+            }
+            .cmp-audit-micro-strip {
+                display: inline-flex;
+                align-items: center;
+                justify-content: flex-end;
+                gap: 5px;
+                font-size: 10.5px;
+                font-weight: 600;
+                color: #64748b;
+                letter-spacing: 0.01em;
+            }
+            .cmp-table tr.status-void .cmp-audit-micro-strip {
+                color: #be123c;
+                font-weight: 700;
+            }
+
+            /* OPTION 3A: Admin-Only Reset Cancellation Button */
+            .cmp-admin-reset-cancel-btn {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 6px !important;
+                width: 100% !important;
+                min-height: 44px !important;
+                padding: 8px 12px !important;
+                background: #fffbeb !important;
+                color: #b45309 !important;
+                border: 1.5px solid #f59e0b !important;
+                border-radius: 10px !important;
+                font-size: 13px !important;
+                font-weight: 800 !important;
+                cursor: pointer !important;
+                transition: all 0.2s ease !important;
+                white-space: nowrap !important;
+            }
+            .cmp-admin-reset-cancel-btn:hover:not(:disabled) {
+                background: #f59e0b !important;
+                color: #ffffff !important;
+                transform: translateY(-1px);
+                box-shadow: 0 4px 10px rgba(245, 158, 11, 0.25) !important;
             }
 
             .cmp-mobile-label {
@@ -1155,7 +1205,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     gap: 12px 14px !important;
                     align-items: end !important;
                 }
-                .cmp-table td:not(.cmp-collapsed-summary) {
+                .cmp-table td:not(.cmp-collapsed-summary):not(.cmp-audit-footer-cell) {
                     display: block !important;
                     padding: 0 !important;
                     border: none !important;
@@ -1216,6 +1266,12 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-table td.cmp-cell-juice-2 { grid-column: 5 / span 4 !important; grid-row: 2 !important; }
                 .cmp-table td.cmp-cell-juice-3 { grid-column: 9 / span 4 !important; grid-row: 2 !important; }
 
+                .cmp-table td.cmp-audit-footer-cell.has-audit {
+                    display: block !important;
+                    grid-column: 1 / span 12 !important;
+                    grid-row: 5 !important;
+                }
+
                 .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-meal,
                 .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-snack,
                 .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-macros,
@@ -1225,6 +1281,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-collapsed-summary {
                     display: flex !important;
                     grid-row: 2 !important;
+                }
+                .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-audit-footer-cell.has-audit {
+                    display: block !important;
+                    grid-row: 3 !important;
                 }
             }
 
@@ -1247,19 +1307,24 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-table td.cmp-cell-juice-2 { grid-column: 5 / span 4 !important; grid-row: 3 !important; }
                 .cmp-table td.cmp-cell-juice-3 { grid-column: 9 / span 4 !important; grid-row: 3 !important; }
 
+                .cmp-table td.cmp-audit-footer-cell.has-audit {
+                    grid-row: 6 !important;
+                }
                 .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-collapsed-summary {
                     grid-row: 3 !important;
+                }
+                .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-audit-footer-cell.has-audit {
+                    grid-row: 4 !important;
                 }
             }
 
             /* =========================================================
                5. MOBILE SINGLE-VIEWPORT ACCORDION & FLUSH FULL-BLEED
-                  TWO-LINE MICRO-CARD (OPTIONS 1A & 2A — <= 768px)
+                  TWO-LINE MICRO-CARD (OPTIONS 1A, 2A, 2B & 3A — <= 768px)
                ========================================================= */
             @media (max-width: 768px) {
                 .cmp-dashboard-wrap { padding: 0 6px 104px 6px !important; }
 
-                /* Option 1A: Hide Collapse All, Expand All & Keyboard Guide on Mobile; Crisp Full-Width Pending Button */
                 .cmp-kbd-guide,
                 .cmp-collapse-all-btn,
                 .cmp-expand-all-btn {
@@ -1336,8 +1401,21 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     overflow: hidden !important;
                     border-width: 1.5px !important;
                 }
-                .cmp-table tr.cmp-day-row:not(.is-open) td:not(.cmp-cell-day) {
+                .cmp-table tr.cmp-day-row:not(.is-open) td:not(.cmp-cell-day):not(.cmp-audit-footer-cell):not(.cmp-cell-action-admin-void) {
                     display: none !important;
+                }
+                .cmp-table tr.cmp-day-row:not(.is-open) td.cmp-audit-footer-cell.has-audit {
+                    display: block !important;
+                    padding: 4px 12px 6px 12px !important;
+                    margin: 0 !important;
+                    background: #f8fafc !important;
+                    border-top: 1px dotted #cbd5e1 !important;
+                }
+                .cmp-table tr.cmp-day-row:not(.is-open) td.cmp-cell-action-admin-void {
+                    display: block !important;
+                    padding: 6px 12px 8px 12px !important;
+                    background: #fff1f2 !important;
+                    border-top: 1px dashed #fda4af !important;
                 }
                 .cmp-table tr.cmp-day-row:not(.is-open) td.cmp-cell-day {
                     display: flex !important;
@@ -1363,12 +1441,20 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     margin-bottom: 12px !important;
                     border-radius: 13px !important;
                 }
-                .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status) {
+                .cmp-table tr.cmp-day-row.is-open td:not(.cmp-collapsed-summary):not(.cmp-cell-status):not(.cmp-audit-footer-cell) {
                     display: block !important;
                     width: 100% !important;
                     border: none !important;
                     padding: 0 !important;
                     text-align: left !important;
+                }
+                .cmp-table tr.cmp-day-row.is-open td.cmp-audit-footer-cell.has-audit {
+                    display: block !important;
+                    grid-column: 1 / span 12 !important;
+                    padding-top: 5px !important;
+                    margin-top: 2px !important;
+                    border-top: 1px dotted #e2e8f0 !important;
+                    text-align: right !important;
                 }
                 .cmp-table tr.cmp-day-row.is-open td.cmp-cell-day {
                     grid-column: 1 / span 12 !important;
@@ -1624,6 +1710,12 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     height: 38px !important;
                     padding: 0 11px !important;
                     font-size: 12.5px !important;
+                    border-radius: 8px !important;
+                }
+                .cmp-admin-reset-cancel-btn {
+                    min-height: 36px !important;
+                    padding: 6px 10px !important;
+                    font-size: 12px !important;
                     border-radius: 8px !important;
                 }
 
@@ -1992,7 +2084,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 box-shadow: 0 8px 22px rgba(37, 211, 102, 0.5) !important;
                 color: #ffffff !important;
             }
-            /* Strict SVG Lock for WhatsApp Logo so Theme CSS Never Shrinks It to a Dot */
             .cmp-wa-float svg.cmp-wa-svg {
                 width: 24px !important;
                 height: 24px !important;
@@ -2054,7 +2145,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 }
             }
 
-            /* Mobile Floating Buttons (<= 600px) — Compact Circular FABs Docked Cleanly */
+            /* Mobile Floating Buttons (<= 600px) */
             @media (max-width: 600px) {
                 .cmp-wa-float {
                     bottom: 14px !important;
@@ -2707,7 +2798,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            // 1-Click Quick-Fill from Customer's Saved Logistics & Allergy Profile History
             $(document).on('change', '.cmp-saved-profile-select', function() {
                 var $sel  = $(this);
                 var subId = $sel.data('sub-id');
@@ -2851,7 +2941,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                             $('#custom-slot-input-' + subId).val('');
                         }
 
-                        // Refresh Saved Logistics Profile dropdowns across all plan tabs for this customer
                         if (res.data.saved_profiles && Array.isArray(res.data.saved_profiles)) {
                             $('.cmp-saved-profile-select[data-user-id="' + userId + '"]').each(function() {
                                 var $profSelect = $(this);
@@ -3662,6 +3751,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                             rowElement.find('.cmp-mobile-pos-holder').html(mobilePosHtml);
                         }
 
+                        // OPTION 2B: Live Update of Staff-Only Micro-Footer Audit Strip
+                        if (response.data && response.data.audit_stamp) {
+                            var $auditCell = rowElement.find('.cmp-audit-footer-cell');
+                            if ($auditCell.length) {
+                                $auditCell.find('.cmp-audit-micro-strip').text(response.data.audit_stamp);
+                                $auditCell.addClass('has-audit');
+                            }
+                        }
+
                         markRowSaved(rowElement);
                         rowElement.removeClass('status-pending').addClass('status-saved is-collapsed-desktop');
                         captureRowSnapshot(rowElement);
@@ -3701,19 +3799,24 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 });
             });
 
-            // CLEAR / RESET SELECTION LOGIC
-            $(document).on('click', '.cmp-clear-row', function(e) {
+            // CLEAR / RESET SELECTION LOGIC (INCLUDES OPTION 3A: ADMIN CANCELLATION RESET)
+            $(document).on('click', '.cmp-clear-row, .cmp-admin-reset-cancel-btn', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var rowElement = btn.closest('tr');
                 var dateVal = rowElement.find('.cmp-date-picker').val();
+                var isCancelledReset = (btn.attr('data-is-cancelled-reset') == '1' || btn.hasClass('cmp-admin-reset-cancel-btn'));
 
-                if (!canBypassDateLock && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
+                if (!isCancelledReset && !canBypassDateLock && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
                     cmpShowNotice('Past dates, today\'s date, and dates past the cut-off time cannot be reset.', 'error');
                     return;
                 }
 
-                cmpConfirmAction('Are you sure you want to clear this day? This will reset the selection and return the quota so a new date can be picked.', function() {
+                var confirmPrompt = isCancelledReset
+                    ? 'Reset this CANCELLED day?\n\n• This cancelled entry will be removed from the Kitchen Portal.\n• The extra compensation day added for this cancellation will be reversed.\n• This slot will return as an open Pending Selection.'
+                    : 'Are you sure you want to clear this day? This will reset the selection and return the quota so a new date can be picked.';
+
+                cmpConfirmAction(confirmPrompt, function() {
                     var origHTML = btn.html();
                     btn.html('...').prop('disabled', true);
 
