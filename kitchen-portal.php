@@ -1,7 +1,14 @@
 <?php
 /**
  * Kitchen Command Center & Daily Prep Reporting Portal
- * Synchronized with Per-Plan Logistics, Delivery Timing, Time Slots & Allergies (Stage 2)
+ *
+ * Phase 4 Upgrades:
+ *  - Removed "Completed Assignments" Tab
+ *  - Added "Pending Preparation" Tab with live dynamic counter badge
+ *  - Option 5A: Added "Full Customer Roster" Tab showing all active subscribers (including "No Food Selection Today")
+ *  - Displays Cancelled status with Who cancelled it (Name & Role) and When (Date & Time)
+ *  - Inline Recipient Pill Badge next to Customer Name (without "For:")
+ *  - Synchronized with Customer Activity Logs (Meal Portal > Customer Logs)
  */
 
 // Prevent direct file access
@@ -124,6 +131,46 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
     }
 }
 
+/**
+ * Formats the "Cancelled by [User] ([Role]) on [Date & Time]" string for a cancelled daily log row.
+ */
+if ( ! function_exists( 'cmp_get_kitchen_cancelled_stamp' ) ) {
+    function cmp_get_kitchen_cancelled_stamp( $log ) {
+        global $wpdb;
+
+        $by_name = ! empty( $log->updated_by_name ) ? $log->updated_by_name : '';
+        $by_role = ! empty( $log->updated_by_role ) ? $log->updated_by_role : '';
+        $at_time = ( ! empty( $log->updated_at ) && $log->updated_at !== '0000-00-00 00:00:00' ) ? $log->updated_at : '';
+
+        // Fallback lookup in wp_cmp_activity_logs if the row was cancelled before row-level columns existed
+        if ( empty( $by_name ) && ! empty( $log->subscription_id ) && ! empty( $log->target_date ) ) {
+            $table_activity = $wpdb->prefix . 'cmp_activity_logs';
+            $act_exists     = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_activity ) );
+            if ( $act_exists === $table_activity ) {
+                $act_row = $wpdb->get_row( $wpdb->prepare(
+                    "SELECT actor_name, actor_role, created_at FROM {$table_activity} WHERE subscription_id = %d AND target_date = %s AND action_type LIKE %s ORDER BY id DESC LIMIT 1",
+                    intval( $log->subscription_id ),
+                    $log->target_date,
+                    '%Cancel%'
+                ) );
+                if ( $act_row ) {
+                    $by_name = $act_row->actor_name;
+                    $by_role = $act_row->actor_role;
+                    $at_time = $act_row->created_at;
+                }
+            }
+        }
+
+        if ( ! empty( $by_name ) ) {
+            $role_str = ! empty( $by_role ) ? ' (' . $by_role . ')' : '';
+            $time_str = ! empty( $at_time ) ? ' on ' . date( 'd M Y, h:i A', strtotime( $at_time ) ) : '';
+            return 'Cancelled by ' . $by_name . $role_str . $time_str;
+        }
+
+        return 'Cancelled prior to cut-off';
+    }
+}
+
 // ==========================================
 // 1. AJAX HANDLERS: KITCHEN ACTIONS & EXPORT
 // ==========================================
@@ -133,6 +180,10 @@ function cmp_ajax_kitchen_action() {
     check_ajax_referer( 'cmp_kitchen_nonce', 'nonce' );
     global $wpdb;
 
+    if ( function_exists( 'cmp_auto_patch_database' ) ) {
+        cmp_auto_patch_database();
+    }
+
     $log_id = intval( $_POST['log_id'] );
     $field  = sanitize_text_field( $_POST['field'] );
     $value  = sanitize_text_field( $_POST['value'] );
@@ -141,7 +192,11 @@ function cmp_ajax_kitchen_action() {
     $is_chef  = current_user_can( 'kitchen_staff' );
     $is_foh   = current_user_can( 'foh_manager' );
 
-    $current_log = $wpdb->get_row( $wpdb->prepare( "SELECT pos_updated FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id ) );
+    $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
+    $current_log = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_logs} WHERE id = %d", $log_id ) );
+    if ( ! $current_log ) {
+        wp_send_json_error( 'Log entry not found.' );
+    }
 
     if ( $field === 'dispatch_status' || $field === 'delivery_result' ) {
         if ( ! $is_admin && ! $is_chef ) {
@@ -158,10 +213,65 @@ function cmp_ajax_kitchen_action() {
         if ( ! $is_admin && ! $is_chef ) {
             wp_send_json_error( 'Permission Denied' );
         }
+    } else {
+        wp_send_json_error( 'Invalid field.' );
     }
 
-    $wpdb->update( $wpdb->prefix . 'cmp_daily_logs', array( $field => $value ), array( 'id' => $log_id ) );
-    wp_send_json_success();
+    $update_data     = array( $field => $value );
+    $cancelled_stamp = '';
+
+    // Stamp Actor & Record Activity Log when delivery_result is updated (e.g. Cancelled, Returned, Successful)
+    if ( $field === 'delivery_result' ) {
+        $actor = function_exists( 'cmp_get_current_actor_info' )
+            ? cmp_get_current_actor_info( $current_log->user_id )
+            : array(
+                'id'   => get_current_user_id(),
+                'name' => wp_get_current_user()->display_name,
+                'role' => $is_admin ? 'Admin' : 'Kitchen',
+            );
+
+        $tz           = new DateTimeZone( 'Asia/Dubai' );
+        $now_datetime = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d H:i:s' );
+
+        $action_label = ( $value === 'Cancelled' ) ? 'Cancelled' : 'Delivery: ' . $value;
+
+        $update_data['updated_by_id']    = $actor['id'];
+        $update_data['updated_by_name']  = $actor['name'];
+        $update_data['updated_by_role']  = $actor['role'];
+        $update_data['last_action_type'] = $action_label;
+        $update_data['updated_at']       = $now_datetime;
+
+        if ( $value === 'Cancelled' ) {
+            $cancelled_stamp = sprintf(
+                'Cancelled by %s (%s) on %s',
+                $actor['name'],
+                $actor['role'],
+                date( 'd M Y, h:i A', strtotime( $now_datetime ) )
+            );
+        }
+
+        if ( function_exists( 'cmp_record_customer_activity_log' ) && $current_log->delivery_result !== $value ) {
+            $old_snap = function_exists( 'cmp_format_log_meal_snapshot' )
+                ? cmp_format_log_meal_snapshot( $current_log )
+                : 'Delivery: ' . ( $current_log->delivery_result ?: 'Pending' );
+
+            cmp_record_customer_activity_log( array(
+                'subscription_id' => intval( $current_log->subscription_id ),
+                'action_type'     => ( $value === 'Cancelled' ) ? 'Meal Cancelled' : 'Delivery Status Updated',
+                'target_date'     => $current_log->target_date,
+                'old_status'      => $old_snap,
+                'new_status'      => 'Delivery Status: ' . $value . ' (' . $current_log->target_date . ')',
+                'actor_id'        => $actor['id'],
+                'actor_name'      => $actor['name'],
+                'actor_role'      => $actor['role'],
+            ) );
+        }
+    }
+
+    $wpdb->update( $table_logs, $update_data, array( 'id' => $log_id ) );
+    wp_send_json_success( array(
+        'cancelled_stamp' => $cancelled_stamp,
+    ) );
 }
 
 add_action( 'wp_ajax_cmp_assign_chef_meals', 'cmp_ajax_assign_chef_meals' );
@@ -173,50 +283,71 @@ function cmp_ajax_assign_chef_meals() {
         wp_send_json_error( 'Permission Denied' );
     }
 
+    if ( function_exists( 'cmp_auto_patch_database' ) ) {
+        cmp_auto_patch_database();
+    }
+
     $log_id      = intval( $_POST['log_id'] );
     $table_foods = $wpdb->prefix . 'cmp_foods';
+    $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
 
-    $log_row  = $wpdb->get_row( $wpdb->prepare( "SELECT subscription_id, target_date, plan_mode FROM {$wpdb->prefix}cmp_daily_logs WHERE id = %d", $log_id ) );
+    $log_row  = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_logs} WHERE id = %d", $log_id ) );
     $log_mode = null;
 
-    if ( $log_row ) {
-        $sub = $wpdb->get_row( $wpdb->prepare( "SELECT plan_name, allowed_categories, is_flexible, allow_custom FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id ) );
+    if ( ! $log_row ) {
+        wp_send_json_error( 'Log entry not found.' );
+    }
 
-        // Phase 7: Evaluate mode
-        $log_mode = ! empty( $log_row->plan_mode ) ? $log_row->plan_mode : null;
-        if ( ! $log_mode && $sub ) {
-            if ( ! empty( $sub->allow_custom ) )    $log_mode = 'custom';
-            elseif ( ! empty( $sub->is_flexible ) ) $log_mode = 'flexible';
-            else                                    $log_mode = 'standard';
+    $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", $log_row->subscription_id ) );
+
+    $log_mode = ! empty( $log_row->plan_mode ) ? $log_row->plan_mode : null;
+    if ( ! $log_mode && $sub ) {
+        if ( ! empty( $sub->allow_custom ) )    $log_mode = 'custom';
+        elseif ( ! empty( $sub->is_flexible ) ) $log_mode = 'flexible';
+        else                                    $log_mode = 'standard';
+    }
+
+    $has_custom = ! empty( $_POST['custom_breakfast'] ) || ! empty( $_POST['custom_lunch'] ) || ! empty( $_POST['custom_dinner'] ) || ! empty( $_POST['custom_snack_1'] ) || ! empty( $_POST['custom_snack_2'] ) || ! empty( $_POST['custom_juice_1'] );
+    $has_meals  = ! empty( $_POST['breakfast'] ) || ! empty( $_POST['lunch'] ) || ! empty( $_POST['dinner'] ) || ! empty( $_POST['snack_1'] ) || ! empty( $_POST['snack_2'] ) || ! empty( $_POST['juice_1'] );
+
+    if ( $has_meals && ! $has_custom ) {
+        $food_exists = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_foods WHERE is_active = 1 AND valid_from <= %s AND valid_until >= %s", $log_row->target_date, $log_row->target_date ) );
+        if ( intval( $food_exists ) === 0 ) {
+            wp_send_json_error( 'The menu for this date is pending release. Meals cannot be assigned yet.' );
         }
+    }
 
-        $has_custom = ! empty( $_POST['custom_breakfast'] ) || ! empty( $_POST['custom_lunch'] ) || ! empty( $_POST['custom_dinner'] ) || ! empty( $_POST['custom_snack_1'] ) || ! empty( $_POST['custom_snack_2'] ) || ! empty( $_POST['custom_juice_1'] );
-        $has_meals  = ! empty( $_POST['breakfast'] ) || ! empty( $_POST['lunch'] ) || ! empty( $_POST['dinner'] ) || ! empty( $_POST['snack_1'] ) || ! empty( $_POST['snack_2'] ) || ! empty( $_POST['juice_1'] );
+    if ( $sub ) {
+        $is_juice = ( stripos( $sub->allowed_categories, 'Juices' ) !== false || stripos( $sub->plan_name, 'juice' ) !== false || stripos( $sub->plan_name, 'cleanse' ) !== false );
+        preg_match( '/(\d+)\s*Meal/i', $sub->plan_name, $m );
+        $allowed_quota = isset( $m[1] ) ? intval( $m[1] ) : 0;
 
-        if ( $has_meals && ! $has_custom ) {
-            $food_exists = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_foods WHERE is_active = 1 AND valid_from <= %s AND valid_until >= %s", $log_row->target_date, $log_row->target_date ) );
-            if ( intval( $food_exists ) === 0 ) {
-                wp_send_json_error( 'The menu for this date is pending release. Meals cannot be assigned yet.' );
-            }
-        }
+        if ( ! $is_juice && $allowed_quota > 0 ) {
+            $submitted_count = 0;
+            if ( ! empty( $_POST['breakfast'] ) || ! empty( $_POST['custom_breakfast'] ) ) $submitted_count++;
+            if ( ! empty( $_POST['lunch'] )     || ! empty( $_POST['custom_lunch'] ) )     $submitted_count++;
+            if ( ! empty( $_POST['dinner'] )    || ! empty( $_POST['custom_dinner'] ) )    $submitted_count++;
 
-        if ( $sub ) {
-            $is_juice = ( stripos( $sub->allowed_categories, 'Juices' ) !== false || stripos( $sub->plan_name, 'juice' ) !== false || stripos( $sub->plan_name, 'cleanse' ) !== false );
-            preg_match( '/(\d+)\s*Meal/i', $sub->plan_name, $m );
-            $allowed_quota = isset( $m[1] ) ? intval( $m[1] ) : 0;
-
-            if ( ! $is_juice && $allowed_quota > 0 ) {
-                $submitted_count = 0;
-                if ( ! empty( $_POST['breakfast'] ) || ! empty( $_POST['custom_breakfast'] ) ) $submitted_count++;
-                if ( ! empty( $_POST['lunch'] )     || ! empty( $_POST['custom_lunch'] ) )     $submitted_count++;
-                if ( ! empty( $_POST['dinner'] )    || ! empty( $_POST['custom_dinner'] ) )    $submitted_count++;
-
-                if ( $submitted_count > $allowed_quota ) {
-                    wp_send_json_error( "Quota Exceeded! This customer's plan only allows {$allowed_quota} main meal(s)." );
-                }
+            if ( $submitted_count > $allowed_quota ) {
+                wp_send_json_error( "Quota Exceeded! This customer's plan only allows {$allowed_quota} main meal(s)." );
             }
         }
     }
+
+    $old_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+        ? cmp_format_log_meal_snapshot( $log_row )
+        : "Chef's Choice (Pending Assignment)";
+
+    $actor = function_exists( 'cmp_get_current_actor_info' )
+        ? cmp_get_current_actor_info( $log_row->user_id )
+        : array(
+            'id'   => get_current_user_id(),
+            'name' => wp_get_current_user()->display_name,
+            'role' => 'Kitchen',
+        );
+
+    $tz           = new DateTimeZone( 'Asia/Dubai' );
+    $now_datetime = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d H:i:s' );
 
     $data = array(
         'plan_mode'        => $log_mode ?: 'standard',
@@ -237,9 +368,34 @@ function cmp_ajax_assign_chef_meals() {
         'custom_juice_1'   => ! empty( $_POST['custom_juice_1'] ) ? sanitize_text_field( $_POST['custom_juice_1'] ) : null,
         'custom_juice_2'   => ! empty( $_POST['custom_juice_2'] ) ? sanitize_text_field( $_POST['custom_juice_2'] ) : null,
         'custom_juice_3'   => ! empty( $_POST['custom_juice_3'] ) ? sanitize_text_field( $_POST['custom_juice_3'] ) : null,
+
+        'updated_by_id'    => $actor['id'],
+        'updated_by_name'  => $actor['name'],
+        'updated_by_role'  => $actor['role'],
+        'last_action_type' => 'Chef Assigned',
+        'updated_at'       => $now_datetime,
     );
 
-    $wpdb->update( $wpdb->prefix . 'cmp_daily_logs', $data, array( 'id' => $log_id ) );
+    $wpdb->update( $table_logs, $data, array( 'id' => $log_id ) );
+
+    $updated_log  = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_logs} WHERE id = %d", $log_id ) );
+    $new_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
+        ? cmp_format_log_meal_snapshot( $updated_log )
+        : 'Chef Assigned (' . $log_row->target_date . ')';
+
+    if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => intval( $log_row->subscription_id ),
+            'action_type'     => "Chef's Choice Assigned",
+            'target_date'     => $log_row->target_date,
+            'old_status'      => $old_snapshot,
+            'new_status'      => $new_snapshot,
+            'actor_id'        => $actor['id'],
+            'actor_name'      => $actor['name'],
+            'actor_role'      => $actor['role'],
+        ) );
+    }
+
     wp_send_json_success();
 }
 
@@ -254,12 +410,14 @@ function cmp_export_kitchen_csv() {
     }
 
     global $wpdb;
+    date_default_timezone_set( 'Asia/Dubai' );
 
     $prep_date   = isset( $_GET['prep_date'] ) ? sanitize_text_field( $_GET['prep_date'] ) : date( 'Y-m-d' );
     $export_type = isset( $_GET['type'] ) ? sanitize_text_field( $_GET['type'] ) : 'meals';
     $target_date = date( 'Y-m-d', strtotime( $prep_date . ' + 1 day' ) );
+    $today_dt    = date( 'Y-m-d H:i:s' );
 
-    // Exclude paused subscriptions and cancelled days from CSV export; select per-plan logistics columns from wp_cmp_subscriptions
+    // Include scheduled logs (including Cancelled so staff have full visibility in CSV)
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.expiry_date, s.foh_remarks, s.is_flexible, s.allow_custom,
                 s.delivery_method, s.pickup_location, s.delivery_timing, s.time_slot, s.allergies, s.delivery_address,
@@ -267,7 +425,7 @@ function cmp_export_kitchen_csv() {
          FROM {$wpdb->prefix}cmp_daily_logs l 
          JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused' AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')",
+         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused'",
         $target_date
     ) );
 
@@ -277,7 +435,12 @@ function cmp_export_kitchen_csv() {
         $food_map[ $f->id ] = $f->food_name;
     }
 
-    $filename_suffix = ( $export_type === 'juices' ) ? 'Juice_Plans' : 'Meal_Plans';
+    $filename_suffix = 'Meal_Plans';
+    if ( $export_type === 'juices' ) {
+        $filename_suffix = 'Juice_Plans';
+    } elseif ( $export_type === 'roster' ) {
+        $filename_suffix = 'Full_Customer_Roster';
+    }
 
     header( 'Content-Type: text/csv; charset=utf-8' );
     header( 'Content-Disposition: attachment; filename="Kitchen_Report_' . $filename_suffix . '_' . $prep_date . '.csv"' );
@@ -285,22 +448,22 @@ function cmp_export_kitchen_csv() {
     fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
 
     if ( $export_type === 'juices' ) {
-        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery', 'POS Check' ) );
+        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery / Cancellation Info', 'POS Check' ) );
     } else {
-        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Breakfast / Meal 1', 'Lunch / Meal 2', 'Dinner / Meal 3', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery', 'POS Check' ) );
+        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Breakfast / Meal 1', 'Lunch / Meal 2', 'Dinner / Meal 3', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery / Cancellation Info', 'POS Check' ) );
     }
 
-    $export_rows = array();
+    $export_rows       = array();
+    $scheduled_sub_ids = array();
 
     foreach ( $logs as $log ) {
+        $scheduled_sub_ids[ intval( $log->subscription_id ) ] = true;
         $is_juice_plan = ( stripos( $log->allowed_categories, 'Juices' ) !== false || stripos( $log->plan_name, 'juice' ) !== false || stripos( $log->plan_name, 'cleanse' ) !== false );
 
         if ( $export_type === 'juices' && ! $is_juice_plan ) continue;
         if ( $export_type === 'meals'  && $is_juice_plan )   continue;
 
-        // Resolve per-plan logistics (Subscription Row -> WC Order Meta -> User Meta)
-        $resolved = cmp_get_subscription_logistics( $log );
-
+        $resolved  = cmp_get_subscription_logistics( $log );
         $full_name = $resolved['full_name'];
         $email     = $resolved['email'];
         $phone     = $resolved['phone'];
@@ -318,20 +481,20 @@ function cmp_export_kitchen_csv() {
             $method .= ' (' . $pickup . ')';
         }
 
-        $allergies = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'No Allergies';
-
-        $is_assigned = ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 );
-        $chef_tag    = $log->is_chefs_choice ? ' (Chef)' : '';
-        $pending_tag = '[Pending Chef]';
+        $allergies    = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'No Allergies';
+        $is_assigned  = ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 );
+        $is_cancelled = ( $log->delivery_result === 'Cancelled' );
+        $chef_tag     = $log->is_chefs_choice ? ' (Chef)' : '';
+        $pending_tag  = '[Pending Chef]';
 
         $target_ymd = date( 'Y-m-d', strtotime( $log->target_date ) );
         $expiry_ymd = date( 'Y-m-d', strtotime( $log->expiry_date ) );
         $is_expired = ( $target_ymd > $expiry_ymd );
 
-        $prepared   = $log->is_prepared ? 'Yes' : 'No';
-        $dispatched = $log->dispatch_status ? 'Yes' : 'No';
-        $delivery   = $log->delivery_result ?: 'Pending';
-        $pos_check  = $log->pos_updated ? 'Yes' : 'No';
+        $prepared   = $is_cancelled ? 'N/A' : ( $log->is_prepared ? 'Yes' : 'No' );
+        $dispatched = $is_cancelled ? 'N/A' : ( $log->dispatch_status ? 'Yes' : 'No' );
+        $delivery   = $is_cancelled ? cmp_get_kitchen_cancelled_stamp( $log ) : ( $log->delivery_result ?: 'Pending' );
+        $pos_check  = $is_cancelled ? 'N/A' : ( $log->pos_updated ? 'Yes' : 'No' );
 
         $day_number = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
@@ -365,13 +528,15 @@ function cmp_export_kitchen_csv() {
 
         $foh_note = ! empty( $log->foh_remarks ) ? wp_strip_all_tags( $log->foh_remarks ) : 'None';
 
-        $row_data = array();
-
         if ( $export_type === 'juices' ) {
             $j1 = '-';
             $j2 = '-';
             $j3 = '-';
-            if ( $is_expired ) {
+            if ( $is_cancelled ) {
+                $j1 = 'CANCELLED';
+                $j2 = 'CANCELLED';
+                $j3 = 'CANCELLED';
+            } elseif ( $is_expired ) {
                 $j1 = 'PLAN EXPIRED';
                 $j2 = 'PLAN EXPIRED';
                 $j3 = 'PLAN EXPIRED';
@@ -390,14 +555,19 @@ function cmp_export_kitchen_csv() {
                 elseif ( $log->juice_3_id )      $j3 = ( $food_map[ $log->juice_3_id ] ?? 'Unknown' ) . $chef_tag;
             }
             $row_data = array( $order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $j1, $j2, $j3, $prepared, $dispatched, $delivery, $pos_check );
-
         } else {
             $b  = '-';
             $l  = '-';
             $d  = '-';
             $s1 = '-';
             $s2 = '-';
-            if ( $is_expired ) {
+            if ( $is_cancelled ) {
+                $b  = 'CANCELLED';
+                $l  = 'CANCELLED';
+                $d  = 'CANCELLED';
+                $s1 = 'CANCELLED';
+                $s2 = 'CANCELLED';
+            } elseif ( $is_expired ) {
                 $b  = 'PLAN EXPIRED';
                 $l  = 'PLAN EXPIRED';
                 $d  = 'PLAN EXPIRED';
@@ -422,12 +592,105 @@ function cmp_export_kitchen_csv() {
         $export_rows[] = array(
             'data'          => $row_data,
             'is_day_before' => $is_day_before ? 1 : 0,
+            'is_scheduled'  => 1,
         );
     }
 
+    // If exporting Full Customer Roster (Option 5A), append all unscheduled active customers with "No Food Selection Today"
+    if ( $export_type === 'roster' ) {
+        $active_subs = $wpdb->get_results(
+            "SELECT s.*, u.display_name, u.user_email
+             FROM {$wpdb->prefix}cmp_subscriptions s
+             JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+             WHERE s.status = 'active'
+             ORDER BY s.id DESC"
+        );
+
+        if ( $active_subs ) {
+            foreach ( $active_subs as $sub ) {
+                if ( isset( $scheduled_sub_ids[ intval( $sub->id ) ] ) ) {
+                    continue;
+                }
+                $usage_days = (int) $wpdb->get_var( $wpdb->prepare(
+                    "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'",
+                    $sub->id
+                ) );
+                if ( $usage_days >= intval( $sub->total_days ) || $sub->expiry_date < $today_dt ) {
+                    continue;
+                }
+
+                $resolved      = cmp_get_subscription_logistics( $sub );
+                $timing        = ! empty( $resolved['timing'] ) ? $resolved['timing'] : 'N/A';
+                $timing        = str_ireplace( array( 'Deliver Day Before', 'Deliver Same Day' ), array( 'Day Before', 'Same Day' ), $timing );
+                $is_day_before = ( stripos( $timing, 'Day Before' ) !== false );
+                $delivery_date = $is_day_before ? $prep_date : $target_date;
+                $time_slot     = ! empty( $resolved['time_slot'] ) ? $resolved['time_slot'] : 'N/A';
+                $method        = ! empty( $resolved['method'] ) ? $resolved['method'] : 'N/A';
+                if ( $method === 'Pickup' && ! empty( $resolved['pickup'] ) ) {
+                    $method .= ' (' . $resolved['pickup'] . ')';
+                }
+                $allergies = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'No Allergies';
+
+                $plan_parts          = explode( ' - ', $sub->plan_name );
+                $potential_recipient = end( $plan_parts );
+                $recipient_name      = '';
+                if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
+                    $recipient_name = $potential_recipient;
+                    array_pop( $plan_parts );
+                    $core_plan_name = implode( ' - ', $plan_parts );
+                } else {
+                    $core_plan_name = $sub->plan_name;
+                }
+                $plan_string = $core_plan_name . " ({$usage_days}/{$sub->total_days} Used)";
+
+                $order_id_display = ( $sub->wc_order_id < 0 )
+                    ? 'M-' . str_pad( abs( $sub->wc_order_id ), 4, '0', STR_PAD_LEFT )
+                    : ( $sub->wc_order_id > 0 ? '#' . $sub->wc_order_id : 'M-' . str_pad( $sub->id, 4, '0', STR_PAD_LEFT ) );
+
+                $foh_note = ! empty( $sub->foh_remarks ) ? wp_strip_all_tags( $sub->foh_remarks ) : 'None';
+
+                $row_data = array(
+                    $order_id_display,
+                    $resolved['full_name'],
+                    $recipient_name,
+                    $resolved['email'],
+                    $resolved['phone'],
+                    $target_date,
+                    $resolved['address'],
+                    $method,
+                    $timing,
+                    $delivery_date,
+                    $time_slot,
+                    $allergies,
+                    $foh_note,
+                    $plan_string,
+                    'No Food Selection Today',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    'N/A',
+                    'N/A',
+                    'No Food Selection Today',
+                    'N/A',
+                );
+
+                $export_rows[] = array(
+                    'data'          => $row_data,
+                    'is_day_before' => $is_day_before ? 1 : 0,
+                    'is_scheduled'  => 0,
+                );
+            }
+        }
+    }
+
     usort( $export_rows, function( $a, $b ) {
+        if ( $a['is_scheduled'] !== $b['is_scheduled'] ) {
+            return $b['is_scheduled'] - $a['is_scheduled'];
+        }
         return $b['is_day_before'] - $a['is_day_before'];
     } );
+
     foreach ( $export_rows as $er ) {
         fputcsv( $output, $er['data'] );
     }
@@ -459,28 +722,33 @@ function cmp_render_kitchen_portal() {
         }
     }
 
+    if ( function_exists( 'cmp_auto_patch_database' ) ) {
+        cmp_auto_patch_database();
+    }
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
         cmp_ensure_subscription_logistics_columns();
     }
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
     $today_ymd     = date( 'Y-m-d' );
+    $today_dt      = date( 'Y-m-d H:i:s' );
     $selected_date = isset( $_GET['prep_date'] ) ? sanitize_text_field( $_GET['prep_date'] ) : $today_ymd;
     $target_date   = date( 'Y-m-d', strtotime( $selected_date . ' + 1 day' ) );
     $prev_date     = date( 'Y-m-d', strtotime( $selected_date . ' - 1 day' ) );
     $next_date     = date( 'Y-m-d', strtotime( $selected_date . ' + 1 day' ) );
 
-    // Exclude paused subscriptions and cancelled days from the Kitchen View; include per-plan logistics columns from wp_cmp_subscriptions
+    // Fetch all locked daily logs for target_date (excluding paused subscriptions, but INCLUDING Cancelled rows so the Kitchen sees who & when cancelled)
     $logs = $wpdb->get_results( $wpdb->prepare(
         "SELECT l.*, s.wc_order_id, s.plan_name, s.allowed_categories, s.total_days, s.foh_remarks, s.expiry_date, s.is_flexible, s.allow_custom,
                 s.delivery_method, s.pickup_location, s.delivery_timing, s.time_slot, s.allergies, s.delivery_address,
                 u.display_name, u.user_email 
          FROM {$table_logs} l 
-         JOIN {$wpdb->prefix}cmp_subscriptions s ON l.subscription_id = s.id 
+         JOIN {$table_subs} s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON l.user_id = u.ID 
-         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused' AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled') 
+         WHERE l.target_date = %s AND l.is_locked = 1 AND s.status != 'paused'
          ORDER BY l.id ASC",
         $target_date
     ) );
@@ -491,12 +759,13 @@ function cmp_render_kitchen_portal() {
         $food_map[ $f->id ] = $f->food_name;
     }
 
-    $customers = array();
+    $customers         = array();
+    $scheduled_sub_ids = array();
 
     foreach ( $logs as $log ) {
-        // Resolve per-plan logistics (Subscription Row -> WC Order Meta -> User Meta)
-        $resolved = cmp_get_subscription_logistics( $log );
+        $scheduled_sub_ids[ intval( $log->subscription_id ) ] = true;
 
+        $resolved  = cmp_get_subscription_logistics( $log );
         $full_name = $resolved['full_name'];
         $email     = $resolved['email'];
         $phone     = $resolved['phone'];
@@ -516,7 +785,6 @@ function cmp_render_kitchen_portal() {
 
         $allergies = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'No Allergies';
 
-        // Phase 7: Evaluate Log-Level Snapshot
         $log_mode = ! empty( $log->plan_mode ) ? $log->plan_mode : null;
         if ( $log_mode ) {
             $is_flexible  = ( $log_mode === 'flexible' ) ? 1 : 0;
@@ -526,8 +794,9 @@ function cmp_render_kitchen_portal() {
             $allow_custom = isset( $log->allow_custom ) ? intval( $log->allow_custom ) : 0;
         }
 
-        $meals_list  = array();
-        $is_assigned = ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 );
+        $meals_list   = array();
+        $is_assigned  = ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 );
+        $is_cancelled = ( $log->delivery_result === 'Cancelled' );
 
         $l_bf = $is_flexible ? 'Meal 1' : 'Breakfast';
         $l_lu = $is_flexible ? 'Meal 2' : 'Lunch';
@@ -573,11 +842,14 @@ function cmp_render_kitchen_portal() {
         $expiry_ymd = date( 'Y-m-d', strtotime( $log->expiry_date ) );
         $is_expired = ( $target_ymd > $expiry_ymd );
 
+        // Inline Recipient Pill Badge without "For:"
         $plan_parts          = explode( ' - ', $log->plan_name );
         $potential_recipient = end( $plan_parts );
         $recipient_badge     = '';
+        $raw_recipient       = '';
         if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
-            $recipient_badge = '<div style="margin-top:4px;"><span style="background:#EEF7E3; color:#1B5E20; border:1px solid #DCECC9; padding:2px 8px; border-radius:12px; font-size:0.85em; font-weight:bold; display:inline-block;">For: ' . esc_html( $potential_recipient ) . '</span></div>';
+            $raw_recipient   = $potential_recipient;
+            $recipient_badge = '<span class="kp-recipient-pill">' . esc_html( $potential_recipient ) . '</span>';
             array_pop( $plan_parts );
             $core_plan_name = implode( ' - ', $plan_parts );
         } else {
@@ -593,10 +865,14 @@ function cmp_render_kitchen_portal() {
             $display_order_id = 'M-' . str_pad( $log->subscription_id, 4, '0', STR_PAD_LEFT );
         }
 
+        $cancelled_stamp = $is_cancelled ? cmp_get_kitchen_cancelled_stamp( $log ) : '';
+
         $customers[] = array(
             'log_id'             => $log->id,
+            'sub_id'             => intval( $log->subscription_id ),
             'order_id'           => $display_order_id,
             'name'               => $full_name,
+            'raw_recipient'      => $raw_recipient,
             'phone'              => $phone,
             'email'              => $email,
             'address'            => $address,
@@ -612,6 +888,9 @@ function cmp_render_kitchen_portal() {
             'allergies'          => $allergies,
             'foh_remarks'        => ! empty( $log->foh_remarks ) ? wp_strip_all_tags( $log->foh_remarks ) : '',
             'is_expired'         => $is_expired,
+            'is_cancelled'       => $is_cancelled,
+            'cancelled_stamp'    => $cancelled_stamp,
+            'is_unscheduled'     => false,
             'prepared'           => $log->is_prepared,
             'dispatch'           => $log->dispatch_status,
             'delivery'           => $log->delivery_result,
@@ -629,23 +908,148 @@ function cmp_render_kitchen_portal() {
         );
     }
 
+    // =========================================================================
+    // OPTION 5A: FETCH ALL ACTIVE SUBSCRIBERS WITHOUT A FOOD SELECTION FOR TODAY
+    // =========================================================================
+    $active_subs = $wpdb->get_results(
+        "SELECT s.*, u.display_name, u.user_email
+         FROM {$table_subs} s
+         JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
+         WHERE s.status = 'active'
+         ORDER BY s.id DESC"
+    );
+
+    if ( $active_subs ) {
+        foreach ( $active_subs as $sub ) {
+            if ( isset( $scheduled_sub_ids[ intval( $sub->id ) ] ) ) {
+                continue;
+            }
+
+            $usage_days = (int) $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$table_logs} WHERE subscription_id = %d AND delivery_result = 'Successful'",
+                $sub->id
+            ) );
+
+            // Only include active plans that still have remaining balance days and haven't expired
+            if ( $usage_days >= intval( $sub->total_days ) || $sub->expiry_date < $today_dt ) {
+                continue;
+            }
+
+            $resolved  = cmp_get_subscription_logistics( $sub );
+            $full_name = $resolved['full_name'];
+            $email     = $resolved['email'];
+            $phone     = $resolved['phone'];
+            $address   = $resolved['address'];
+
+            $timing        = ! empty( $resolved['timing'] ) ? $resolved['timing'] : 'N/A';
+            $timing        = str_ireplace( array( 'Deliver Day Before', 'Deliver Same Day' ), array( 'Day Before', 'Same Day' ), $timing );
+            $is_day_before = ( stripos( $timing, 'Day Before' ) !== false );
+            $delivery_date = $is_day_before ? $selected_date : $target_date;
+
+            $time_slot = ! empty( $resolved['time_slot'] ) ? $resolved['time_slot'] : 'N/A';
+            $method    = ! empty( $resolved['method'] ) ? $resolved['method'] : 'N/A';
+            $pickup    = $resolved['pickup'];
+            if ( $method === 'Pickup' && ! empty( $pickup ) ) {
+                $method .= ' (' . $pickup . ')';
+            }
+
+            $allergies = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'No Allergies';
+
+            $plan_parts          = explode( ' - ', $sub->plan_name );
+            $potential_recipient = end( $plan_parts );
+            $recipient_badge     = '';
+            $raw_recipient       = '';
+            if ( ! preg_match( '/(Meal|Day|Cleanse|Plans)/i', $potential_recipient ) && count( $plan_parts ) > 1 ) {
+                $raw_recipient   = $potential_recipient;
+                $recipient_badge = '<span class="kp-recipient-pill">' . esc_html( $potential_recipient ) . '</span>';
+                array_pop( $plan_parts );
+                $core_plan_name = implode( ' - ', $plan_parts );
+            } else {
+                $core_plan_name = $sub->plan_name;
+            }
+
+            $display_order_id = 'Manual';
+            if ( $sub->wc_order_id < 0 ) {
+                $display_order_id = 'M-' . str_pad( abs( $sub->wc_order_id ), 4, '0', STR_PAD_LEFT );
+            } elseif ( $sub->wc_order_id > 0 ) {
+                $display_order_id = '#' . $sub->wc_order_id;
+            } else {
+                $display_order_id = 'M-' . str_pad( $sub->id, 4, '0', STR_PAD_LEFT );
+            }
+
+            $customers[] = array(
+                'log_id'             => 0,
+                'sub_id'             => intval( $sub->id ),
+                'order_id'           => $display_order_id,
+                'name'               => $full_name,
+                'raw_recipient'      => $raw_recipient,
+                'phone'              => $phone,
+                'email'              => $email,
+                'address'            => $address,
+                'method'             => $method,
+                'timing'             => $timing,
+                'delivery_date'      => $delivery_date,
+                'time_slot'          => $time_slot,
+                'plan'               => $sub->plan_name,
+                'core_plan_name'     => $core_plan_name,
+                'recipient_badge'    => $recipient_badge,
+                'total_days'         => $sub->total_days,
+                'day_number'         => $usage_days,
+                'allergies'          => $allergies,
+                'foh_remarks'        => ! empty( $sub->foh_remarks ) ? wp_strip_all_tags( $sub->foh_remarks ) : '',
+                'is_expired'         => false,
+                'is_cancelled'       => false,
+                'cancelled_stamp'    => '',
+                'is_unscheduled'     => true,
+                'prepared'           => 0,
+                'dispatch'           => 0,
+                'delivery'           => 'Pending',
+                'pos'                => 0,
+                'meals'              => array(),
+                'is_chefs_choice'    => 0,
+                'is_assigned'        => false,
+                'is_flexible'        => isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0,
+                'allow_custom'       => isset( $sub->allow_custom ) ? intval( $sub->allow_custom ) : 0,
+                'allowed_categories' => $sub->allowed_categories,
+                'target_date'        => $target_date,
+                'expiry_date'        => $sub->expiry_date,
+                'is_day_before'      => $is_day_before ? 1 : 0,
+                'raw_log'            => null,
+            );
+        }
+    }
+
+    // Sort: Scheduled rows first, then Unscheduled rows; within each group, "Day Before" deliveries first
     usort( $customers, function( $a, $b ) {
+        $sched_a = $a['is_unscheduled'] ? 0 : 1;
+        $sched_b = $b['is_unscheduled'] ? 0 : 1;
+        if ( $sched_a !== $sched_b ) {
+            return $sched_b - $sched_a;
+        }
         return $b['is_day_before'] - $a['is_day_before'];
     } );
 
     $chef_disabled = ( $is_admin || $is_chef ) ? '' : 'disabled';
     $foh_disabled  = ( $is_admin || $is_foh ) ? '' : 'disabled';
 
-    $count_all      = count( $customers );
-    $count_pending  = 0;
-    $count_assigned = 0;
+    $count_all_orders   = 0;
+    $count_pending_prep = 0;
+    $count_pending_chef = 0;
+    $count_full_roster  = count( $customers );
+    $count_unscheduled  = 0;
+
     foreach ( $customers as $c ) {
-        if ( $c['is_chefs_choice'] && ! $c['is_expired'] ) {
-            if ( $c['is_assigned'] ) {
-                $count_assigned++;
-            } else {
-                $count_pending++;
-            }
+        if ( $c['is_unscheduled'] ) {
+            $count_unscheduled++;
+            continue;
+        }
+        $count_all_orders++;
+
+        if ( ! $c['is_cancelled'] && ! $c['is_expired'] && empty( $c['prepared'] ) ) {
+            $count_pending_prep++;
+        }
+        if ( $c['is_chefs_choice'] && ! $c['is_assigned'] && ! $c['is_cancelled'] && ! $c['is_expired'] ) {
+            $count_pending_chef++;
         }
     }
 
@@ -759,6 +1163,79 @@ function cmp_render_kitchen_portal() {
             opacity: 0.45;
         }
 
+        /* Inline Recipient Pill Badge next to Customer Name */
+        .kp-name-inline-wrap {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            line-height: 1.3;
+        }
+        .kp-recipient-pill {
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #DCECC9;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.8em;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+
+        /* Cancelled Meal Alert Banner inside Kitchen Portal */
+        .kp-cancelled-alert-box {
+            background: #fff1f2;
+            border: 1.5px solid #fda4af;
+            border-left: 5px solid #e11d48;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #9f1239;
+            margin-bottom: 8px;
+        }
+        .kp-cancelled-title {
+            font-size: 0.96em;
+            font-weight: 800;
+            color: #be123c;
+            letter-spacing: 0.02em;
+            margin-bottom: 4px;
+        }
+        .kp-cancelled-meta {
+            font-size: 0.84em;
+            font-weight: 700;
+            color: #881337;
+            line-height: 1.35;
+        }
+        .k-row.row-is-cancelled {
+            background: #fffafa;
+        }
+
+        /* Option 5A: "No Food Selection Today" Badge inside Full Customer Roster */
+        .kp-no-selection-box {
+            background: #f8fafc;
+            border: 1.5px dashed #cbd5e1;
+            border-left: 4px solid #64748b;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+            color: #334155;
+        }
+        .kp-no-selection-badge {
+            display: inline-block;
+            background: #e2e8f0;
+            color: #1e293b;
+            font-weight: 800;
+            font-size: 0.92em;
+            padding: 4px 12px;
+            border-radius: 999px;
+            margin-bottom: 5px;
+        }
+        .k-row.filter-unscheduled {
+            background: #fcfcfd;
+        }
+
         /* ==========================================
            OPTION 2C: SMART COLOR-CODED POS CUE
            ========================================== */
@@ -812,8 +1289,10 @@ function cmp_render_kitchen_portal() {
         
         .logistics-box { margin-top: 10px; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; line-height: 1.3; }
         
-        .k-tab-btn { background: #ffffff; border: 1px solid #cbd5e1; padding: 10px 20px; border-radius: 8px; font-weight: bold; color: #231F20; cursor: pointer; transition: 0.2s; }
+        .k-tab-btn { background: #ffffff; border: 1px solid #cbd5e1; padding: 10px 18px; border-radius: 8px; font-weight: bold; color: #231F20; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .k-tab-btn:hover { border-color: #379237; color: #1B5E20; }
         .k-tab-btn.active { background: linear-gradient(135deg, #379237 0%, #1B5E20 100%) !important; color: #fff !important; border-color: #1B5E20 !important; box-shadow: 0 4px 12px rgba(55, 146, 55, 0.25); }
+        .k-tab-pill-count { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.8em; font-weight: 800; line-height: 1.1; }
 
         .k-glass-toolbar { background: linear-gradient(135deg, rgba(220, 236, 201, 0.78) 0%, rgba(238, 247, 227, 0.72) 100%); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); padding: 20px 24px; border-radius: 16px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border: 1.5px solid #DCECC9; box-shadow: 0 10px 26px rgba(27, 94, 32, 0.08); flex-wrap: wrap; gap: 15px; }
 
@@ -1082,13 +1561,14 @@ function cmp_render_kitchen_portal() {
             </form>
 
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <a href="<?php echo esc_url( site_url( '/chef-dashboard/' ) ); ?>" target="_blank" style="background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
+                <a href="<?php echo esc_url( site_url( '/chef-dashboard/' ) ); ?>" target="_blank" style="background: linear-gradient(135deg, #379237 0%, #1B5E20 100%); color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Chef's Assignment ⇗</a>
                 
-                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date ) ); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
-                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date ) ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
+                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=meals&prep_date=' . $selected_date ) ); ?>" style="background: #1d6f42; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Meals CSV</a>
+                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=juices&prep_date=' . $selected_date ) ); ?>" style="background: #0ea5e9; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Export Juices CSV</a>
+                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_kitchen_csv&type=roster&prep_date=' . $selected_date ) ); ?>" style="background: #0f766e; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;" title="Export all active customers including No Food Selection Today">Export Full Roster CSV</a>
                 
-                <button onclick="window.print()" style="background: #475569; color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: bold;">Print PDF</button>
-                <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; text-decoration: none;">Log Out</a>
+                <button onclick="window.print()" style="background: #475569; color: white; border: none; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: bold;">Print PDF</button>
+                <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" style="background: #dc2626; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: bold; text-decoration: none;">Log Out</a>
             </div>
         </div>
 
@@ -1097,19 +1577,42 @@ function cmp_render_kitchen_portal() {
             <h3>Food Orders to Prep on: <?php echo date( 'l, d/m/Y', strtotime( $selected_date ) ); ?></h3>
         </div>
 
+        <!-- PHASE 4 FILTER TABS:
+             1. All Orders
+             2. Pending Preparation (New)
+             3. Pending Chef's Choice
+             4. Full Customer Roster (Option 5A - Includes "No Food Selection Today")
+             ("Completed Assignments" Tab Removed) -->
         <div class="cmp-no-print k-filter-bar">
             <div class="k-tabs-container" style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button class="k-tab-btn active" data-filter="all">All Orders (<?php echo intval( $count_all ); ?>)</button>
-                <button class="k-tab-btn" data-filter="pending">Pending Chef's Choice <?php if ( $count_pending > 0 ) echo '<span style="background:#dc3232; color:#fff; border-radius:10px; padding:2px 8px; font-size:0.8em; margin-left:5px;">' . intval( $count_pending ) . '</span>'; ?></button>
-                <button class="k-tab-btn" data-filter="assigned">Completed Assignments (<?php echo intval( $count_assigned ); ?>)</button>
+                <button type="button" class="k-tab-btn active" data-filter="all">
+                    <span>All Orders</span>
+                    <span class="k-tab-pill-count" style="background:#e2e8f0; color:#1e293b;"><?php echo intval( $count_all_orders ); ?></span>
+                </button>
+                <button type="button" class="k-tab-btn" data-filter="pending_prep">
+                    <span>Pending Preparation</span>
+                    <span id="k-pending-prep-count" class="k-tab-pill-count" style="background:<?php echo $count_pending_prep > 0 ? '#f59e0b' : '#16a34a'; ?>; color:#fff;"><?php echo intval( $count_pending_prep ); ?></span>
+                </button>
+                <button type="button" class="k-tab-btn" data-filter="pending">
+                    <span>Pending Chef's Choice</span>
+                    <?php if ( $count_pending_chef > 0 ) : ?>
+                        <span class="k-tab-pill-count" style="background:#dc2626; color:#fff;"><?php echo intval( $count_pending_chef ); ?></span>
+                    <?php else : ?>
+                        <span class="k-tab-pill-count" style="background:#e2e8f0; color:#475569;">0</span>
+                    <?php endif; ?>
+                </button>
+                <button type="button" class="k-tab-btn" data-filter="roster" title="View all active customers, including those with No Food Selection Today">
+                    <span>Full Customer Roster</span>
+                    <span class="k-tab-pill-count" style="background:#0f766e; color:#fff;"><?php echo intval( $count_full_roster ); ?></span>
+                </button>
             </div>
-            <div style="flex-grow:1; min-width:200px; max-width:350px;">
-                <input type="text" id="k-search" placeholder="🔍 Search customers by ID, name, email, phone, or allergy..." style="width:100%; padding:10px 12px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:1em;">
+            <div style="flex-grow:1; min-width:220px; max-width:360px;">
+                <input type="text" id="k-search" placeholder="🔍 Search by ID, name, recipient, email, phone, or allergy..." style="width:100%; padding:10px 12px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:1em;">
             </div>
         </div>
 
         <?php if ( empty( $customers ) ) : ?>
-            <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc; border-radius: 10px;">No orders found for this prep date.</p>
+            <p style="text-align: center; font-size: 1.2em; color: #666; padding: 40px; border: 1px dashed #ccc; border-radius: 10px;">No active customers or orders found for this prep date.</p>
         <?php else : ?>
             <div class="k-table-wrap">
                 <table class="k-table">
@@ -1126,18 +1629,45 @@ function cmp_render_kitchen_portal() {
                     </thead>
                     <tbody>
                         <?php foreach ( $customers as $c ) :
-                            $allergy_style = ( $c['allergies'] !== 'No Allergies' ) ? 'background:#fff3cd; color:#856404; font-weight:bold; padding:2px 6px; border-radius:3px; display:inline-block; margin-top:3px;' : 'color:#666; font-style:italic; display:inline-block; margin-top:3px;';
+                            $is_unscheduled = ! empty( $c['is_unscheduled'] );
+                            $is_cancelled   = ! empty( $c['is_cancelled'] );
+                            $is_expired     = ! empty( $c['is_expired'] );
 
-                            $prepared_disabled = ( ! empty( $chef_disabled ) || $c['dispatch'] || $c['is_expired'] ) ? 'disabled' : '';
-                            $dispatch_disabled = ( ! empty( $chef_disabled ) || $c['pos'] || $c['is_expired'] ) ? 'disabled' : '';
-                            $delivery_disabled = ( ! $c['dispatch'] || ! empty( $chef_disabled ) || $c['pos'] || $c['is_expired'] ) ? 'disabled' : '';
-                            $pos_disabled      = ( ! $c['dispatch'] || $c['delivery'] === 'Pending' || ! empty( $foh_disabled ) || $c['is_expired'] ) ? 'disabled' : '';
+                            $allergy_style = ( $c['allergies'] !== 'No Allergies' )
+                                ? 'background:#fff3cd; color:#856404; font-weight:bold; padding:2px 6px; border-radius:3px; display:inline-block; margin-top:3px;'
+                                : 'color:#666; font-style:italic; display:inline-block; margin-top:3px;';
 
-                            $row_filter_class = 'filter-standard';
-                            if ( $c['is_chefs_choice'] && ! $c['is_expired'] ) {
-                                $row_filter_class = $c['is_assigned'] ? 'filter-assigned' : 'filter-pending';
+                            $prepared_disabled = ( $is_unscheduled || $is_cancelled || ! empty( $chef_disabled ) || $c['dispatch'] || $is_expired ) ? 'disabled' : '';
+                            $dispatch_disabled = ( $is_unscheduled || $is_cancelled || ! empty( $chef_disabled ) || $c['pos'] || $is_expired || ! $c['prepared'] ) ? 'disabled' : '';
+                            $delivery_disabled = ( $is_unscheduled || ( ! $c['dispatch'] && ! $is_cancelled ) || ! empty( $chef_disabled ) || $c['pos'] || $is_expired ) ? 'disabled' : '';
+                            $pos_disabled      = ( $is_unscheduled || $is_cancelled || ! $c['dispatch'] || $c['delivery'] === 'Pending' || ! empty( $foh_disabled ) || $is_expired ) ? 'disabled' : '';
+
+                            $row_classes = array( 'k-row' );
+                            if ( $is_unscheduled ) {
+                                $row_classes[] = 'filter-unscheduled';
+                            } elseif ( $is_cancelled ) {
+                                $row_classes[] = 'row-is-cancelled';
+                            } elseif ( $c['is_chefs_choice'] && ! $is_expired ) {
+                                $row_classes[] = $c['is_assigned'] ? 'filter-assigned' : 'filter-pending';
+                            } else {
+                                $row_classes[] = 'filter-standard';
                             }
-                            $search_name = esc_attr( strtolower( $c['order_id'] . ' ' . $c['name'] . ' ' . $c['email'] . ' ' . $c['phone'] . ' ' . $c['allergies'] . ' ' . $c['timing'] ) );
+
+                            $needs_prep = ( ! $is_unscheduled && ! $is_cancelled && ! $is_expired && empty( $c['prepared'] ) ) ? '1' : '0';
+                            $in_orders  = $is_unscheduled ? '0' : '1';
+                            $in_roster  = '1';
+
+                            $search_name = esc_attr( strtolower(
+                                $c['order_id'] . ' ' .
+                                $c['name'] . ' ' .
+                                $c['raw_recipient'] . ' ' .
+                                $c['email'] . ' ' .
+                                $c['phone'] . ' ' .
+                                $c['allergies'] . ' ' .
+                                $c['timing'] . ' ' .
+                                ( $is_unscheduled ? 'no food selection today unscheduled' : '' ) . ' ' .
+                                ( $is_cancelled ? 'cancelled ' . $c['cancelled_stamp'] : '' )
+                            ) );
 
                             $plan_duration = $c['core_plan_name'];
                             $plan_parts    = explode( ' - ', $c['plan'] );
@@ -1161,10 +1691,19 @@ function cmp_render_kitchen_portal() {
                             $active_cue_class = $c['pos'] ? 'cue-done' : $base_cue_class;
                             $pos_cue_text     = 'Post on ' . $eat_short . ( $c['pos'] ? ' ✓' : '' );
                         ?>
-                        <tr class="k-row <?php echo esc_attr( $row_filter_class ); ?>" data-name="<?php echo $search_name; ?>">
+                        <tr class="<?php echo esc_attr( implode( ' ', $row_classes ) ); ?>"
+                            data-log-id="<?php echo esc_attr( $c['log_id'] ); ?>"
+                            data-name="<?php echo $search_name; ?>"
+                            data-in-orders="<?php echo esc_attr( $in_orders ); ?>"
+                            data-in-roster="<?php echo esc_attr( $in_roster ); ?>"
+                            data-pending-prep="<?php echo esc_attr( $needs_prep ); ?>"
+                            data-is-cancelled="<?php echo $is_cancelled ? '1' : '0'; ?>"
+                            data-is-expired="<?php echo $is_expired ? '1' : '0'; ?>">
                             <td>
-                                <div>
-                                    <strong style="color: #379237; font-size: 1.1em;"><?php echo esc_html( $c['name'] ); ?></strong>
+                                <div class="kp-name-inline-wrap">
+                                    <a href="<?php echo esc_url( site_url( '/my-meal-portal/?admin_edit_sub=' . $c['sub_id'] ) ); ?>" target="_blank" style="text-decoration:none;" title="Open Customer Portal">
+                                        <strong style="color: #379237; font-size: 1.08em; border-bottom: 1px dotted #379237;"><?php echo esc_html( $c['name'] ); ?></strong>
+                                    </a>
                                     <?php echo $c['recipient_badge']; ?>
                                 </div>
                                 
@@ -1195,7 +1734,7 @@ function cmp_render_kitchen_portal() {
                                     <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html( $c['time_slot'] ); ?></span>
                                 </div>
                                 <div style="text-align: left;">
-                                    <div style="background: #379237; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
+                                    <div style="background: <?php echo $is_unscheduled ? '#64748b' : ( $is_cancelled ? '#e11d48' : '#379237' ); ?>; color: white; font-size: 0.9em; font-weight:bold; padding: 4px 8px; border-radius: 4px; display:inline-block; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
                                         Delivery: <?php echo date( 'D, M j', strtotime( $c['delivery_date'] ) ); ?>
                                     </div>
                                     <br>
@@ -1206,11 +1745,38 @@ function cmp_render_kitchen_portal() {
                             </td>
 
                             <td>
-                                <?php if ( $c['is_expired'] ) : ?>
+                                <?php if ( $is_unscheduled ) : ?>
+                                    <!-- OPTION 5A: Active Customer with No Food Selection Today -->
+                                    <div class="kp-no-selection-box">
+                                        <span class="kp-no-selection-badge">No Food Selection Today</span>
+                                        <div style="font-size:0.84em; color:#64748b; margin-top:2px;">
+                                            No meal scheduled for Eating Date: <strong><?php echo esc_html( date( 'D, M j', strtotime( $c['target_date'] ) ) ); ?></strong>
+                                        </div>
+                                        <div class="cmp-no-print" style="margin-top:7px;">
+                                            <a href="<?php echo esc_url( site_url( '/my-meal-portal/?admin_edit_sub=' . $c['sub_id'] ) ); ?>" target="_blank" style="font-size:0.82em; color:#379237; font-weight:700; text-decoration:underline;">Open Customer Portal ⇗</a>
+                                        </div>
+                                    </div>
+
+                                <?php elseif ( $is_cancelled ) : ?>
+                                    <!-- PHASE 4: Cancelled Meal Banner showing Who & When Cancelled -->
+                                    <div class="kp-cancelled-alert-box" id="kp-cancel-banner-<?php echo esc_attr( $c['log_id'] ); ?>">
+                                        <div class="kp-cancelled-title">&#10005; MEAL CANCELLED &mdash; DO NOT PREP</div>
+                                        <div class="kp-cancelled-meta" id="kp-cancel-meta-<?php echo esc_attr( $c['log_id'] ); ?>">
+                                            <?php echo esc_html( $c['cancelled_stamp'] ); ?>
+                                        </div>
+                                        <?php if ( ! empty( $c['meals'] ) ) : ?>
+                                            <div style="margin-top:6px; padding-top:5px; border-top:1px dashed #fda4af; font-size:0.82em; color:#9f1239; opacity:0.8; text-decoration:line-through;">
+                                                <?php echo implode( ' &bull; ', $c['meals'] ); ?>
+                                            </div>
+                                        <?php endif; ?>
+                                    </div>
+
+                                <?php elseif ( $is_expired ) : ?>
                                     <div style="background:#fee2e2; color:#991b1b; padding:15px; border-radius:6px; text-align:center; border:1px solid #f87171;">
                                         <strong style="font-size:1.1em; display:block; margin-bottom:5px;">PLAN EXPIRED</strong>
                                         <span style="font-size:0.9em;">Do not prep meals. Plan ended on <?php echo date( 'M j, Y', strtotime( $c['expiry_date'] ) ); ?>.</span>
                                     </div>
+
                                 <?php elseif ( $c['is_chefs_choice'] ) : ?>
                                     
                                     <?php
@@ -1222,7 +1788,7 @@ function cmp_render_kitchen_portal() {
                                         <ul style="margin:0; padding-left:15px; line-height: 1.4;">
                                             <?php foreach ( $c['meals'] as $meal ) echo "<li>$meal <span style='color:#379237; font-weight:bold; font-size:0.85em;'>(Chef)</span></li>"; ?>
                                         </ul>
-                                        <button class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
+                                        <button type="button" class="edit-chef-assign cmp-no-print" style="margin-top:8px; font-size:0.85em; background:#e2e8f0; color:#334155; border:none; padding:4px 10px; border-radius:4px; font-weight:bold; cursor:pointer;">Edit Selection</button>
                                     </div>
                                     
                                     <?php
@@ -1291,7 +1857,7 @@ function cmp_render_kitchen_portal() {
                                             <?php endfor; ?>
                                         <?php endif; ?>
                                         
-                                        <button class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:6px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:4px; transition: 0.2s;">Save</button>
+                                        <button type="button" class="save-chef-assign" style="width:100%; background:#dba617; color:#fff; border:none; padding:6px; border-radius:4px; font-weight:bold; cursor:pointer; margin-top:4px; transition: 0.2s;">Save</button>
                                     </div>
                                     
                                 <?php else : ?>
@@ -1300,9 +1866,20 @@ function cmp_render_kitchen_portal() {
                                     </ul>
                                 <?php endif; ?>
 
+                                <!-- Placeholder for dynamically cancelled banner if changed live via dropdown -->
+                                <?php if ( ! $is_cancelled && ! $is_unscheduled ) : ?>
+                                    <div class="kp-cancelled-alert-box" id="kp-cancel-banner-<?php echo esc_attr( $c['log_id'] ); ?>" style="display:none; margin-top:8px;">
+                                        <div class="kp-cancelled-title">&#10005; MEAL CANCELLED &mdash; DO NOT PREP</div>
+                                        <div class="kp-cancelled-meta" id="kp-cancel-meta-<?php echo esc_attr( $c['log_id'] ); ?>"></div>
+                                    </div>
+                                <?php endif; ?>
+
                                 <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #ccc;">
                                     <div style="margin-bottom: 5px;">
-                                        <strong><?php echo esc_html( $plan_duration ); ?> (<?php echo esc_html( $c['day_number'] ); ?>/<?php echo esc_html( $c['total_days'] ); ?>)</strong><br>
+                                        <strong>
+                                            <?php echo esc_html( $plan_duration ); ?>
+                                            (<?php echo esc_html( $c['day_number'] ); ?>/<?php echo esc_html( $c['total_days'] ); ?><?php echo $is_unscheduled ? ' Used' : ''; ?>)
+                                        </strong><br>
                                         <span style="color:#64748b; font-size:0.9em;"><?php echo esc_html( $plan_meals ); ?></span>
                                     </div>
                                     <?php if ( ! empty( $c['foh_remarks'] ) ) : ?>
@@ -1315,39 +1892,55 @@ function cmp_render_kitchen_portal() {
                             
                             <td style="text-align:center; background:#f0fdf4; border-left:1px solid #ddd;">
                                 <span class="kp-mob-cell-label">Prepared</span>
-                                <input type="checkbox" class="chk-large cmp-prepared-box cmp-no-print" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" <?php echo $c['prepared'] ? 'checked' : ''; ?> <?php echo $prepared_disabled; ?>>
-                                <?php if ( $c['prepared'] ) echo '<span style="display:none; color:#166534; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                                <?php if ( $is_unscheduled ) : ?>
+                                    <span style="color:#94a3b8; font-weight:700;">&mdash;</span>
+                                <?php else : ?>
+                                    <input type="checkbox" class="chk-large cmp-prepared-box cmp-no-print" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" <?php echo $c['prepared'] ? 'checked' : ''; ?> <?php echo $prepared_disabled; ?>>
+                                    <?php if ( $c['prepared'] ) echo '<span style="display:none; color:#166534; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                                <?php endif; ?>
                             </td>
 
                             <td style="text-align:center; background:#fcfcfc;">
                                 <span class="kp-mob-cell-label">Dispatch</span>
-                                <input type="checkbox" class="chk-large cmp-dispatch-box cmp-no-print" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" <?php echo $c['dispatch'] ? 'checked' : ''; ?> <?php echo $dispatch_disabled; ?>>
-                                <?php if ( $c['dispatch'] ) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                                <?php if ( $is_unscheduled ) : ?>
+                                    <span style="color:#94a3b8; font-weight:700;">&mdash;</span>
+                                <?php else : ?>
+                                    <input type="checkbox" class="chk-large cmp-dispatch-box cmp-no-print" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" <?php echo $c['dispatch'] ? 'checked' : ''; ?> <?php echo $dispatch_disabled; ?>>
+                                    <?php if ( $c['dispatch'] ) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                                <?php endif; ?>
                             </td>
 
                             <td style="background:#fcfcfc;">
                                 <span class="kp-mob-cell-label">Delivery</span>
-                                <select class="cmp-delivery-box" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;" <?php echo $delivery_disabled; ?>>
-                                    <option value="Pending" <?php selected( $c['delivery'], 'Pending' ); ?>>Pending</option>
-                                    <option value="Successful" <?php selected( $c['delivery'], 'Successful' ); ?>>Successful</option>
-                                    <option value="Cancelled" <?php selected( $c['delivery'], 'Cancelled' ); ?>>Cancelled</option>
-                                    <option value="Returned" <?php selected( $c['delivery'], 'Returned' ); ?>>Returned</option>
-                                </select>
+                                <?php if ( $is_unscheduled ) : ?>
+                                    <span style="color:#94a3b8; font-size:0.85em; font-weight:700; display:block; text-align:center;">No Selection</span>
+                                <?php else : ?>
+                                    <select class="cmp-delivery-box" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" style="width:100%; padding:6px; font-size:0.9em; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;" <?php echo $delivery_disabled; ?>>
+                                        <option value="Pending" <?php selected( $c['delivery'], 'Pending' ); ?>>Pending</option>
+                                        <option value="Successful" <?php selected( $c['delivery'], 'Successful' ); ?>>Successful</option>
+                                        <option value="Cancelled" <?php selected( $c['delivery'], 'Cancelled' ); ?>>Cancelled</option>
+                                        <option value="Returned" <?php selected( $c['delivery'], 'Returned' ); ?>>Returned</option>
+                                    </select>
+                                <?php endif; ?>
                             </td>
 
                             <td style="text-align:center; background:#f4f8fa;">
                                 <span class="kp-mob-cell-label">POS Check</span>
-                                <div class="kp-pos-cell-inner">
-                                    <span class="kp-pos-cue <?php echo esc_attr( $active_cue_class ); ?> cmp-no-print"
-                                          data-id="<?php echo esc_attr( $c['log_id'] ); ?>"
-                                          data-base-class="<?php echo esc_attr( $base_cue_class ); ?>"
-                                          data-eat-short="<?php echo esc_attr( $eat_short ); ?>"
-                                          title="Post in POS on Customer Eating Date: <?php echo esc_attr( $eat_full ); ?>">
-                                        <?php echo esc_html( $pos_cue_text ); ?>
-                                    </span>
-                                    <input type="checkbox" class="chk-large cmp-pos-box cmp-no-print" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" <?php echo $c['pos'] ? 'checked' : ''; ?> <?php echo $pos_disabled; ?>>
-                                </div>
-                                <?php if ( $c['pos'] ) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                                <?php if ( $is_unscheduled ) : ?>
+                                    <span style="color:#94a3b8; font-weight:700;">&mdash;</span>
+                                <?php else : ?>
+                                    <div class="kp-pos-cell-inner">
+                                        <span class="kp-pos-cue <?php echo esc_attr( $active_cue_class ); ?> cmp-no-print"
+                                              data-id="<?php echo esc_attr( $c['log_id'] ); ?>"
+                                              data-base-class="<?php echo esc_attr( $base_cue_class ); ?>"
+                                              data-eat-short="<?php echo esc_attr( $eat_short ); ?>"
+                                              title="Post in POS on Customer Eating Date: <?php echo esc_attr( $eat_full ); ?>">
+                                            <?php echo esc_html( $pos_cue_text ); ?>
+                                        </span>
+                                        <input type="checkbox" class="chk-large cmp-pos-box cmp-no-print" data-id="<?php echo esc_attr( $c['log_id'] ); ?>" <?php echo $c['pos'] ? 'checked' : ''; ?> <?php echo $pos_disabled; ?>>
+                                    </div>
+                                    <?php if ( $c['pos'] ) echo '<span style="display:none; color:green; font-weight:bold;" class="print-only">Yes</span>'; ?>
+                                <?php endif; ?>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -1497,26 +2090,53 @@ function cmp_render_kitchen_portal() {
             populateDynamicDropdowns($(this));
         });
 
-        // --- Tab Memory & Search Logic ---
+        // Recalculates the live Pending Preparation counter badge
+        function updatePendingPrepBadgeCount() {
+            var count = 0;
+            $('.k-table tbody tr.k-row').each(function() {
+                if ($(this).attr('data-pending-prep') === '1') {
+                    count++;
+                }
+            });
+            var $badge = $('#k-pending-prep-count');
+            if ($badge.length) {
+                $badge.text(count);
+                $badge.css('background', count > 0 ? '#f59e0b' : '#16a34a');
+            }
+        }
+
+        // --- Tab Memory & Search Logic (All Orders, Pending Preparation, Pending Chef's Choice, Full Customer Roster) ---
         var urlParams  = new URLSearchParams(window.location.search);
         var initialTab = urlParams.get('k_tab') || 'all';
+        if ($('.k-tab-btn[data-filter="' + initialTab + '"]').length === 0) {
+            initialTab = 'all';
+        }
         
         $('.k-tab-btn').removeClass('active');
-        $('.k-tab-btn[data-filter="'+initialTab+'"]').addClass('active');
+        $('.k-tab-btn[data-filter="' + initialTab + '"]').addClass('active');
 
         function applyKitchenFilters() {
-            var activeFilter = $('.k-tab-btn.active').data('filter');
-            var searchQuery  = $('#k-search').val().toLowerCase();
+            var activeFilter = $('.k-tab-btn.active').data('filter') || 'all';
+            var searchQuery  = ($('#k-search').val() || '').toLowerCase();
             var visibleCount = 0;
 
             $('.k-table tbody tr.k-row').each(function() {
                 var row          = $(this);
-                var customerName = row.data('name') || '';
+                var customerName = (row.data('name') || '').toString();
+                var inOrders     = row.attr('data-in-orders') === '1';
+                var inRoster     = row.attr('data-in-roster') === '1';
+                var pendingPrep  = row.attr('data-pending-prep') === '1';
                 
                 var matchTab = false;
-                if (activeFilter === 'all') matchTab = true;
-                else if (activeFilter === 'pending' && row.hasClass('filter-pending')) matchTab = true;
-                else if (activeFilter === 'assigned' && row.hasClass('filter-assigned')) matchTab = true;
+                if (activeFilter === 'all' && inOrders) {
+                    matchTab = true;
+                } else if (activeFilter === 'pending_prep' && pendingPrep) {
+                    matchTab = true;
+                } else if (activeFilter === 'pending' && row.hasClass('filter-pending')) {
+                    matchTab = true;
+                } else if (activeFilter === 'roster' && inRoster) {
+                    matchTab = true;
+                }
 
                 var matchSearch = customerName.indexOf(searchQuery) > -1;
 
@@ -1530,7 +2150,7 @@ function cmp_render_kitchen_portal() {
 
             if (visibleCount === 0) {
                 if ($('#k-empty-msg').length === 0) {
-                    $('.k-table tbody').append('<tr id="k-empty-msg"><td colspan="7" style="text-align:center; padding:30px; color:#666; font-size:1.1em;">No customers match your criteria.</td></tr>');
+                    $('.k-table tbody').append('<tr id="k-empty-msg"><td colspan="7" style="text-align:center; padding:30px; color:#666; font-size:1.1em;">No customers match your criteria in this view.</td></tr>');
                 } else {
                     $('#k-empty-msg').show();
                 }
@@ -1721,6 +2341,22 @@ function cmp_render_kitchen_portal() {
                 if (!res.success) { 
                     kpShowNotice(res.data || 'Permission Denied.', 'error'); 
                     setTimeout(function() { location.reload(); }, 900);
+                } else if (field === 'delivery_result') {
+                    var $banner = $('#kp-cancel-banner-' + logId);
+                    var $meta   = $('#kp-cancel-meta-' + logId);
+                    var $row    = $('tr.k-row[data-log-id="' + logId + '"]');
+                    if (val === 'Cancelled') {
+                        if (res.data && res.data.cancelled_stamp && $meta.length) {
+                            $meta.text(res.data.cancelled_stamp);
+                        }
+                        $banner.slideDown(150);
+                        $row.addClass('row-is-cancelled').attr('data-is-cancelled', '1').attr('data-pending-prep', '0');
+                    } else {
+                        $banner.slideUp(150);
+                        $row.removeClass('row-is-cancelled').attr('data-is-cancelled', '0');
+                    }
+                    updatePendingPrepBadgeCount();
+                    applyKitchenFilters();
                 }
             });
         }
@@ -1739,6 +2375,7 @@ function cmp_render_kitchen_portal() {
         }
 
         function updateRowLogic(logId) {
+            var $row        = $('tr.k-row[data-log-id="' + logId + '"]');
             var preparedBox = $('.cmp-prepared-box[data-id="' + logId + '"]');
             var dispatchBox = $('.cmp-dispatch-box[data-id="' + logId + '"]');
             var deliveryBox = $('.cmp-delivery-box[data-id="' + logId + '"]');
@@ -1748,6 +2385,16 @@ function cmp_render_kitchen_portal() {
             var isDispatched   = dispatchBox.is(':checked');
             var deliveryResult = deliveryBox.val();
             var isPosChecked   = posBox.is(':checked');
+            var isExpired      = $row.attr('data-is-expired') === '1';
+            var isCancelled    = (deliveryResult === 'Cancelled');
+
+            // Update Pending Preparation state on the row & badge counter
+            if (!isCancelled && !isExpired && !isPrepared) {
+                $row.attr('data-pending-prep', '1');
+            } else {
+                $row.attr('data-pending-prep', '0');
+            }
+            updatePendingPrepBadgeCount();
             
             if (isPosChecked) {
                 preparedBox.prop('disabled', true);
@@ -1759,20 +2406,22 @@ function cmp_render_kitchen_portal() {
                         preparedBox.prop('disabled', true);
                         deliveryBox.prop('disabled', false);
                     } else {
-                        preparedBox.prop('disabled', false);
-                        deliveryBox.prop('disabled', true);
-                        if (deliveryResult !== 'Pending') {
-                            deliveryBox.val('Pending');
-                            saveAction(logId, 'delivery_result', 'Pending');
-                            deliveryResult = 'Pending';
+                        preparedBox.prop('disabled', isCancelled);
+                        if (!isCancelled) {
+                            deliveryBox.prop('disabled', true);
+                            if (deliveryResult !== 'Pending') {
+                                deliveryBox.val('Pending');
+                                saveAction(logId, 'delivery_result', 'Pending');
+                                deliveryResult = 'Pending';
+                            }
                         }
                     }
                     
-                    if (isPrepared) {
+                    if (isPrepared && !isCancelled) {
                         dispatchBox.prop('disabled', false);
                     } else {
                         dispatchBox.prop('disabled', true);
-                        if (isDispatched) {
+                        if (isDispatched && !isCancelled) {
                             dispatchBox.prop('checked', false);
                             saveAction(logId, 'dispatch_status', 0);
                             isDispatched = false;
@@ -1783,7 +2432,7 @@ function cmp_render_kitchen_portal() {
             }
             
             if (canEditPos) {
-                if (isDispatched && deliveryResult !== 'Pending') {
+                if (isDispatched && deliveryResult !== 'Pending' && !isCancelled) {
                     posBox.prop('disabled', false);
                 } else {
                     posBox.prop('disabled', true);
@@ -1796,6 +2445,7 @@ function cmp_render_kitchen_portal() {
             }
 
             updatePosCueBadge(logId, isPosChecked);
+            applyKitchenFilters();
         }
 
         $('.cmp-prepared-box').on('change', function() {
