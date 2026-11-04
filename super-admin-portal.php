@@ -91,6 +91,8 @@ function cmp_sa_ensure_schema_and_sync( $force = false ) {
 add_action( 'wp_ajax_cmp_kitchen_action', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_ajax_cmp_cancel_daily_log', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
+add_action( 'wp_ajax_cmp_clear_daily_log', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
+add_action( 'wp_ajax_cmp_foh_toggle_status', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_ajax_cmp_foh_delete_subscription', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'before_delete_post', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_trash_post', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
@@ -261,7 +263,9 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
         $fin_delta_pct = 0.0;
     }
 
-    // 2. Unrenewed Expired Customers & Cost of Churn SQL Aggregation (Step 2.2)
+    // 2. Unrenewed Expired / Completed Customers & Cost of Churn SQL Aggregation:
+    //    Strictly selects customers who have a Completed or Expired plan AND do NOT have any currently Active or Paused plan
+    //    (checked across both user_id and user_email so renewed customers never appear here).
     $churn_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT 
             COUNT(s.id) AS churned_count,
@@ -270,15 +274,23 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
          INNER JOIN {$table_users} u ON s.user_id = u.ID
          INNER JOIN (
              SELECT s2.user_id,
-                    MAX(CASE WHEN s2.status IN ('active', 'completed') AND s2.used_days > 0 AND (s2.used_days >= s2.total_days OR s2.expiry_date < %s) THEN s2.id ELSE 0 END) AS latest_expired_id
+                    MAX(s2.id) AS latest_expired_id
              FROM {$table_subs} s2
              INNER JOIN {$table_users} u2 ON s2.user_id = u2.ID
-             WHERE s2.status IN ('active', 'paused', 'completed')
+             WHERE s2.status IN ('active', 'completed')
+               AND (s2.status = 'completed' OR s2.used_days >= s2.total_days OR s2.expiry_date < %s)
+               AND NOT EXISTS (
+                   SELECT 1 FROM {$table_subs} s_act
+                   LEFT JOIN {$table_users} u_act ON s_act.user_id = u_act.ID
+                   WHERE (s_act.user_id = s2.user_id OR (u_act.user_email != '' AND u_act.user_email = u2.user_email))
+                     AND (
+                         s_act.status = 'paused'
+                         OR (s_act.status = 'active' AND s_act.used_days < s_act.total_days AND s_act.expiry_date >= %s)
+                     )
+               )
              GROUP BY s2.user_id
-             HAVING SUM(CASE WHEN s2.status = 'paused' OR (s2.status = 'active' AND s2.used_days < s2.total_days AND s2.expiry_date >= %s) THEN 1 ELSE 0 END) = 0
-                AND MAX(CASE WHEN s2.status IN ('active', 'completed') AND s2.used_days > 0 AND (s2.used_days >= s2.total_days OR s2.expiry_date < %s) THEN s2.id ELSE 0 END) > 0
          ) u_churn ON s.id = u_churn.latest_expired_id",
-        $today_time, $today_time, $today_time
+        $today_time, $today_time
     ) );
 
     // 3. Daily Sparkline Series for Finance Period (Step 3.1)
@@ -300,6 +312,8 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
     }
 
     // 4. Single SQL Aggregation for Operational Pulse, POS Reconciliation & Aging Bottlenecks
+    //    OPTION A1: Excludes Paused Plans (`s.status = 'paused'`) and Cancelled Meal Days (`l.delivery_result = 'Cancelled'`)
+    //    from Pending Preparation, Dispatch, Delivery Status, and POS Checks.
     $prep_target_start = date( 'Y-m-d', strtotime( $op_start . ' +1 day' ) );
     $prep_target_end   = date( 'Y-m-d', strtotime( $op_end . ' +1 day' ) );
     $min_log_date      = min( $op_start, $today_date );
@@ -307,13 +321,13 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
 
     $log_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result != 'Pending' THEN 1 END) AS pending_pos_count,
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result != 'Pending' AND DATEDIFF(%s, l.target_date) > 2 THEN 1 END) AS overdue_pos_count,
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 THEN 1 END) AS completed_pos_count,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND s.status IN ('active', 'completed') AND l.delivery_result IN ('Successful', 'Returned') THEN 1 END) AS pending_pos_count,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND s.status IN ('active', 'completed') AND l.delivery_result IN ('Successful', 'Returned') AND DATEDIFF(%s, l.target_date) > 2 THEN 1 END) AS overdue_pos_count,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 AND s.status IN ('active', 'completed') AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled') THEN 1 END) AS completed_pos_count,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result = 'Pending') THEN 1 END) AS pending_delivery_count,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result = 'Pending') AND DATEDIFF(%s, l.target_date) > 2 THEN 1 END) AS overdue_delivery_count,
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.delivery_result = 'Successful' AND l.pos_updated = 1 THEN 1 END) AS successful_deliveries,
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.delivery_result IN ('Cancelled', 'Returned') THEN 1 END) AS failed_deliveries,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status IN ('active', 'completed') AND l.delivery_result = 'Successful' AND l.pos_updated = 1 THEN 1 END) AS successful_deliveries,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status IN ('active', 'completed') AND l.delivery_result IN ('Cancelled', 'Returned') THEN 1 END) AS failed_deliveries,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned')) THEN 1 END) AS dispatch_load,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned')) THEN 1 END) AS total_preps,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.is_prepared = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned')) THEN 1 END) AS done_preps,
@@ -322,7 +336,7 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
             COUNT(CASE WHEN l.target_date = %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned')) THEN 1 END) AS today_dispatch
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
-         INNER JOIN {$table_users} u ON s.user_id = u.ID
+         INNER JOIN {$table_users} u ON l.user_id = u.ID
          WHERE s.status IN ('active', 'paused', 'completed')
          AND l.target_date >= %s AND l.target_date <= %s",
         $op_start, $op_end,
@@ -557,17 +571,26 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     // GROUP A: SUBSCRIPTION-BASED VIEWS
     if ( in_array( $sa_view, array( 'unrenewed_expired', 'active_plans', 'paused_plans', 'expiring_soon', 'period_sales' ), true ) ) {
         if ( $sa_view === 'unrenewed_expired' ) {
+            // Strictly Completed or Expired customers who do NOT have any currently Active or Paused plan
             $where_sql = $wpdb->prepare(
                 "s.id IN (
-                    SELECT MAX(CASE WHEN s2.status IN ('active', 'completed') AND s2.used_days > 0 AND (s2.used_days >= s2.total_days OR s2.expiry_date < %s) THEN s2.id ELSE 0 END)
+                    SELECT MAX(s2.id)
                     FROM {$table_subs} s2
                     INNER JOIN {$table_users} u2 ON s2.user_id = u2.ID
-                    WHERE s2.status IN ('active', 'paused', 'completed')
+                    WHERE s2.status IN ('active', 'completed')
+                      AND (s2.status = 'completed' OR s2.used_days >= s2.total_days OR s2.expiry_date < %s)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {$table_subs} s_act
+                          LEFT JOIN {$table_users} u_act ON s_act.user_id = u_act.ID
+                          WHERE (s_act.user_id = s2.user_id OR (u_act.user_email != '' AND u_act.user_email = u2.user_email))
+                            AND (
+                                s_act.status = 'paused'
+                                OR (s_act.status = 'active' AND s_act.used_days < s_act.total_days AND s_act.expiry_date >= %s)
+                            )
+                      )
                     GROUP BY s2.user_id
-                    HAVING SUM(CASE WHEN s2.status = 'paused' OR (s2.status = 'active' AND s2.used_days < s2.total_days AND s2.expiry_date >= %s) THEN 1 ELSE 0 END) = 0
-                       AND MAX(CASE WHEN s2.status IN ('active', 'completed') AND s2.used_days > 0 AND (s2.used_days >= s2.total_days OR s2.expiry_date < %s) THEN s2.id ELSE 0 END) > 0
                 )",
-                $today_time, $today_time, $today_time
+                $today_time, $today_time
             );
             $order_by = "s.expiry_date DESC, s.id DESC";
         } elseif ( $sa_view === 'active_plans' ) {
@@ -613,10 +636,10 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
                 $discount   = floatval( $sub->discount_amount );
                 $final_paid = max( 0.0, $price - $discount );
 
-                $is_completed = ( $used_days >= $total_days || $sub->expiry_date < $today_time );
+                $is_completed = ( $sub->status === 'completed' || $used_days >= $total_days || $sub->expiry_date < $today_time );
                 if ( $is_completed ) {
                     $status_key   = 'expired';
-                    $status_label = 'Completed / Expired';
+                    $status_label = ( $used_days >= $total_days || $sub->status === 'completed' ) ? 'Completed' : 'Expired';
                 } elseif ( $sub->status === 'paused' ) {
                     $status_key   = 'paused';
                     $status_label = 'Paused';
@@ -656,15 +679,16 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     }
 
     // GROUP B: DAILY LOGS-BASED VIEWS
+    // Option A1: Exclude Paused Plans (`s.status = 'paused'`) & Cancelled Meal Days (`l.delivery_result = 'Cancelled'`) from Pending views
     if ( $sa_view === 'pending_pos' ) {
         $where_sql = $wpdb->prepare(
-            "s.status IN ('active', 'paused', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result != 'Pending'",
+            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result IN ('Successful', 'Returned')",
             $op_start, $op_end
         );
         $order_by = "(DATEDIFF('{$today_date}', l.target_date) > 2) DESC, l.target_date ASC, l.id DESC";
     } elseif ( $sa_view === 'completed_pos' ) {
         $where_sql = $wpdb->prepare(
-            "s.status IN ('active', 'paused', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1",
+            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')",
             $op_start, $op_end
         );
         $order_by = "l.target_date DESC, l.id DESC";
@@ -691,7 +715,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
         $order_by = "l.target_date ASC, l.id ASC";
     } else {
         $where_sql = $wpdb->prepare(
-            "s.status IN ('active', 'paused', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1",
+            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1",
             $op_start, $op_end
         );
         if ( $del_filter === 'Successful' ) {
@@ -699,7 +723,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
         } elseif ( $del_filter === 'Failed' ) {
             $where_sql .= " AND l.delivery_result IN ('Cancelled', 'Returned')";
         } elseif ( $del_filter === 'Pending' ) {
-            $where_sql .= " AND (l.delivery_result IS NULL OR l.delivery_result = 'Pending')";
+            $where_sql .= " AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result = 'Pending')";
         }
         $order_by = "l.target_date DESC, l.id DESC";
     }
@@ -708,7 +732,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
         "SELECT COUNT(l.id)
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
-         INNER JOIN {$table_users} u ON s.user_id = u.ID
+         INNER JOIN {$table_users} u ON l.user_id = u.ID
          WHERE {$where_sql} {$search_sql}"
     ) );
 
@@ -717,7 +741,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
                 DATEDIFF(%s, l.target_date) AS age_days
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
-         INNER JOIN {$table_users} u ON s.user_id = u.ID
+         INNER JOIN {$table_users} u ON l.user_id = u.ID
          WHERE {$where_sql} {$search_sql}
          ORDER BY {$order_by} {$limit_sql}",
         $today_date
@@ -788,10 +812,10 @@ function cmp_sa_export_drilldown_csv() {
     fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
 
     if ( $view === 'unrenewed_expired' ) {
-        fputcsv( $output, array( 'Last Order ID', 'Customer Name', 'Email', 'Phone', 'Last Plan Name', 'Days Used', 'Total Days', 'Last Plan Paid (AED)', 'Start Date', 'Expired / Completed Date' ) );
+        fputcsv( $output, array( 'Last Order ID', 'Customer Name', 'Email', 'Phone', 'Last Plan Name', 'Outcome', 'Days Used', 'Total Days', 'Last Plan Paid (AED)', 'Start Date', 'Expired / Completed Date' ) );
         foreach ( $rows as $c ) {
             fputcsv( $output, array(
-                $c['order_id'], $c['name'], $c['email'], $c['phone'], $c['plan_name'],
+                $c['order_id'], $c['name'], $c['email'], $c['phone'], $c['plan_name'], $c['status_label'],
                 $c['used_days'], $c['total_days'], number_format( $c['paid'], 2, '.', '' ),
                 $c['start_date'], $c['expiry_date']
             ) );
@@ -809,13 +833,14 @@ function cmp_sa_export_drilldown_csv() {
     } else {
         fputcsv( $output, array( 'Eating Date', 'Delivery Date', 'Timing', 'Age (Days)', 'Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Name', 'Prepared', 'Dispatched', 'Delivery Result', 'POS Reconciled' ) );
         foreach ( $rows as $l ) {
+            $is_canc = ( $l['delivery_result'] === 'Cancelled' );
             fputcsv( $output, array(
                 $l['target_date'], $l['delivery_date'], $l['timing_label'], $l['age_days'], $l['order_id'],
                 $l['name'], $l['email'], $l['phone'], $l['plan_name'],
-                $l['is_prepared'] ? 'Yes' : 'No',
-                $l['dispatch_status'] ? 'Yes' : 'No',
+                $is_canc ? 'N/A (Cancelled)' : ( $l['is_prepared'] ? 'Yes' : 'No' ),
+                $is_canc ? 'N/A (Cancelled)' : ( $l['dispatch_status'] ? 'Yes' : 'No' ),
                 $l['delivery_result'],
-                $l['pos_updated'] ? 'Yes' : 'No'
+                $is_canc ? 'N/A (Cancelled)' : ( $l['pos_updated'] ? 'Yes' : 'No' )
             ) );
         }
     }
@@ -1380,7 +1405,7 @@ function cmp_render_super_admin_portal() {
                     </div>
                 </div>
                 <div class="priority-foot">
-                    <span class="priority-foot-meta">Completed plans &amp; 0 active</span>
+                    <span class="priority-foot-meta">Completed/Expired &amp; 0 active plans</span>
                     <span class="priority-foot-cta" style="color:#6d28d9;">Open Retargeting List &rarr;</span>
                 </div>
             </a>
@@ -1647,11 +1672,11 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
     $total_pages = $result['total_pages'];
 
     $titles = array(
-        'pending_pos'       => array( 'Pending POS Reconciliations', 'Delivered or voided meals waiting for FOH POS verification (Overdue >48h elevated to top)', '#d97706' ),
+        'pending_pos'       => array( 'Pending POS Reconciliations', 'Delivered or returned meals on active/completed plans waiting for FOH POS verification (Excludes Cancelled & Paused)', '#d97706' ),
         'completed_pos'     => array( 'Completed POS Reconciliations', 'Orders verified and reconciled in POS for the selected period', '#379237' ),
-        'pending_delivery'  => array( 'Pending Delivery Status Logs', 'Locked meals (up to today) where delivery status is still Pending (Overdue >48h elevated to top)', '#dc2626' ),
+        'pending_delivery'  => array( 'Pending Delivery Status Logs', 'Locked meals (up to today) on active plans where delivery status is still Pending (Excludes Cancelled & Paused)', '#dc2626' ),
         'delivery_logs'     => array( 'Delivery Status Breakdown', 'Complete log of Successful, Cancelled, Returned, and Pending deliveries', '#1B5E20' ),
-        'unrenewed_expired' => array( 'Unrenewed Expired Customers — AED ' . number_format( $summary['revenue_at_risk'], 2 ) . ' Revenue at Risk', 'Real customers who consumed meals on a past plan, finished/expired, and have NOT subscribed to a new active plan', '#6d28d9' ),
+        'unrenewed_expired' => array( 'Unrenewed Completed & Expired Customers — AED ' . number_format( $summary['revenue_at_risk'], 2 ) . ' Revenue at Risk', 'Customers whose previous plan was completed or expired and who have NOT subscribed to any currently active or paused meal plan', '#6d28d9' ),
         'expiring_soon'     => array( 'Renewal Radar: Plans Expiring Soon (<= 3 Balance Days)', 'Active customers with 1 to 3 days remaining — prime candidates for renewal outreach', '#c2410c' ),
         'active_plans'      => array( 'Live Active Subscriptions', 'All currently active customer meal plans across the system', '#379237' ),
         'paused_plans'      => array( 'Live Paused Subscriptions', 'All currently paused customer meal plans', '#f59e0b' ),
@@ -1662,9 +1687,9 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
     $meta = isset( $titles[ $sa_view ] ) ? $titles[ $sa_view ] : $titles['unrenewed_expired'];
 
     $empty_states = array(
-        'pending_pos'       => array( 'title' => 'All caught up! 100% of POS checks are reconciled.', 'sub' => 'Every delivered and voided meal in this period has been verified by FOH.', 'tone' => 'success' ),
+        'pending_pos'       => array( 'title' => 'All caught up! 100% of POS checks are reconciled.', 'sub' => 'Every delivered meal in this period has been verified by FOH.', 'tone' => 'success' ),
         'pending_delivery'  => array( 'title' => 'Zero unlogged deliveries! Kitchen logs are 100% up to date.', 'sub' => 'All locked meals up to today have a confirmed delivery outcome.', 'tone' => 'success' ),
-        'unrenewed_expired' => array( 'title' => 'Excellent retention! All recent expirations have renewed.', 'sub' => 'There are currently zero unrenewed expired customers in the database.', 'tone' => 'success' ),
+        'unrenewed_expired' => array( 'title' => 'Excellent retention! All recent expirations have renewed.', 'sub' => 'There are currently zero unrenewed completed or expired customers in the database.', 'tone' => 'success' ),
         'pending_chef'      => array( 'title' => "Chef's Desk is 100% prepped!", 'sub' => 'All active Chef Choice days with released menus have been assigned.', 'tone' => 'success' ),
         'expiring_soon'     => array( 'title' => 'No active plans are within 3 days of expiring.', 'sub' => 'All active subscribers currently have 4 or more balance days remaining.', 'tone' => 'neutral' ),
     );
@@ -1796,9 +1821,9 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                 <th>Last Order</th>
                                 <th>Customer Details</th>
                                 <th>Last Plan Subscribed</th>
-                                <th>Consumption</th>
+                                <th>Consumption &amp; Status</th>
                                 <th>Last Plan Paid</th>
-                                <th>Completed / Expired</th>
+                                <th>Completed / Expired Date</th>
                                 <th style="text-align:center;">Retarget &amp; Manage</th>
                             </tr>
                         </thead>
@@ -1809,6 +1834,7 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                     $clean_phone = '971' . substr( $clean_phone, 1 );
                                 }
                                 $wa_msg = urlencode( "Hi " . $c['name'] . ", we noticed your meal plan (" . $c['plan_name'] . ") with The Cycle Bistro has finished. Would you like to renew your plan for the upcoming week?" );
+                                $outcome_tone = ( $c['status_label'] === 'Completed' ) ? 'success' : 'warning';
                             ?>
                                 <tr id="sa-sub-row-<?php echo intval( $c['sub_id'] ); ?>">
                                     <td><strong style="color:#231F20;"><?php echo esc_html( $c['order_id'] ); ?></strong></td>
@@ -1818,7 +1844,9 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                         <span style="color:#334155; font-size:0.88em; font-weight:600;"><?php echo esc_html( $c['phone'] ); ?></span>
                                     </td>
                                     <td><strong><?php echo esc_html( $c['plan_name'] ); ?></strong></td>
-                                    <td><?php echo cmp_sa_semantic_pill( 'neutral', intval( $c['used_days'] ) . ' / ' . intval( $c['total_days'] ) . ' Days' ); ?></td>
+                                    <td>
+                                        <?php echo cmp_sa_semantic_pill( $outcome_tone, $c['status_label'] . ' (' . intval( $c['used_days'] ) . '/' . intval( $c['total_days'] ) . ' Days)' ); ?>
+                                    </td>
                                     <td><strong style="white-space:nowrap;">AED <?php echo number_format( $c['paid'], 2 ); ?></strong></td>
                                     <td><?php echo cmp_sa_semantic_pill( 'purple', date( 'd M Y', strtotime( $c['expiry_date'] ) ) ); ?></td>
                                     <td style="text-align:center;">
@@ -1909,6 +1937,7 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                         <tbody>
                             <?php foreach ( $rows as $l ) : 
                                 $prep_date_param = date( 'Y-m-d', strtotime( $l['target_date'] . ' -1 day' ) );
+                                $is_cancelled_row = ( $l['delivery_result'] === 'Cancelled' );
                                 $del_type = 'warning';
                                 if ( $l['delivery_result'] === 'Successful' ) {
                                     $del_type = 'success';
@@ -1934,14 +1963,22 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                     </td>
                                     <td><?php echo esc_html( $l['plan_name'] ); ?></td>
                                     <td style="text-align:center; white-space:nowrap;">
-                                        <?php echo cmp_sa_semantic_pill( $l['is_prepared'] ? 'success' : 'danger', 'Prep: ' . ( $l['is_prepared'] ? 'Yes' : 'No' ) ); ?>
-                                        <?php echo cmp_sa_semantic_pill( $l['dispatch_status'] ? 'success' : 'danger', 'Disp: ' . ( $l['dispatch_status'] ? 'Yes' : 'No' ) ); ?>
+                                        <?php if ( $is_cancelled_row ) : ?>
+                                            <?php echo cmp_sa_semantic_pill( 'neutral', 'N/A (Cancelled)' ); ?>
+                                        <?php else : ?>
+                                            <?php echo cmp_sa_semantic_pill( $l['is_prepared'] ? 'success' : 'danger', 'Prep: ' . ( $l['is_prepared'] ? 'Yes' : 'No' ) ); ?>
+                                            <?php echo cmp_sa_semantic_pill( $l['dispatch_status'] ? 'success' : 'danger', 'Disp: ' . ( $l['dispatch_status'] ? 'Yes' : 'No' ) ); ?>
+                                        <?php endif; ?>
                                     </td>
                                     <td style="text-align:center;">
                                         <?php echo cmp_sa_semantic_pill( $del_type, $l['delivery_result'] ); ?>
                                     </td>
                                     <td style="text-align:center;">
-                                        <?php echo cmp_sa_semantic_pill( $l['pos_updated'] ? 'success' : 'warning', $l['pos_updated'] ? 'Verified' : 'Pending' ); ?>
+                                        <?php if ( $is_cancelled_row ) : ?>
+                                            <?php echo cmp_sa_semantic_pill( 'neutral', 'N/A (Cancelled)' ); ?>
+                                        <?php else : ?>
+                                            <?php echo cmp_sa_semantic_pill( $l['pos_updated'] ? 'success' : 'warning', $l['pos_updated'] ? 'Verified' : 'Pending' ); ?>
+                                        <?php endif; ?>
                                     </td>
                                     <td style="text-align:center;">
                                         <?php if ( $sa_view === 'pending_chef' ) : ?>
@@ -1988,44 +2025,167 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
         const saAjaxUrl = '<?php echo esc_js( $ajax_url ); ?>';
         const saNonce   = '<?php echo esc_js( $sa_nonce ); ?>';
 
+        function saShowNotice(message, type) {
+            document.querySelectorAll('.sa-toast-notice').forEach(el => el.remove());
+            const toast = document.createElement('div');
+            toast.className = 'sa-toast-notice';
+            const isSuccess = (type === 'success');
+            Object.assign(toast.style, {
+                position: 'fixed',
+                top: '22px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: isSuccess ? '#1B5E20' : '#dc2626',
+                color: '#ffffff',
+                border: '1.5px solid ' + (isSuccess ? '#68B946' : '#fca5a5'),
+                borderRadius: '10px',
+                padding: '11px 20px',
+                fontSize: '0.88rem',
+                fontWeight: '800',
+                boxShadow: '0 10px 25px rgba(15, 23, 42, 0.25)',
+                zIndex: '100099',
+                maxWidth: '92vw',
+                textAlign: 'center'
+            });
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.transition = 'opacity 0.25s ease';
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 260);
+            }, 3500);
+        }
+
+        function saConfirmDelete(message, onConfirmCallback) {
+            document.querySelectorAll('.sa-confirm-backdrop').forEach(el => el.remove());
+            const backdrop = document.createElement('div');
+            backdrop.className = 'sa-confirm-backdrop';
+            Object.assign(backdrop.style, {
+                position: 'fixed',
+                inset: '0',
+                background: 'rgba(15, 23, 42, 0.55)',
+                backdropFilter: 'blur(4px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: '100100',
+                padding: '16px'
+            });
+
+            const box = document.createElement('div');
+            Object.assign(box.style, {
+                background: '#ffffff',
+                border: '2px solid #DCECC9',
+                borderTop: '5px solid #dc2626',
+                borderRadius: '14px',
+                maxWidth: '430px',
+                width: '100%',
+                padding: '22px 20px',
+                boxShadow: '0 20px 40px rgba(15, 23, 42, 0.25)',
+                textAlign: 'center'
+            });
+
+            const msgEl = document.createElement('p');
+            Object.assign(msgEl.style, {
+                margin: '0 0 18px 0',
+                color: '#1e293b',
+                fontSize: '0.95rem',
+                fontWeight: '700',
+                lineHeight: '1.45',
+                whiteSpace: 'pre-line'
+            });
+            msgEl.textContent = message;
+
+            const btnRow = document.createElement('div');
+            Object.assign(btnRow.style, {
+                display: 'flex',
+                gap: '10px',
+                justifyContent: 'center'
+            });
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.textContent = 'Cancel';
+            Object.assign(cancelBtn.style, {
+                flex: '1',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                border: '1.5px solid #cbd5e1',
+                background: '#f8fafc',
+                color: '#334155',
+                fontWeight: '800',
+                cursor: 'pointer'
+            });
+            cancelBtn.addEventListener('click', () => backdrop.remove());
+
+            const okBtn = document.createElement('button');
+            okBtn.type = 'button';
+            okBtn.textContent = 'Delete Plan';
+            Object.assign(okBtn.style, {
+                flex: '1',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                border: 'none',
+                background: '#dc2626',
+                color: '#ffffff',
+                fontWeight: '800',
+                cursor: 'pointer'
+            });
+            okBtn.addEventListener('click', () => {
+                backdrop.remove();
+                if (typeof onConfirmCallback === 'function') {
+                    onConfirmCallback();
+                }
+            });
+
+            btnRow.appendChild(cancelBtn);
+            btnRow.appendChild(okBtn);
+            box.appendChild(msgEl);
+            box.appendChild(btnRow);
+            backdrop.appendChild(box);
+            document.body.appendChild(backdrop);
+        }
+
         document.querySelectorAll('.sa-delete-sub-btn').forEach(function(btn) {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
                 const subId   = this.getAttribute('data-sub-id');
                 const orderId = this.getAttribute('data-order-id');
-                if (!confirm('Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will remove the subscription and its meal logs from the database.')) {
-                    return;
-                }
-                const origText = this.textContent;
-                this.textContent = '...';
-                this.disabled = true;
+                const selfBtn = this;
 
-                const formData = new URLSearchParams();
-                formData.append('action', 'cmp_sa_delete_subscription');
-                formData.append('nonce', saNonce);
-                formData.append('sub_id', subId);
+                saConfirmDelete('Are you sure you want to permanently delete Plan (' + orderId + ')?\n\nThis will remove the subscription and its meal logs from the database.', function() {
+                    const origText = selfBtn.textContent;
+                    selfBtn.textContent = '...';
+                    selfBtn.disabled = true;
 
-                fetch(saAjaxUrl, { method: 'POST', body: formData })
-                .then(res => res.json())
-                .then(response => {
-                    if (response && response.success) {
-                        const row = document.getElementById('sa-sub-row-' + subId);
-                        if (row) {
-                            row.style.opacity = '0.3';
-                            setTimeout(() => row.remove(), 250);
+                    const formData = new URLSearchParams();
+                    formData.append('action', 'cmp_sa_delete_subscription');
+                    formData.append('nonce', saNonce);
+                    formData.append('sub_id', subId);
+
+                    fetch(saAjaxUrl, { method: 'POST', body: formData })
+                    .then(res => res.json())
+                    .then(response => {
+                        if (response && response.success) {
+                            saShowNotice('Plan ' + orderId + ' deleted.', 'success');
+                            const row = document.getElementById('sa-sub-row-' + subId);
+                            if (row) {
+                                row.style.opacity = '0.3';
+                                setTimeout(() => row.remove(), 250);
+                            } else {
+                                window.location.reload();
+                            }
                         } else {
-                            window.location.reload();
+                            saShowNotice('Error: ' + ((response && response.data) ? response.data : 'Could not delete plan.'), 'error');
+                            selfBtn.textContent = origText;
+                            selfBtn.disabled = false;
                         }
-                    } else {
-                        alert('Error: ' + ((response && response.data) ? response.data : 'Could not delete plan.'));
-                        this.textContent = origText;
-                        this.disabled = false;
-                    }
-                })
-                .catch(() => {
-                    alert('Network error occurred.');
-                    this.textContent = origText;
-                    this.disabled = false;
+                    })
+                    .catch(() => {
+                        saShowNotice('Network error occurred.', 'error');
+                        selfBtn.textContent = origText;
+                        selfBtn.disabled = false;
+                    });
                 });
             });
         });
