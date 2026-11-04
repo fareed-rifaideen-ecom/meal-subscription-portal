@@ -584,9 +584,18 @@ function cmp_run_foh_alert_1() {
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
+    // Option C1: Exclude Paused plans and Cancelled meal days from FOH POS Watchdog
     $foh_missed = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
+        "SELECT COUNT(l.id)
+         FROM {$table_logs} l
+         INNER JOIN {$table_subs} s ON l.subscription_id = s.id
+         WHERE l.target_date >= %s AND l.target_date <= %s
+           AND l.is_locked = 1
+           AND l.pos_updated = 0
+           AND s.status IN ('active', 'completed')
+           AND l.delivery_result IN ('Successful', 'Returned')",
         $foh_start_date, $tomorrow
     ));
 
@@ -611,9 +620,18 @@ function cmp_run_foh_alert_2() {
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
+    // Option C1: Exclude Paused plans and Cancelled meal days from FOH POS Watchdog
     $foh_missed = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(id) FROM $table_logs WHERE target_date >= %s AND target_date <= %s AND is_locked = 1 AND pos_updated = 0 AND delivery_result != 'Pending'",
+        "SELECT COUNT(l.id)
+         FROM {$table_logs} l
+         INNER JOIN {$table_subs} s ON l.subscription_id = s.id
+         WHERE l.target_date >= %s AND l.target_date <= %s
+           AND l.is_locked = 1
+           AND l.pos_updated = 0
+           AND s.status IN ('active', 'completed')
+           AND l.delivery_result IN ('Successful', 'Returned')",
         $foh_start_date, $tomorrow
     ));
 
@@ -639,15 +657,21 @@ function cmp_run_kit_alert_1() {
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
+    // Option C1: Exclude Paused plans and Cancelled meal days from Kitchen Watchdog
     $kitchen_missed = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(id) FROM $table_logs 
-         WHERE is_locked = 1 
-         AND (
-            (target_date >= %s AND target_date <= %s AND (is_prepared = 0 OR dispatch_status = 0 OR delivery_result = 'Pending'))
-            OR 
-            (target_date = %s AND is_prepared = 0)
-         )",
+        "SELECT COUNT(l.id)
+         FROM {$table_logs} l
+         INNER JOIN {$table_subs} s ON l.subscription_id = s.id
+         WHERE l.is_locked = 1
+           AND s.status = 'active'
+           AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')
+           AND (
+              (l.target_date >= %s AND l.target_date <= %s AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending'))
+              OR 
+              (l.target_date = %s AND l.is_prepared = 0)
+           )",
         $kit_start_date, $current_date, $tomorrow
     ));
 
@@ -673,15 +697,21 @@ function cmp_run_kit_alert_2() {
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
+    // Option C1: Exclude Paused plans and Cancelled meal days from Kitchen Watchdog
     $kitchen_missed = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(id) FROM $table_logs 
-         WHERE is_locked = 1 
-         AND (
-            (target_date >= %s AND target_date <= %s AND (is_prepared = 0 OR dispatch_status = 0 OR delivery_result = 'Pending'))
-            OR 
-            (target_date = %s AND is_prepared = 0)
-         )",
+        "SELECT COUNT(l.id)
+         FROM {$table_logs} l
+         INNER JOIN {$table_subs} s ON l.subscription_id = s.id
+         WHERE l.is_locked = 1
+           AND s.status = 'active'
+           AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')
+           AND (
+              (l.target_date >= %s AND l.target_date <= %s AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending'))
+              OR 
+              (l.target_date = %s AND l.is_prepared = 0)
+           )",
         $kit_start_date, $current_date, $tomorrow
     ));
 
