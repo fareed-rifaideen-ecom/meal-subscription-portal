@@ -3,6 +3,10 @@
  * Customer Portal - Main Shortcode Controller & HTML View Template
  * Part 3 of the 3-file Customer Portal modular architecture.
  *
+ * Phase 3 Upgrades:
+ *  - Option 2B: Staff-Only Full-Width Micro-Footer Audit Strip on Meal Cards (Visible to FOH, Kitchen, Menu Manager & Admin)
+ *  - Option 3A: Admin-Only Reset of Cancelled Days (Removes from Kitchen Portal, Reverses Extra Day & Restores Pending Slot)
+ *
  * Automatically loads:
  *  1. customer-portal-backend.php (DB setup, Role/Date Helpers, AJAX Endpoints, CSV Exporters & WP Admin Feedback Page)
  *  2. customer-portal-assets.php  (Responsive CSS Stylesheet & Interactive JS/jQuery Engine)
@@ -46,6 +50,10 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
             }
         }
 
+        if ( function_exists( 'cmp_auto_patch_database' ) ) {
+            cmp_auto_patch_database();
+        }
+
         global $wpdb;
         $user_id      = get_current_user_id();
         $current_user = wp_get_current_user();
@@ -80,12 +88,14 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
         $icon_plus   = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
 
         // OVERRIDE & PRIVILEGE DETECTION (CONNECTED TO WP ADMIN -> MEAL SETTINGS)
-        $is_admin_override        = isset( $_GET['admin_edit_sub'] ) && ( cmp_can_bypass_date_restrictions() || current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' ) );
+        $is_super_admin           = current_user_can( 'manage_options' );
+        $is_admin_override        = isset( $_GET['admin_edit_sub'] ) && ( cmp_can_bypass_date_restrictions() || $is_super_admin || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' ) );
         $is_chef_override         = isset( $_GET['chef_override_sub'] ) && ( cmp_can_bypass_date_restrictions() || current_user_can( 'kitchen_staff' ) );
         $can_bypass_date_lock     = cmp_can_bypass_date_restrictions() || $is_chef_override;
         $can_bypass_quota         = cmp_can_bypass_meal_quota();
-        $can_view_pos_check       = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
+        $can_view_pos_check       = $is_super_admin || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
         $can_edit_staff_logistics = cmp_can_view_pos_and_edit_logistics();
+        $can_view_audit_log       = function_exists( 'cmp_can_view_staff_audit_log' ) ? cmp_can_view_staff_audit_log() : false;
 
         if ( $is_admin_override ) {
             $raw_subs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cmp_subscriptions WHERE id = %d", intval( $_GET['admin_edit_sub'] ) ) );
@@ -335,7 +345,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                             <div class="cmp-account-card-box">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                                     <h3 style="margin:0; color:#379237; font-size:1.15em; font-weight:800;">Account Details</h3>
-                                    <?php if ( current_user_can( 'manage_options' ) ) : ?>
+                                    <?php if ( $is_super_admin ) : ?>
                                         <button type="button" class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
                                     <?php endif; ?>
                                 </div>
@@ -362,7 +372,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     <div class="cmp-kv-val"><span id="address-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $address ); ?></span></div>
                                 </div>
 
-                                <?php if ( current_user_can( 'manage_options' ) ) : ?>
+                                <?php if ( $is_super_admin ) : ?>
                                 <div id="account-edit-<?php echo esc_attr( $sub->id ); ?>" style="display:none; margin-top:10px;">
                                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
                                         <div style="flex:1; min-width:120px;">
@@ -684,6 +694,17 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     $formatted_mobile_date = '• ' . date( 'D, d M', strtotime( $log->target_date ) );
                                 }
 
+                                // OPTION 2B: Staff-Only Row Audit Stamp (FOH, Kitchen, Menu Manager, Admin)
+                                $row_audit_stamp = '';
+                                if ( $can_view_audit_log && $log && function_exists( 'cmp_format_row_audit_stamp' ) ) {
+                                    $row_audit_stamp = cmp_format_row_audit_stamp(
+                                        $log->last_action_type ?? '',
+                                        $log->updated_by_name ?? '',
+                                        $log->updated_by_role ?? '',
+                                        $log->updated_at ?? ''
+                                    );
+                                }
+
                                 $default_macro_tiles = '
                                     <div class="cmp-macro-tiles-grid">
                                         <div class="cmp-macro-tile tile-cal"><span class="tile-label">Calories</span><span class="tile-val">0 kcal</span></div>
@@ -693,6 +714,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     </div>';
 
                                 $min_attr = ( ! empty( $active_min_date ) && ! $can_bypass_date_lock ) ? 'min="' . esc_attr( $active_min_date ) . '"' : '';
+                                $action_td_extra_class = ( $is_void && $is_super_admin ) ? ' cmp-cell-action-admin-void' : '';
                             ?>
                                 <tr class="cmp-day-row <?php echo esc_attr( $row_status_class ); ?>" data-row="<?php echo esc_attr( $i ); ?>" data-pos-updated="<?php echo esc_attr( $pos_updated ); ?>" data-is-flexible="<?php echo esc_attr( $row_is_flexible ); ?>" data-allow-custom="<?php echo esc_attr( $row_allow_custom ); ?>">
                                     <td class="cmp-cell-day" title="Click to Expand / Collapse Day <?php echo esc_attr( $i ); ?>">
@@ -804,12 +826,12 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                         </div>
                                     </td>
 
-                                    <td class="cmp-cell-action">
+                                    <td class="cmp-cell-action<?php echo esc_attr( $action_td_extra_class ); ?>">
                                         <span class="cmp-mobile-label">Action</span>
                                         <div class="cmp-action-box">
                                             <?php
                                             if ( $is_chef_override ) {
-                                                if ( $saved_chefs_choice ) {
+                                                if ( $saved_chefs_choice && ! $is_void ) {
                                                     $chef_btn_text  = $is_chef_assigned ? 'Update' : 'Save';
                                                     $chef_btn_color = $is_chef_assigned ? '#1B5E20' : '#379237';
                                                     echo '<button type="button" class="cmp-save-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-row="' . esc_attr( $i ) . '" style="background:' . esc_attr( $chef_btn_color ) . ';">' . esc_html( $chef_btn_text ) . '</button>';
@@ -820,10 +842,17 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                         echo '</div>';
                                                     }
                                                 } else {
-                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Customer Pick)</span>';
+                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . ( $is_void ? 'Cancelled' : 'Customer Pick' ) . ')</span>';
+                                                }
+                                            } elseif ( $is_void ) {
+                                                // OPTION 3A: Strictly allow ONLY Super Admins (`manage_options`) to Reset/Clear a Cancelled Day
+                                                if ( $is_super_admin && $log_id > 0 ) {
+                                                    echo '<button type="button" class="cmp-admin-reset-cancel-btn" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-is-cancelled-reset="1" title="Admin Only: Reset this cancellation, remove from Kitchen Portal, and reverse the extra compensation day">' . $icon_reset . ' <span>Reset Cancel</span></button>';
+                                                } else {
+                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Void)</span>';
                                                 }
                                             } else {
-                                                if ( ( ! $is_time_locked || $can_bypass_date_lock ) && ! $is_void && ( ! $is_paused || $can_bypass_date_lock ) ) {
+                                                if ( ( ! $is_time_locked || $can_bypass_date_lock ) && ( ! $is_paused || $can_bypass_date_lock ) ) {
                                                     $btn_txt   = ( $log_id > 0 ) ? 'Update' : 'Save';
                                                     $btn_color = ( $log_id > 0 ) ? '#1B5E20' : '#379237';
                                                     echo '<button type="button" class="cmp-save-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-row="' . esc_attr( $i ) . '" style="background:' . esc_attr( $btn_color ) . ';">' . esc_html( $btn_txt ) . '</button>';
@@ -839,8 +868,6 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                     $lock_reason = 'Cutoff Passed';
                                                     if ( $is_paused ) {
                                                         $lock_reason = 'Paused';
-                                                    } elseif ( $is_void ) {
-                                                        $lock_reason = 'Void';
                                                     } elseif ( $log && ! empty( $log->target_date ) && $log->target_date <= $today_ymd ) {
                                                         $lock_reason = ( $log->target_date === $today_ymd ) ? 'Today Locked' : 'Past Date';
                                                     }
@@ -856,6 +883,13 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                         <span class="cmp-summary-text">Click to view or edit meal selections</span>
                                         <span class="cmp-expand-hint" style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>
                                     </td>
+
+                                    <!-- OPTION 2B: Staff-Only Full-Width Micro-Footer Audit Strip -->
+                                    <?php if ( $can_view_audit_log ) : ?>
+                                    <td class="cmp-audit-footer-cell <?php echo ! empty( $row_audit_stamp ) ? 'has-audit' : ''; ?>">
+                                        <span class="cmp-audit-micro-strip"><?php echo esc_html( $row_audit_stamp ); ?></span>
+                                    </td>
+                                    <?php endif; ?>
                                 </tr>
                             <?php } ?>
                         </tbody>
