@@ -2,7 +2,13 @@
 /**
  * Customer Portal - Backend Engine, AJAX Handlers, CSV Exporters & Feedback Admin
  * Part 1 of the 3-file Customer Portal modular architecture.
- * Phase 3: Row-Level Staff Audit Stamps (Option 2B), Admin-Only Cancellation Reset (Option 3A) & Activity Logging (Option 4B)
+ *
+ * Phase 3 & Same-Day Prep (Option PREP-C) Upgrades:
+ *  - Option PREP-C: Central `prep_timing` schema column, 4:00 PM+ Same-Day Prep auto-detection, and Staff-Only Prep Schedule override in `cmp_cp_update_customer_logistics`
+ *  - Option 2B: Row-Level Staff Audit Stamps (`cmp_format_row_audit_stamp`)
+ *  - Option 3A: Admin-Only Cancellation Reset & Extra Day Reversal (`cmp_ajax_clear_daily_log`)
+ *  - Option 4A: POS Check Exemption (`No POS Required`) for Cancelled & Returned days in Staff CSV Exports
+ *  - Option 1A & 5A: Full synchronization with `Customer Logs` and `Kitchen Logs`
  */
 
 // Prevent direct file access
@@ -19,7 +25,7 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 }
 
 // ==========================================
-// 0. ROLE, QUOTA, DATE LOCK, AUDIT & DB HELPER FUNCTIONS
+// 0. ROLE, QUOTA, DATE LOCK, SAME-DAY PREP, AUDIT & DB HELPER FUNCTIONS
 //    (CONNECTED TO WP ADMIN -> MEAL SETTINGS)
 // ==========================================
 
@@ -52,6 +58,95 @@ if ( ! function_exists( 'cmp_format_row_audit_stamp' ) ) {
         $time_part    = date( 'd M Y, h:i A', strtotime( $updated_at ) );
 
         return sprintf( '%s by %s%s • %s', $action_label, $actor_name, $role_part, $time_part );
+    }
+}
+
+/**
+ * Ensures the `prep_timing` column exists on `wp_cmp_subscriptions` ('auto', 'same_day', 'day_before').
+ */
+if ( ! function_exists( 'cmp_ensure_prep_timing_column' ) ) {
+    function cmp_ensure_prep_timing_column() {
+        global $wpdb;
+        static $checked = false;
+        if ( $checked ) {
+            return;
+        }
+        $checked    = true;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) );
+        if ( $table_exists !== $table_subs ) {
+            return;
+        }
+        $col_check = $wpdb->get_results( "SHOW COLUMNS FROM {$table_subs} LIKE 'prep_timing'" );
+        if ( empty( $col_check ) ) {
+            $wpdb->query( "ALTER TABLE {$table_subs} ADD COLUMN prep_timing VARCHAR(30) DEFAULT 'auto'" );
+        }
+    }
+}
+
+/**
+ * Option PREP-C Helper: Checks whether a time slot string starts at or after 4:00 PM (16:00).
+ */
+if ( ! function_exists( 'cmp_is_time_slot_after_4pm' ) ) {
+    function cmp_is_time_slot_after_4pm( $time_slot ) {
+        $time_slot = trim( (string) $time_slot );
+        if ( $time_slot === '' ) {
+            return false;
+        }
+        if ( preg_match( '/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i', $time_slot, $m ) ) {
+            $hour = intval( $m[1] );
+            $ampm = isset( $m[3] ) ? strtoupper( trim( $m[3] ) ) : '';
+
+            if ( $ampm === 'PM' && $hour < 12 ) {
+                $hour += 12;
+            } elseif ( $ampm === 'AM' && $hour === 12 ) {
+                $hour = 0;
+            }
+            return ( $hour >= 16 );
+        }
+        return false;
+    }
+}
+
+/**
+ * Option PREP-C Resolver: Determines if a subscription is on Same-Day Preparation.
+ * - 'same_day'   -> true (Manual Override)
+ * - 'day_before' -> false (Manual Override)
+ * - 'auto'       -> true if Receive By is Same Day AND Time Slot starts at or after 4:00 PM
+ */
+if ( ! function_exists( 'cmp_is_same_day_prep_subscription' ) ) {
+    function cmp_is_same_day_prep_subscription( $sub, $resolved = null ) {
+        if ( ! is_array( $resolved ) ) {
+            $resolved = cmp_get_subscription_logistics( $sub );
+        }
+
+        $prep_override = isset( $sub->prep_timing ) ? strtolower( trim( (string) $sub->prep_timing ) ) : 'auto';
+        if ( $prep_override === 'same_day' ) {
+            return true;
+        }
+        if ( $prep_override === 'day_before' ) {
+            return false;
+        }
+
+        $timing       = isset( $resolved['timing'] ) ? (string) $resolved['timing'] : '';
+        $time_slot    = isset( $resolved['time_slot'] ) ? (string) $resolved['time_slot'] : '';
+        $is_same_day  = ( stripos( $timing, 'Same Day' ) !== false );
+        $is_after_4pm = cmp_is_time_slot_after_4pm( $time_slot );
+
+        return ( $is_same_day && $is_after_4pm );
+    }
+}
+
+/**
+ * Returns a human-readable staff summary for a subscription's Kitchen Prep Schedule.
+ */
+if ( ! function_exists( 'cmp_get_prep_schedule_display_label' ) ) {
+    function cmp_get_prep_schedule_display_label( $sub, $resolved = null ) {
+        $is_same_day = cmp_is_same_day_prep_subscription( $sub, $resolved );
+        $mode        = isset( $sub->prep_timing ) ? strtolower( trim( (string) $sub->prep_timing ) ) : 'auto';
+        $suffix      = ( $mode === 'same_day' || $mode === 'day_before' ) ? ' (Manual Override)' : ' (Auto 4PM+ Rule)';
+
+        return ( $is_same_day ? '⚡ Same-Day Prep' : 'Day-Before Prep' ) . $suffix;
     }
 }
 
@@ -92,12 +187,14 @@ if ( ! function_exists( 'cmp_ensure_feedback_table_exists' ) ) {
 }
 
 /**
- * Ensures `wp_cmp_subscriptions` has dedicated per-plan logistics & allergy columns
+ * Ensures `wp_cmp_subscriptions` has dedicated per-plan logistics, allergy, and `prep_timing` columns
  * and backfills existing subscriptions so multi-plan customers never overwrite each other.
  */
 add_action( 'init', 'cmp_ensure_subscription_logistics_columns' );
 if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
     function cmp_ensure_subscription_logistics_columns() {
+        cmp_ensure_prep_timing_column();
+
         if ( get_option( 'cmp_sub_logistics_cols_v1' ) === '1' ) {
             return;
         }
@@ -122,6 +219,7 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
             'time_slot'        => "ALTER TABLE {$table_subs} ADD COLUMN time_slot VARCHAR(100) DEFAULT ''",
             'allergies'        => "ALTER TABLE {$table_subs} ADD COLUMN allergies TEXT NULL",
             'delivery_address' => "ALTER TABLE {$table_subs} ADD COLUMN delivery_address TEXT NULL",
+            'prep_timing'      => "ALTER TABLE {$table_subs} ADD COLUMN prep_timing VARCHAR(30) DEFAULT 'auto'",
         );
 
         foreach ( $columns_to_add as $col_name => $alter_sql ) {
@@ -790,6 +888,22 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             ) );
         }
 
+        // If Kitchen Staff assigned Chef's Choice meals via Chef Override Mode, also log in Kitchen Logs
+        if ( $actor['role'] === 'Kitchen' && function_exists( 'cmp_record_kitchen_activity_log' ) ) {
+            cmp_record_kitchen_activity_log( array(
+                'log_id'          => $saved_log_id,
+                'subscription_id' => $sub_id,
+                'user_id'         => intval( $sub->user_id ),
+                'target_date'     => $target_date,
+                'action_type'     => "Chef's Choice Assigned",
+                'old_status'      => $old_snapshot,
+                'new_status'      => $new_snapshot,
+                'actor_id'        => $actor['id'],
+                'actor_name'      => $actor['name'],
+                'actor_role'      => $actor['role'],
+            ) );
+        }
+
         $audit_stamp = cmp_format_row_audit_stamp( $row_action, $actor['name'], $actor['role'], $now_datetime );
 
         $response_data = array(
@@ -813,7 +927,7 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
     }
 }
 
-// 1.2 CUSTOMER PORTAL PER-PLAN LOGISTICS EDITING + RENEWAL HISTORY RECORDING
+// 1.2 CUSTOMER PORTAL PER-PLAN LOGISTICS & STAFF KITCHEN PREP SCHEDULE EDITING
 add_action( 'wp_ajax_cmp_cp_update_customer_logistics', 'cmp_ajax_cp_update_customer_logistics' );
 if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
     function cmp_ajax_cp_update_customer_logistics() {
@@ -824,6 +938,8 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         }
 
         cmp_ensure_subscription_logistics_columns();
+        cmp_ensure_prep_timing_column();
+
         global $wpdb;
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
@@ -837,6 +953,13 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         $allergies          = sanitize_textarea_field( wp_unslash( $_POST['allergies'] ?? '' ) );
         $save_custom_timing = ! empty( $_POST['save_custom_timing'] );
         $save_custom_slot   = ! empty( $_POST['save_custom_slot'] );
+
+        // Option PREP-C: Staff-only Kitchen Prep Schedule override ('auto', 'same_day', 'day_before')
+        $has_prep_payload = isset( $_POST['prep_timing'] );
+        $prep_timing      = sanitize_text_field( wp_unslash( $_POST['prep_timing'] ?? 'auto' ) );
+        if ( ! in_array( $prep_timing, array( 'auto', 'same_day', 'day_before' ), true ) ) {
+            $prep_timing = 'auto';
+        }
 
         if ( empty( $timing ) ) {
             wp_send_json_error( 'Please provide a valid Delivery Timing (Receive By) option.' );
@@ -875,13 +998,18 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             }
         }
 
-        $sub_row      = null;
-        $plan_name    = '';
-        $old_resolved = array();
+        $sub_row           = null;
+        $plan_name         = '';
+        $old_resolved      = array();
+        $old_prep_mode     = 'auto';
+        $prep_schedule_lbl = 'Day-Before Prep';
+        $is_same_day_prep  = false;
+
         if ( $sub_id > 0 ) {
-            $sub_row      = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
-            $plan_name    = $sub_row ? $sub_row->plan_name : '';
-            $old_resolved = $sub_row ? cmp_get_subscription_logistics( $sub_row ) : array();
+            $sub_row       = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+            $plan_name     = $sub_row ? $sub_row->plan_name : '';
+            $old_resolved  = $sub_row ? cmp_get_subscription_logistics( $sub_row ) : array();
+            $old_prep_mode = ( $sub_row && ! empty( $sub_row->prep_timing ) ) ? $sub_row->prep_timing : 'auto';
 
             $update_cols = array(
                 'delivery_timing' => $timing,
@@ -892,6 +1020,9 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
                 $update_cols['delivery_method'] = $method;
                 $update_cols['pickup_location'] = ( $method === 'Pickup' ) ? $pickup : '';
             }
+            if ( $has_prep_payload ) {
+                $update_cols['prep_timing'] = $prep_timing;
+            }
 
             $wpdb->update(
                 $table_subs,
@@ -900,6 +1031,11 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             );
         }
 
+        $updated_sub       = $sub_id > 0 ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) ) : null;
+        $updated_resolved  = $updated_sub ? cmp_get_subscription_logistics( $updated_sub ) : array();
+        $is_same_day_prep  = $updated_sub ? cmp_is_same_day_prep_subscription( $updated_sub, $updated_resolved ) : false;
+        $prep_schedule_lbl = $updated_sub ? cmp_get_prep_schedule_display_label( $updated_sub, $updated_resolved ) : 'Day-Before Prep';
+
         $effective_method = ! empty( $method ) ? $method : ( $sub_row ? ( $sub_row->delivery_method ?? '' ) : '' );
         $effective_pickup = ( $effective_method === 'Pickup' ) ? ( ! empty( $method ) ? $pickup : ( $sub_row ? ( $sub_row->pickup_location ?? '' ) : '' ) ) : '';
         $method_display   = $effective_method ?: 'N/A';
@@ -907,26 +1043,48 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             $method_display .= ' (' . $effective_pickup . ')';
         }
 
+        $prep_labels = array(
+            'auto'       => 'Auto (4PM+ Rule)',
+            'same_day'   => 'Same-Day Prep',
+            'day_before' => 'Day-Before Prep',
+        );
+
         if ( $sub_id > 0 && function_exists( 'cmp_record_customer_activity_log' ) ) {
             $old_log_str = sprintf(
-                'Method: %s | Receive: %s (%s) | Allergies: %s',
+                'Method: %s | Receive: %s (%s) | Prep: %s | Allergies: %s',
                 $old_resolved['method'] ?? 'N/A',
                 $old_resolved['timing'] ?? 'N/A',
                 $old_resolved['time_slot'] ?? 'N/A',
+                $prep_labels[ $old_prep_mode ] ?? $old_prep_mode,
                 ! empty( $old_resolved['allergies'] ) ? $old_resolved['allergies'] : 'None'
             );
             $new_log_str = sprintf(
-                'Method: %s | Receive: %s (%s) | Allergies: %s',
+                'Method: %s | Receive: %s (%s) | Prep: %s | Allergies: %s',
                 $method_display,
                 $timing,
                 $time_slot,
+                $prep_labels[ $has_prep_payload ? $prep_timing : $old_prep_mode ] ?? $prep_timing,
                 $allergies !== '' ? $allergies : 'None'
             );
-            cmp_record_customer_activity_log( array(
+            if ( $old_log_str !== $new_log_str ) {
+                cmp_record_customer_activity_log( array(
+                    'subscription_id' => $sub_id,
+                    'action_type'     => 'Logistics Updated',
+                    'old_status'      => $old_log_str,
+                    'new_status'      => $new_log_str,
+                ) );
+            }
+        }
+
+        if ( $sub_id > 0 && $has_prep_payload && $old_prep_mode !== $prep_timing && function_exists( 'cmp_record_kitchen_activity_log' ) ) {
+            cmp_record_kitchen_activity_log( array(
+                'log_id'          => 0,
                 'subscription_id' => $sub_id,
-                'action_type'     => 'Logistics Updated',
-                'old_status'      => $old_log_str,
-                'new_status'      => $new_log_str,
+                'user_id'         => $user_id,
+                'target_date'     => date( 'Y-m-d' ),
+                'action_type'     => 'Prep Schedule Override (Portal)',
+                'old_status'      => 'Prep Schedule: ' . ( $prep_labels[ $old_prep_mode ] ?? $old_prep_mode ),
+                'new_status'      => 'Prep Schedule: ' . ( $prep_labels[ $prep_timing ] ?? $prep_timing ),
             ) );
         }
 
@@ -973,12 +1131,15 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         }
 
         wp_send_json_success( array(
-            'sub_id'         => $sub_id,
-            'method_display' => $method_display,
-            'timing'         => $timing,
-            'time_slot'      => $time_slot,
-            'allergies'      => $allergies ?: 'No Allergies Recorded',
-            'saved_profiles' => cmp_get_user_saved_logistics_profiles( $user_id ),
+            'sub_id'              => $sub_id,
+            'method_display'      => $method_display,
+            'timing'              => $timing,
+            'time_slot'           => $time_slot,
+            'allergies'           => $allergies ?: 'No Allergies Recorded',
+            'prep_timing'         => $prep_timing,
+            'prep_schedule_label' => $prep_schedule_lbl,
+            'is_same_day_prep'    => $is_same_day_prep ? 1 : 0,
+            'saved_profiles'      => cmp_get_user_saved_logistics_profiles( $user_id ),
         ) );
     }
 }
@@ -1240,7 +1401,7 @@ if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
     }
 }
 
-// 1.6 CUSTOMER / FOH CANCEL SPECIFIC DAY (STAMPS ACTOR & RECORDS ACTIVITY LOG)
+// 1.6 CUSTOMER / FOH CANCEL SPECIFIC DAY (STAMPS ACTOR & PRE-PREP / POST-PREP CONTEXT)
 add_action( 'wp_ajax_cmp_cancel_daily_log', 'cmp_ajax_cancel_daily_log' );
 if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
     function cmp_ajax_cancel_daily_log() {
@@ -1299,10 +1460,14 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
         $tz           = new DateTimeZone( 'Asia/Dubai' );
         $now_datetime = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d H:i:s' );
 
+        $was_prepped  = ( intval( $log->is_prepared ) === 1 || intval( $log->dispatch_status ) === 1 );
+        $cancel_stage = $was_prepped ? 'Cancelled After Prep' : 'Cancelled Before Prep (DO NOT PREPARE)';
+
         $wpdb->update(
             $table_logs,
             array(
                 'delivery_result'  => 'Cancelled',
+                'pos_updated'      => 0,
                 'updated_by_id'    => $actor['id'],
                 'updated_by_name'  => $actor['name'],
                 'updated_by_role'  => $actor['role'],
@@ -1318,7 +1483,7 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
                 'action_type'     => 'Meal Cancelled',
                 'target_date'     => $log->target_date,
                 'old_status'      => $old_snapshot,
-                'new_status'      => 'Cancelled (' . $log->target_date . ')',
+                'new_status'      => $cancel_stage . ' (' . $log->target_date . ')',
                 'actor_id'        => $actor['id'],
                 'actor_name'      => $actor['name'],
                 'actor_role'      => $actor['role'],
@@ -1417,7 +1582,7 @@ if ( ! function_exists( 'cmp_ajax_submit_customer_feedback' ) ) {
 }
 
 // ==========================================
-// 2. EXPORT CUSTOMER MEAL PLAN TO CSV (PER-PLAN LOGISTICS)
+// 2. EXPORT CUSTOMER MEAL PLAN TO CSV (PER-PLAN LOGISTICS & OPTION 4A POS EXEMPTIONS)
 // ==========================================
 if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
     add_action( 'wp_ajax_cmp_export_customer_csv', 'cmp_export_customer_csv' );
@@ -1452,6 +1617,7 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         $allergies      = $resolved['allergies'];
         $address        = $resolved['address'];
         $method_display = ( $method === 'Pickup' && ! empty( $pickup ) ) ? $method . ' (' . $pickup . ')' : $method;
+        $prep_schedule  = cmp_is_same_day_prep_subscription( $sub, $resolved ) ? 'Same-Day Prep' : 'Day-Before Prep';
 
         $logs     = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id ) );
         $foods    = $wpdb->get_results( "SELECT id, food_name FROM {$wpdb->prefix}cmp_foods" );
@@ -1470,7 +1636,11 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         fputcsv( $output, array( 'CUSTOMER & PLAN DETAILS' ) );
         fputcsv( $output, array( 'Plan:', $sub->plan_name, 'Name:', $full_name, 'Email:', $email, 'Phone:', $phone ) );
         fputcsv( $output, array( 'Address:', $address ) );
-        fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot ) );
+        if ( $can_view_pos ) {
+            fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot, 'Kitchen Prep:', $prep_schedule ) );
+        } else {
+            fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot ) );
+        }
         fputcsv( $output, array( 'Allergies:', $allergies ?: 'None' ) );
         fputcsv( $output, array( '' ) );
 
@@ -1494,18 +1664,20 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         }
 
         foreach ( $logs as $log ) {
-            $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
+            $chefs          = $log->is_chefs_choice ? 'Yes' : 'No';
+            $is_canc_or_ret = in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true );
 
             $status = 'Pending';
             if ( $log->delivery_result === 'Successful' ) {
                 $status = 'Successful';
-            } elseif ( in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) ) {
+            } elseif ( $is_canc_or_ret ) {
                 $status = $log->delivery_result;
             } elseif ( $log->id > 0 ) {
                 $status = 'Selected';
             }
 
-            $pos_status  = ( ! empty( $log->pos_updated ) ) ? 'Checked' : 'Pending';
+            // Option 4A: Cancelled and Returned rows do not require a POS Check
+            $pos_status  = $is_canc_or_ret ? 'No POS Required' : ( ( ! empty( $log->pos_updated ) ) ? 'Checked' : 'Pending' );
             $audit_stamp = cmp_format_row_audit_stamp(
                 $log->last_action_type ?? '',
                 $log->updated_by_name ?? '',
@@ -1694,15 +1866,15 @@ if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
         $identity_mode = isset( $_GET['mode_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['mode_filter'] ) ) : '';
         $rating_filter = isset( $_GET['rating_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['rating_filter'] ) ) : '';
 
-        $all_rows       = $wpdb->get_results( "SELECT * FROM {$table_feedback} ORDER BY created_at DESC, id DESC" );
-        $total_count    = is_array( $all_rows ) ? count( $all_rows ) : 0;
-        $named_count    = 0;
-        $anon_count     = 0;
-        $service_sum    = 0;
-        $service_cnt    = 0;
-        $portal_sum     = 0;
-        $portal_cnt     = 0;
-        $tag_frequency  = array();
+        $all_rows      = $wpdb->get_results( "SELECT * FROM {$table_feedback} ORDER BY created_at DESC, id DESC" );
+        $total_count   = is_array( $all_rows ) ? count( $all_rows ) : 0;
+        $named_count   = 0;
+        $anon_count    = 0;
+        $service_sum   = 0;
+        $service_cnt   = 0;
+        $portal_sum    = 0;
+        $portal_cnt    = 0;
+        $tag_frequency = array();
 
         if ( $all_rows ) {
             foreach ( $all_rows as $item ) {
