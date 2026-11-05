@@ -1,7 +1,12 @@
 <?php
 /**
  * Front of House (FOH) Command Center Portal
- * Phase 2: Inline Recipient Pill Badge (Option 1A), Streamlined Plan Column & Activity Audit Logging
+ *
+ * Upgrades Included:
+ *  - Option 1A: Full Customer Activity Log Auditing across all FOH edits (Expiry, Pause/Resume, FOH Remarks, Financials, Account/Recipient/Mode Edits, Bag Deposit Wallet, Bulk Hold Days, and Plan Deletion)
+ *  - Inline Recipient Pill Badge next to Customer Name
+ *  - Pre-Prep vs. Post-Prep Cancellation Stamping for Bulk Hold Days
+ *  - Non-blocking Toast Notifications & Confirmation Modals
  */
 
 // Prevent direct file access
@@ -129,7 +134,7 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
 // ==========================================
 add_shortcode( 'meal_foh_portal', 'cmp_render_foh_portal' );
 
-// 1. AJAX HANDLER: Update Expiry Date
+// 1. AJAX HANDLER: Update Expiry Date (With Option 1A Audit Logging)
 add_action( 'wp_ajax_cmp_foh_update_expiry', 'cmp_ajax_foh_update_expiry' );
 function cmp_ajax_foh_update_expiry() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -163,7 +168,7 @@ function cmp_ajax_foh_update_expiry() {
     wp_send_json_success();
 }
 
-// 2. AJAX HANDLER: Toggle Pause/Resume Status (Global Plan Level)
+// 2. AJAX HANDLER: Toggle Pause/Resume Status (Global Plan Level + Audit Logging)
 add_action( 'wp_ajax_cmp_foh_toggle_status', 'cmp_ajax_foh_toggle_status' );
 function cmp_ajax_foh_toggle_status() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -197,7 +202,7 @@ function cmp_ajax_foh_toggle_status() {
     wp_send_json_success();
 }
 
-// 3. AJAX HANDLER: Save FOH Remarks
+// 3. AJAX HANDLER: Save FOH Remarks (With Option 1A Audit Logging)
 add_action( 'wp_ajax_cmp_foh_save_remark', 'cmp_ajax_foh_save_remark' );
 function cmp_ajax_foh_save_remark() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -206,12 +211,29 @@ function cmp_ajax_foh_save_remark() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $sub_id     = intval( $_POST['sub_id'] );
     $remark     = sanitize_textarea_field( wp_unslash( $_POST['remark'] ?? '' ) );
-    $wpdb->update( $table_subs, array( 'foh_remarks' => $remark ), array( 'id' => intval( $_POST['sub_id'] ) ) );
+
+    $old_sub    = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+    $old_remark = ( $old_sub && ! empty( $old_sub->foh_remarks ) ) ? trim( (string) $old_sub->foh_remarks ) : 'None';
+    $new_remark = ( $remark !== '' ) ? $remark : 'None';
+
+    $wpdb->update( $table_subs, array( 'foh_remarks' => $remark ), array( 'id' => $sub_id ) );
+
+    if ( $old_sub && $old_remark !== $new_remark && function_exists( 'cmp_record_customer_activity_log' ) ) {
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $sub_id,
+            'action_type'     => 'FOH Note Updated',
+            'target_date'     => date( 'Y-m-d' ),
+            'old_status'      => 'FOH Note: ' . $old_remark,
+            'new_status'      => 'FOH Note: ' . $new_remark,
+        ) );
+    }
+
     wp_send_json_success();
 }
 
-// 4. AJAX HANDLER: Update Super Admin & Menu Manager Financials
+// 4. AJAX HANDLER: Update Super Admin & Menu Manager Financials (With Option 1A Audit Logging)
 add_action( 'wp_ajax_cmp_foh_update_financials', 'cmp_ajax_foh_update_financials' );
 function cmp_ajax_foh_update_financials() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -225,11 +247,28 @@ function cmp_ajax_foh_update_financials() {
     $price    = floatval( $_POST['plan_price'] );
     $discount = floatval( $_POST['discount_amount'] );
 
+    $old_sub      = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+    $old_price    = $old_sub ? floatval( $old_sub->plan_price ) : 0.0;
+    $old_discount = $old_sub ? floatval( $old_sub->discount_amount ) : 0.0;
+
     $wpdb->update( $table_subs, array( 'plan_price' => $price, 'discount_amount' => $discount ), array( 'id' => $sub_id ) );
+
+    if ( $old_sub && ( $old_price !== $price || $old_discount !== $discount ) && function_exists( 'cmp_record_customer_activity_log' ) ) {
+        $old_net = max( 0.0, $old_price - $old_discount );
+        $new_net = max( 0.0, $price - $discount );
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $sub_id,
+            'action_type'     => 'Plan Financials Updated',
+            'target_date'     => date( 'Y-m-d' ),
+            'old_status'      => sprintf( 'Base: AED %.2f | Disc: AED %.2f | Net: AED %.2f', $old_price, $old_discount, $old_net ),
+            'new_status'      => sprintf( 'Base: AED %.2f | Disc: AED %.2f | Net: AED %.2f', $price, $discount, $new_net ),
+        ) );
+    }
+
     wp_send_json_success( array( 'price' => $price, 'discount' => $discount ) );
 }
 
-// 5. AJAX HANDLER: Update Account Details, Recipient & Plan Mode (FOH, Menu Manager, Admin)
+// 5. AJAX HANDLER: Update Account Details, Recipient & Plan Mode (With Full Option 1A Profile Edit Logging)
 add_action( 'wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details' );
 function cmp_ajax_foh_update_account_details() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -262,6 +301,12 @@ function cmp_ajax_foh_update_account_details() {
     $delivery_timing       = sanitize_text_field( wp_unslash( $_POST['delivery_timing'] ?? '' ) );
     $time_slot             = sanitize_text_field( wp_unslash( $_POST['time_slot'] ?? '' ) );
     $allergies             = sanitize_textarea_field( wp_unslash( $_POST['allergies'] ?? '' ) );
+
+    // Capture Old Customer Name before updating
+    $old_fname     = $user_id > 0 ? ( get_user_meta( $user_id, 'first_name', true ) ?: get_user_meta( $user_id, 'billing_first_name', true ) ) : '';
+    $old_lname     = $user_id > 0 ? ( get_user_meta( $user_id, 'last_name', true ) ?: get_user_meta( $user_id, 'billing_last_name', true ) ) : '';
+    $old_full_name = trim( $old_fname . ' ' . $old_lname );
+    $new_full_name = trim( $first_name . ' ' . $last_name );
 
     if ( $user_id > 0 ) {
         wp_update_user( array( 'ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name ) );
@@ -336,13 +381,20 @@ function cmp_ajax_foh_update_account_details() {
 
             $wpdb->update( $table_subs, $update_data, array( 'id' => $sub_id ) );
 
-            if ( function_exists( 'cmp_record_customer_activity_log' ) && ( $sub->plan_name !== $new_plan_name || strtolower( $old_mode ) !== strtolower( $plan_mode ) ) ) {
-                cmp_record_customer_activity_log( array(
-                    'subscription_id' => $sub_id,
-                    'action_type'     => 'Plan Details Updated',
-                    'old_status'      => $sub->plan_name . ' | Mode: ' . $old_mode,
-                    'new_status'      => $new_plan_name . ' | Mode: ' . ucfirst( $plan_mode ),
-                ) );
+            // Option 1A: Log any change to Customer Name, Recipient/Plan Name, Plan Mode, or Logistics
+            if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+                $old_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s', $old_full_name ?: 'Customer', $sub->plan_name, $old_mode );
+                $new_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s', $new_full_name ?: 'Customer', $new_plan_name, ucfirst( $plan_mode ) );
+
+                if ( $old_summary !== $new_summary || $has_logistics_payload ) {
+                    cmp_record_customer_activity_log( array(
+                        'subscription_id' => $sub_id,
+                        'action_type'     => 'Account & Plan Updated',
+                        'target_date'     => date( 'Y-m-d' ),
+                        'old_status'      => $old_summary,
+                        'new_status'      => $new_summary,
+                    ) );
+                }
             }
 
             // Record into customer's saved logistics profile history
@@ -370,14 +422,14 @@ function cmp_ajax_foh_update_account_details() {
     }
 
     wp_send_json_success( array(
-        'name'      => trim( $first_name . ' ' . $last_name ),
+        'name'      => $new_full_name,
         'recipient' => $recipient_name,
         'plan_name' => $new_plan_name,
         'plan_mode' => $plan_mode,
     ) );
 }
 
-// 6. AJAX HANDLER: Delete Subscription Plan (Strictly Super Admin)
+// 6. AJAX HANDLER: Delete Subscription Plan (Strictly Super Admin + Option 1A Audit Trail)
 add_action( 'wp_ajax_cmp_foh_delete_subscription', 'cmp_ajax_foh_delete_subscription' );
 function cmp_ajax_foh_delete_subscription() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -394,6 +446,21 @@ function cmp_ajax_foh_delete_subscription() {
 
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    $sub_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+
+    if ( $sub_row && function_exists( 'cmp_record_customer_activity_log' ) ) {
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $sub_id,
+            'wc_order_id'     => intval( $sub_row->wc_order_id ),
+            'user_id'         => intval( $sub_row->user_id ),
+            'plan_name'       => $sub_row->plan_name,
+            'action_type'     => 'Plan Deleted',
+            'target_date'     => date( 'Y-m-d' ),
+            'old_status'      => sprintf( 'Plan Status: %s (%d Total Days)', ucfirst( $sub_row->status ), intval( $sub_row->total_days ) ),
+            'new_status'      => 'Subscription & Daily Logs Permanently Deleted from FOH Portal',
+        ) );
+    }
 
     $wpdb->delete( $table_logs, array( 'subscription_id' => $sub_id ), array( '%d' ) );
     $deleted = $wpdb->delete( $table_subs, array( 'id' => $sub_id ), array( '%d' ) );
@@ -418,7 +485,7 @@ function cmp_foh_export_csv() {
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $today      = date( 'Y-m-d H:i:s' );
 
-    $all_subs = $wpdb->get_results( "SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC" );
+    $all_subs = $wpdb->get_results( "SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status NOT IN ('pending', 'deleted') ORDER BY s.id DESC" );
 
     header( 'Content-Type: text/csv; charset=utf-8' );
     header( 'Content-Disposition: attachment; filename="FOH_Subscriptions_Export_' . date( 'Y-m-d' ) . '.csv"' );
@@ -479,7 +546,7 @@ function cmp_foh_export_csv() {
         $status_label = 'Active';
         if ( $sub->status === 'paused' ) {
             $status_label = 'Paused';
-        } elseif ( $usage_days >= $total_days_int || $sub->expiry_date < $today ) {
+        } elseif ( $usage_days >= $total_days_int || $sub->expiry_date < $today || $sub->status === 'completed' ) {
             $status_label = 'Inactive/Expired';
         }
 
@@ -561,7 +628,7 @@ function cmp_foh_export_csv() {
     exit;
 }
 
-// 8. AJAX HANDLER: Toggle Deposit Status
+// 8. AJAX HANDLER: Toggle Deposit Status (With Option 1A Audit Trail Logging)
 add_action( 'wp_ajax_cmp_foh_toggle_deposit', 'cmp_ajax_foh_toggle_deposit' );
 function cmp_ajax_foh_toggle_deposit() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -569,10 +636,36 @@ function cmp_ajax_foh_toggle_deposit() {
     }
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
 
+    global $wpdb;
     $user_id    = intval( $_POST['user_id'] );
     $new_status = sanitize_text_field( $_POST['new_status'] );
+    $old_status = get_user_meta( $user_id, '_cmp_deposit_held', true );
+
+    $status_labels = array(
+        'yes'     => 'Bag Deposit Held (Waived)',
+        'own_bag' => "Customer's Own Bag (Waived)",
+        'no'      => 'Refunded / No Deposit',
+    );
+    $old_label = isset( $status_labels[ $old_status ] ) ? $status_labels[ $old_status ] : 'Default';
+    $new_label = isset( $status_labels[ $new_status ] ) ? $status_labels[ $new_status ] : $new_status;
 
     update_user_meta( $user_id, '_cmp_deposit_held', $new_status );
+
+    if ( $old_status !== $new_status && function_exists( 'cmp_record_customer_activity_log' ) ) {
+        $latest_sub_id = intval( $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d ORDER BY id DESC LIMIT 1",
+            $user_id
+        ) ) );
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $latest_sub_id,
+            'user_id'         => $user_id,
+            'action_type'     => 'Deposit Wallet Updated',
+            'target_date'     => date( 'Y-m-d' ),
+            'old_status'      => 'Bag Deposit: ' . $old_label,
+            'new_status'      => 'Bag Deposit: ' . $new_label,
+        ) );
+    }
+
     wp_send_json_success();
 }
 
@@ -619,7 +712,7 @@ function cmp_foh_fetch_upcoming_meals() {
     wp_send_json_success( $data );
 }
 
-// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day & Records Audit Logs)
+// 10. AJAX HANDLER: Bulk Cancel Selected Days (Excludes Same Day & Records Pre-Prep / Post-Prep Audit Logs)
 add_action( 'wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_foh_bulk_cancel_days' );
 function cmp_foh_bulk_cancel_days() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -663,6 +756,9 @@ function cmp_foh_bulk_cancel_days() {
                 ? cmp_format_log_meal_snapshot( $old_log )
                 : 'Selected (' . $old_log->target_date . ')';
 
+            $was_prepped   = ( intval( $old_log->is_prepared ) === 1 || intval( $old_log->dispatch_status ) === 1 );
+            $cancel_stage  = $was_prepped ? 'Cancelled After Prep' : 'Cancelled Before Prep (DO NOT PREPARE)';
+
             $update_fields = array( 'delivery_result' => 'Cancelled' );
             if ( $has_audit_col ) {
                 $update_fields['updated_by_id']    = $actor['id'];
@@ -680,7 +776,7 @@ function cmp_foh_bulk_cancel_days() {
                     'action_type'     => 'Meal Cancelled',
                     'target_date'     => $old_log->target_date,
                     'old_status'      => $old_snapshot,
-                    'new_status'      => 'Cancelled (' . $old_log->target_date . ')',
+                    'new_status'      => $cancel_stage . ' (' . $old_log->target_date . ')',
                     'actor_id'        => $actor['id'],
                     'actor_name'      => $actor['name'],
                     'actor_role'      => $actor['role'],
@@ -733,7 +829,7 @@ function cmp_render_foh_portal() {
         $wpdb->query( "ALTER TABLE {$table_subs} ADD foh_remarks TEXT NULL AFTER status" );
     }
 
-    $all_subs = $wpdb->get_results( "SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status != 'pending' ORDER BY s.id DESC" );
+    $all_subs = $wpdb->get_results( "SELECT s.*, u.display_name, u.user_email FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.status NOT IN ('pending', 'deleted') ORDER BY s.id DESC" );
 
     $tabs       = array( 'active' => array(), 'paused' => array(), 'inactive' => array() );
     $today      = date( 'Y-m-d H:i:s' );
@@ -769,7 +865,7 @@ function cmp_render_foh_portal() {
 
         if ( $sub->status === 'paused' ) {
             $tabs['paused'][] = $sub;
-        } elseif ( $usage_days >= $total_days_int || $sub->expiry_date < $today ) {
+        } elseif ( $usage_days >= $total_days_int || $sub->expiry_date < $today || $sub->status === 'completed' ) {
             $tabs['inactive'][] = $sub;
         } else {
             $tabs['active'][] = $sub;
@@ -938,7 +1034,7 @@ function cmp_render_foh_portal() {
         .metric-progress-fill { background-color: #379237; height: 100%; border-radius: 4px; transition: width 0.3s ease; }
         .edit-financials-btn:hover { color: #379237 !important; transform: scale(1.1); }
 
-        /* Option 1A: Inline Recipient Pill Badge next to Customer First & Last Name */
+        /* Inline Recipient Pill Badge next to Customer First & Last Name */
         .foh-name-inline-wrap {
             display: inline-flex;
             align-items: center;
@@ -960,7 +1056,6 @@ function cmp_render_foh_portal() {
             white-space: nowrap;
         }
 
-        /* Prevent WordPress wp-emoji from stretching to 100% container width */
         .foh-tile img.emoji,
         .foh-tile img.wp-smiley,
         .sub-table img.emoji,
@@ -1458,7 +1553,7 @@ function cmp_render_foh_portal() {
                             $allergies = $resolved['allergies'];
                             $is_paused = ( $sub->status === 'paused' );
 
-                            // Recipient Extraction (Option 1A: Inline Pill Badge next to First & Last Name without "For:")
+                            // Recipient Extraction (Inline Pill Badge next to First & Last Name without "For:")
                             $plan_parts          = explode( ' - ', $sub->plan_name );
                             $potential_recipient = end( $plan_parts );
                             $recipient_badge     = '';
@@ -1573,7 +1668,7 @@ function cmp_render_foh_portal() {
                                 <span class="foh-mobile-label">Customer Info</span>
                                 <div style="display: flex; flex-direction: column;">
                                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap: 6px;">
-                                        <!-- OPTION 1A: Customer Name + Inline Recipient Pill Badge -->
+                                        <!-- Customer Name + Inline Recipient Pill Badge -->
                                         <div class="foh-name-inline-wrap">
                                             <a href="<?php echo esc_url( site_url( '/my-meal-portal/?admin_edit_sub=' . $sub->id ) ); ?>" target="_blank" style="text-decoration: none;" title="Open Customer Portal in New Tab">
                                                 <strong class="foh-customer-name" style="font-size: 1.08em; color: #379237; border-bottom: 1px dotted #379237; transition: color 0.2s;" id="name-val-<?php echo esc_attr( $sub->id ); ?>" onmouseover="this.style.color='#1B5E20'" onmouseout="this.style.color='#379237'"><?php echo esc_html( $full_name ?: 'Customer' ); ?></strong>
@@ -2139,7 +2234,7 @@ function cmp_render_foh_portal() {
                             otherPill.style.color = pill.style.color;
                             otherPill.style.borderColor = pill.style.borderColor;
                         });
-
+                        fohShowNotice('Deposit wallet status updated and logged.', 'success');
                     } else {
                         fohShowNotice('Error updating status.', 'error');
                         pill.innerHTML = 'Error &#9662;';
@@ -2312,7 +2407,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Save Account Details, Recipient & Plan Mode (Option 1A Inline Pill Update)
+        // Save Account Details, Recipient & Plan Mode
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
