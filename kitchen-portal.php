@@ -2,11 +2,13 @@
 /**
  * Kitchen Command Center & Daily Prep Reporting Portal
  *
- * Phase 4 Upgrades:
+ * Complete Merged Architecture (Phase 3 & Phase 4 Upgrades):
  *  - Removed "Completed Assignments" Tab
  *  - Added "Pending Preparation" Tab with live dynamic counter badge
  *  - Option 5A: Added "Full Customer Roster" Tab showing all Active & Paused subscribers (including "No Food Selection Today")
  *  - Displays Cancelled status with Who cancelled it (Name & Role) and When (Date & Time)
+ *  - Displays Driver Attribution (Option 3A Pill Badge / Option 3B Micro-Text Stamp) & Driver Notes under Delivery Status
+ *  - Includes "Delivered By" and "Driver Note" columns in Kitchen CSV Exports
  *  - Inline Recipient Pill Badge next to Customer Name (without "For:")
  *  - Synchronized with Customer Activity Logs (Meal Portal > Customer Logs)
  */
@@ -171,6 +173,63 @@ if ( ! function_exists( 'cmp_get_kitchen_cancelled_stamp' ) ) {
     }
 }
 
+/**
+ * Formats the Driver Attribution & Driver Note HTML displayed underneath the Delivery dropdown
+ * in the Kitchen Portal according to Option 3A (Pill Badge) or Option 3B (Micro-Text Stamp).
+ */
+if ( ! function_exists( 'cmp_format_kitchen_driver_attribution' ) ) {
+    function cmp_format_kitchen_driver_attribution( $log, $attr_mode = null ) {
+        if ( empty( $log ) || is_null( $log ) ) {
+            return '';
+        }
+        if ( is_array( $log ) ) {
+            $log = (object) $log;
+        }
+
+        $del_res = ! empty( $log->delivery_result ) ? $log->delivery_result : 'Pending';
+        if ( $del_res === 'Pending' ) {
+            return '';
+        }
+
+        $by_name = ! empty( $log->delivered_by_name ) ? $log->delivered_by_name : ( ! empty( $log->updated_by_name ) ? $log->updated_by_name : '' );
+        $by_role = ! empty( $log->delivered_by_role ) ? $log->delivered_by_role : ( ! empty( $log->updated_by_role ) ? $log->updated_by_role : 'Driver' );
+        $at_raw  = ( ! empty( $log->delivered_at ) && $log->delivered_at !== '0000-00-00 00:00:00' )
+            ? $log->delivered_at
+            : ( ( ! empty( $log->updated_at ) && $log->updated_at !== '0000-00-00 00:00:00' ) ? $log->updated_at : '' );
+        $d_note  = ! empty( $log->driver_note ) ? trim( (string) $log->driver_note ) : '';
+
+        if ( empty( $by_name ) && empty( $d_note ) ) {
+            return '';
+        }
+
+        if ( $attr_mode === null ) {
+            $attr_mode = get_option( 'cmp_driver_kitchen_attr', '3A' );
+        }
+
+        $html = '';
+
+        if ( ! empty( $by_name ) ) {
+            if ( $attr_mode === '3B' ) {
+                // Option 3B: Plain Micro-Text Stamp
+                $time_fmt = ! empty( $at_raw ) ? ' • ' . date( 'd M, h:i A', strtotime( $at_raw ) ) : '';
+                $role_fmt = ! empty( $by_role ) ? ' (' . $by_role . ')' : '';
+                $html .= '<div class="kp-driver-micro">Updated by ' . esc_html( $by_name . $role_fmt . $time_fmt ) . '</div>';
+            } else {
+                // Option 3A (Default): Compact Color-Coded Pill Badge
+                $time_short = ! empty( $at_raw ) ? ' • ' . date( 'h:i A', strtotime( $at_raw ) ) : '';
+                $pill_tone  = ( $del_res === 'Successful' ) ? 'pill-success' : 'pill-issue';
+                $html .= '<div class="kp-driver-pill ' . esc_attr( $pill_tone ) . '" title="Updated by ' . esc_attr( $by_name . ' (' . $by_role . ')' ) . '">🚚 ' . esc_html( $by_name . $time_short ) . '</div>';
+            }
+        }
+
+        if ( ! empty( $d_note ) ) {
+            $html .= '<div class="kp-driver-note-box"><strong>Driver Note:</strong> ' . esc_html( $d_note ) . '</div>';
+        }
+
+        return $html;
+    }
+}
+
 // ==========================================
 // 1. AJAX HANDLERS: KITCHEN ACTIONS & EXPORT
 // ==========================================
@@ -217,8 +276,9 @@ function cmp_ajax_kitchen_action() {
         wp_send_json_error( 'Invalid field.' );
     }
 
-    $update_data     = array( $field => $value );
-    $cancelled_stamp = '';
+    $update_data      = array( $field => $value );
+    $cancelled_stamp  = '';
+    $driver_attr_html = '';
 
     // Stamp Actor & Record Activity Log when delivery_result is updated (e.g. Cancelled, Returned, Successful)
     if ( $field === 'delivery_result' ) {
@@ -235,11 +295,18 @@ function cmp_ajax_kitchen_action() {
 
         $action_label = ( $value === 'Cancelled' ) ? 'Cancelled' : 'Delivery: ' . $value;
 
-        $update_data['updated_by_id']    = $actor['id'];
-        $update_data['updated_by_name']  = $actor['name'];
-        $update_data['updated_by_role']  = $actor['role'];
-        $update_data['last_action_type'] = $action_label;
-        $update_data['updated_at']       = $now_datetime;
+        $update_data['updated_by_id']     = $actor['id'];
+        $update_data['updated_by_name']   = $actor['name'];
+        $update_data['updated_by_role']   = $actor['role'];
+        $update_data['last_action_type']  = $action_label;
+        $update_data['updated_at']        = $now_datetime;
+        $update_data['delivered_by_id']   = ( $value === 'Pending' ) ? 0 : $actor['id'];
+        $update_data['delivered_by_name'] = ( $value === 'Pending' ) ? '' : $actor['name'];
+        $update_data['delivered_by_role'] = ( $value === 'Pending' ) ? '' : $actor['role'];
+        $update_data['delivered_at']      = ( $value === 'Pending' ) ? null : $now_datetime;
+        if ( $value === 'Pending' ) {
+            $update_data['driver_note'] = null;
+        }
 
         if ( $value === 'Cancelled' ) {
             $cancelled_stamp = sprintf(
@@ -249,6 +316,9 @@ function cmp_ajax_kitchen_action() {
                 date( 'd M Y, h:i A', strtotime( $now_datetime ) )
             );
         }
+
+        $mock_log         = (object) array_merge( (array) $current_log, $update_data );
+        $driver_attr_html = cmp_format_kitchen_driver_attribution( $mock_log );
 
         if ( function_exists( 'cmp_record_customer_activity_log' ) && $current_log->delivery_result !== $value ) {
             $old_snap = function_exists( 'cmp_format_log_meal_snapshot' )
@@ -270,7 +340,8 @@ function cmp_ajax_kitchen_action() {
 
     $wpdb->update( $table_logs, $update_data, array( 'id' => $log_id ) );
     wp_send_json_success( array(
-        'cancelled_stamp' => $cancelled_stamp,
+        'cancelled_stamp'  => $cancelled_stamp,
+        'driver_attr_html' => $driver_attr_html,
     ) );
 }
 
@@ -448,9 +519,9 @@ function cmp_export_kitchen_csv() {
     fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
 
     if ( $export_type === 'juices' ) {
-        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery / Cancellation Info', 'POS Check' ) );
+        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Juice 1', 'Juice 2', 'Juice 3', 'Prepared', 'Dispatched', 'Delivery / Cancellation Info', 'Delivered By', 'Driver Note', 'POS Check' ) );
     } else {
-        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Breakfast / Meal 1', 'Lunch / Meal 2', 'Dinner / Meal 3', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery / Cancellation Info', 'POS Check' ) );
+        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Eating Date', 'Address', 'Method', 'Receive By', 'Delivery Date', 'Time Slot', 'Allergies', 'FOH Note', 'Plan', 'Breakfast / Meal 1', 'Lunch / Meal 2', 'Dinner / Meal 3', 'Snack 1', 'Snack 2', 'Prepared', 'Dispatched', 'Delivery / Cancellation Info', 'Delivered By', 'Driver Note', 'POS Check' ) );
     }
 
     $export_rows       = array();
@@ -495,6 +566,15 @@ function cmp_export_kitchen_csv() {
         $dispatched = $is_cancelled ? 'N/A' : ( $log->dispatch_status ? 'Yes' : 'No' );
         $delivery   = $is_cancelled ? cmp_get_kitchen_cancelled_stamp( $log ) : ( $log->delivery_result ?: 'Pending' );
         $pos_check  = $is_cancelled ? 'N/A' : ( $log->pos_updated ? 'Yes' : 'No' );
+
+        $delivered_by_col = '-';
+        if ( ! empty( $log->delivered_by_name ) && $log->delivery_result !== 'Pending' ) {
+            $del_time_str = ( ! empty( $log->delivered_at ) && $log->delivered_at !== '0000-00-00 00:00:00' )
+                ? ' (' . date( 'd M h:i A', strtotime( $log->delivered_at ) ) . ')'
+                : '';
+            $delivered_by_col = $log->delivered_by_name . $del_time_str;
+        }
+        $driver_note_col = ! empty( $log->driver_note ) ? wp_strip_all_tags( $log->driver_note ) : '-';
 
         $day_number = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs 
@@ -554,7 +634,7 @@ function cmp_export_kitchen_csv() {
                 if ( $log->custom_juice_3 )      $j3 = $log->custom_juice_3 . $chef_tag;
                 elseif ( $log->juice_3_id )      $j3 = ( $food_map[ $log->juice_3_id ] ?? 'Unknown' ) . $chef_tag;
             }
-            $row_data = array( $order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $j1, $j2, $j3, $prepared, $dispatched, $delivery, $pos_check );
+            $row_data = array( $order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $j1, $j2, $j3, $prepared, $dispatched, $delivery, $delivered_by_col, $driver_note_col, $pos_check );
         } else {
             $b  = '-';
             $l  = '-';
@@ -586,7 +666,7 @@ function cmp_export_kitchen_csv() {
                 $s1 = ! empty( $log->custom_snack_1 )   ? $log->custom_snack_1   : ( $log->snack_1_id   ? ( $food_map[ $log->snack_1_id ]   ?? 'Unknown' ) . $chef_tag : '-' );
                 $s2 = ! empty( $log->custom_snack_2 )   ? $log->custom_snack_2   : ( $log->snack_2_id   ? ( $food_map[ $log->snack_2_id ]   ?? 'Unknown' ) . $chef_tag : '-' );
             }
-            $row_data = array( $order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $pos_check );
+            $row_data = array( $order_id_display, $full_name, $recipient_name, $email, $phone, $log->target_date, $address, $method, $timing, $delivery_date, $time_slot, $allergies, $foh_note, $plan_string, $b, $l, $d, $s1, $s2, $prepared, $dispatched, $delivery, $delivered_by_col, $driver_note_col, $pos_check );
         }
 
         $export_rows[] = array(
@@ -676,6 +756,8 @@ function cmp_export_kitchen_csv() {
                     'N/A',
                     'N/A',
                     $roster_status_txt,
+                    '-',
+                    '-',
                     'N/A',
                 );
 
@@ -869,7 +951,8 @@ function cmp_render_kitchen_portal() {
             $display_order_id = 'M-' . str_pad( $log->subscription_id, 4, '0', STR_PAD_LEFT );
         }
 
-        $cancelled_stamp = $is_cancelled ? cmp_get_kitchen_cancelled_stamp( $log ) : '';
+        $cancelled_stamp  = $is_cancelled ? cmp_get_kitchen_cancelled_stamp( $log ) : '';
+        $driver_attr_html = cmp_format_kitchen_driver_attribution( $log );
 
         $customers[] = array(
             'log_id'             => $log->id,
@@ -894,6 +977,7 @@ function cmp_render_kitchen_portal() {
             'is_expired'         => $is_expired,
             'is_cancelled'       => $is_cancelled,
             'cancelled_stamp'    => $cancelled_stamp,
+            'driver_attr_html'   => $driver_attr_html,
             'is_unscheduled'     => false,
             'is_paused'          => false,
             'prepared'           => $log->is_prepared,
@@ -1006,6 +1090,7 @@ function cmp_render_kitchen_portal() {
                 'is_expired'         => false,
                 'is_cancelled'       => false,
                 'cancelled_stamp'    => '',
+                'driver_attr_html'   => '',
                 'is_unscheduled'     => true,
                 'is_paused'          => $is_paused_sub,
                 'prepared'           => 0,
@@ -1261,6 +1346,60 @@ function cmp_render_kitchen_portal() {
         }
         .k-row.row-is-paused {
             background: #fffdf5;
+        }
+
+        /* ==========================================
+           PHASE 3: DRIVER ATTRIBUTION (OPTION 3A & 3B) & DRIVER NOTE
+           ========================================== */
+        .kp-driver-attr-wrap {
+            margin-top: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: left;
+        }
+        .kp-driver-pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            font-size: 0.76em;
+            font-weight: 800;
+            line-height: 1.2;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+        }
+        .kp-driver-pill.pill-success {
+            background: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+        .kp-driver-pill.pill-issue {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+        }
+        .kp-driver-micro {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: #475569;
+            line-height: 1.25;
+            text-align: center;
+        }
+        .kp-driver-note-box {
+            background: #fffbeb;
+            color: #92400e;
+            border: 1px solid #fde68a;
+            border-left: 3px solid #f59e0b;
+            border-radius: 5px;
+            padding: 4px 6px;
+            font-size: 0.76em;
+            line-height: 1.3;
+            word-break: break-word;
         }
 
         /* ==========================================
@@ -1977,6 +2116,10 @@ function cmp_render_kitchen_portal() {
                                         <option value="Cancelled" <?php selected( $c['delivery'], 'Cancelled' ); ?>>Cancelled</option>
                                         <option value="Returned" <?php selected( $c['delivery'], 'Returned' ); ?>>Returned</option>
                                     </select>
+                                    <!-- PHASE 3: Driver Attribution Badge & Driver Note -->
+                                    <div id="kp-driver-attr-<?php echo esc_attr( $c['log_id'] ); ?>" class="kp-driver-attr-wrap">
+                                        <?php echo $c['driver_attr_html']; ?>
+                                    </div>
                                 <?php endif; ?>
                             </td>
 
@@ -2398,9 +2541,13 @@ function cmp_render_kitchen_portal() {
                     kpShowNotice(res.data || 'Permission Denied.', 'error'); 
                     setTimeout(function() { location.reload(); }, 900);
                 } else if (field === 'delivery_result') {
-                    var $banner = $('#kp-cancel-banner-' + logId);
-                    var $meta   = $('#kp-cancel-meta-' + logId);
-                    var $row    = $('tr.k-row[data-log-id="' + logId + '"]');
+                    var $banner   = $('#kp-cancel-banner-' + logId);
+                    var $meta     = $('#kp-cancel-meta-' + logId);
+                    var $attrWrap = $('#kp-driver-attr-' + logId);
+                    var $row      = $('tr.k-row[data-log-id="' + logId + '"]');
+                    if ($attrWrap.length && res.data && typeof res.data.driver_attr_html !== 'undefined') {
+                        $attrWrap.html(res.data.driver_attr_html);
+                    }
                     if (val === 'Cancelled') {
                         if (res.data && res.data.cancelled_stamp && $meta.length) {
                             $meta.text(res.data.cancelled_stamp);
