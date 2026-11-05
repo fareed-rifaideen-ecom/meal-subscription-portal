@@ -693,6 +693,7 @@ function cmp_render_accounts_dashboard() {
         </div>
 
         <?php
+        if ( ! function_exists( 'render_accounts_sub_table' ) ) {
         function render_accounts_sub_table( $subs_array, $table_id, $status_filter, $dash_start, $dash_end, $is_active = false ) {
             $display = $is_active ? 'active' : '';
             $title   = ucfirst( $status_filter ) . ' Plans';
@@ -819,6 +820,7 @@ function cmp_render_accounts_dashboard() {
                 echo "<tr class='acc-no-search-match' style='display:none;'><td colspan='5' style='text-align:center; padding:30px; color:#64748b;'>No matching customer records found for your search.</td></tr>";
             }
             echo "</tbody></table></div></div>";
+        }
         }
         ?>
 
