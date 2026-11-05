@@ -2,7 +2,11 @@
 /**
  * Customer Portal - Frontend Styles (CSS) & Interactive Scripts (JS)
  * Part 2 of the 3-file Customer Portal modular architecture.
- * Phase 3: Staff-Only Micro-Footer Audit Strip (Option 2B) & Admin Cancellation Reset (Option 3A)
+ *
+ * Phase 3 & Same-Day Prep (Option PREP-C) Upgrades:
+ *  - Option PREP-C: Submits staff-only `prep_timing` in `.save-logistics-btn` and live-updates `#prep-schedule-val-{sub_id}`
+ *  - Option 2B: Staff-Only Micro-Footer Audit Strip
+ *  - Option 3A: Admin Cancellation Reset
  */
 
 // Prevent direct file access
@@ -2780,6 +2784,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
             // =========================================================
             // FOH / STAFF INLINE LOGISTICS EDIT + HYBRID CUSTOM TIMING
+            // & OPTION PREP-C KITCHEN PREP SCHEDULE OVERRIDE
             // =========================================================
             $('.toggle-logistics-edit').on('click', function(e) {
                 e.preventDefault();
@@ -2887,6 +2892,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var saveCustomTiming = isCustomTiming && $('#save-custom-timing-' + subId).is(':checked') ? 1 : 0;
                 var saveCustomSlot   = isCustomSlot   && $('#save-custom-slot-' + subId).is(':checked')   ? 1 : 0;
 
+                // Option PREP-C: Staff-only Kitchen Prep Schedule selector
+                var prepTimingSelect = $('#edit-prep-timing-' + subId);
+                var prepTimingVal    = prepTimingSelect.length ? prepTimingSelect.val() : 'auto';
+
                 if (!timing) {
                     cmpShowNotice('Please enter or select a valid Delivery Timing (Receive By) option.', 'error');
                     return;
@@ -2910,6 +2919,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     delivery_timing: timing,
                     time_slot: timeSlot,
                     allergies: allergies,
+                    prep_timing: prepTimingVal,
                     save_custom_timing: saveCustomTiming,
                     save_custom_slot: saveCustomSlot
                 };
@@ -2923,6 +2933,25 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         $('#time-slot-val-' + subId).text(res.data.time_slot);
                         $('#allergies-val-' + subId).text(res.data.allergies);
                         $('#mobile-drawer-summary-' + subId).text(res.data.timing + ' (' + res.data.time_slot + ') • ' + res.data.allergies);
+
+                        // Live update Staff-Only Kitchen Prep Schedule indicator
+                        if (res.data.prep_schedule_label && $('#prep-schedule-val-' + subId).length) {
+                            var $prepBadge = $('#prep-schedule-val-' + subId);
+                            $prepBadge.text(res.data.prep_schedule_label);
+                            if (parseInt(res.data.is_same_day_prep) === 1) {
+                                $prepBadge.css({
+                                    background: '#fef3c7',
+                                    color: '#92400e',
+                                    border: '1px solid #f59e0b'
+                                });
+                            } else {
+                                $prepBadge.css({
+                                    background: '#f1f5f9',
+                                    color: '#334155',
+                                    border: '1px solid #cbd5e1'
+                                });
+                            }
+                        }
 
                         if (isCustomTiming) {
                             if (timingSelect.find('option[value="' + res.data.timing.replace(/"/g, '\\"') + '"]').length === 0) {
@@ -2966,7 +2995,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         }
 
                         btn.text('✓ Saved').css('background', '#1B5E20');
-                        cmpShowNotice('Logistics saved specifically for this meal plan.', 'success');
+                        cmpShowNotice('Logistics & prep schedule saved specifically for this meal plan.', 'success');
 
                         setTimeout(function() {
                             $('#logistics-edit-' + subId).hide();
