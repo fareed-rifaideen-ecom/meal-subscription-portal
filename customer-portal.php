@@ -3,12 +3,14 @@
  * Customer Portal - Main Shortcode Controller & HTML View Template
  * Part 3 of the 3-file Customer Portal modular architecture.
  *
- * Phase 3 Upgrades:
+ * Phase 3 & Same-Day Prep (Option PREP-C) Upgrades:
+ *  - Option PREP-C: Staff-Only Kitchen Prep Schedule display & override selector ('auto', 'same_day', 'day_before') inside Active Logistics (100% hidden from customers)
+ *  - Option 4A: Staff-Only "No POS Required" badge on Cancelled & Returned meal rows
  *  - Option 2B: Staff-Only Full-Width Micro-Footer Audit Strip on Meal Cards (Visible to FOH, Kitchen, Menu Manager & Admin)
  *  - Option 3A: Admin-Only Reset of Cancelled Days (Removes from Kitchen Portal, Reverses Extra Day & Restores Pending Slot)
  *
  * Automatically loads:
- *  1. customer-portal-backend.php (DB setup, Role/Date Helpers, AJAX Endpoints, CSV Exporters & WP Admin Feedback Page)
+ *  1. customer-portal-backend.php (DB setup, Role/Date/Prep Helpers, AJAX Endpoints, CSV Exporters & WP Admin Feedback Page)
  *  2. customer-portal-assets.php  (Responsive CSS Stylesheet & Interactive JS/jQuery Engine)
  */
 
@@ -52,6 +54,9 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
 
         if ( function_exists( 'cmp_auto_patch_database' ) ) {
             cmp_auto_patch_database();
+        }
+        if ( function_exists( 'cmp_ensure_prep_timing_column' ) ) {
+            cmp_ensure_prep_timing_column();
         }
 
         global $wpdb;
@@ -225,9 +230,9 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
             <?php
             $first_content = true;
             foreach ( $subs as $sub ) :
-                $tab_id         = 'plan-tab-' . $sub->id;
-                $active_class   = $first_content ? 'active' : '';
-                $first_content  = false;
+                $tab_id        = 'plan-tab-' . $sub->id;
+                $active_class  = $first_content ? 'active' : '';
+                $first_content = false;
 
                 // Resolve per-plan logistics, address & allergies (Subscription Row -> WC Order Meta -> User Meta)
                 $resolved = function_exists( 'cmp_get_subscription_logistics' )
@@ -245,6 +250,11 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 $pickup       = $resolved['pickup'] ?? '';
                 $allergies    = $resolved['allergies'] ?? '';
                 $address      = $resolved['address'] ?? 'Address not provided';
+
+                // Option PREP-C: Resolve Kitchen Prep Schedule (Staff-Only Visibility)
+                $prep_timing_mode   = ! empty( $sub->prep_timing ) ? $sub->prep_timing : 'auto';
+                $is_same_day_prep   = function_exists( 'cmp_is_same_day_prep_subscription' ) ? cmp_is_same_day_prep_subscription( $sub, $resolved ) : false;
+                $prep_schedule_disp = function_exists( 'cmp_get_prep_schedule_display_label' ) ? cmp_get_prep_schedule_display_label( $sub, $resolved ) : ( $is_same_day_prep ? '⚡ Same-Day Prep' : 'Day-Before Prep' );
 
                 // Load saved renewal/multi-plan logistics profiles for this customer
                 $saved_logistics_profiles = function_exists( 'cmp_get_user_saved_logistics_profiles' )
@@ -397,7 +407,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                 <?php endif; ?>
                             </div>
 
-                            <!-- Active Logistics Card (With Staff Hybrid Custom Timing & Slot Engine) -->
+                            <!-- Active Logistics Card (With Staff Hybrid Custom Timing, Slot & Kitchen Prep Schedule Engine) -->
                             <div class="cmp-logistics-card-box">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -421,6 +431,16 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
 
                                         <div class="cmp-kv-label">Time Slot:</div>
                                         <div class="cmp-kv-val"><span id="time-slot-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $time_slot_display ); ?></span></div>
+
+                                        <?php if ( $can_edit_staff_logistics ) : ?>
+                                        <!-- Option PREP-C: Staff-Only Kitchen Prep Schedule Indicator (Hidden from Customers) -->
+                                        <div class="cmp-kv-label" style="color:#1B5E20;">Kitchen Prep:</div>
+                                        <div class="cmp-kv-val">
+                                            <span id="prep-schedule-val-<?php echo esc_attr( $sub->id ); ?>" style="display:inline-block; padding:2px 8px; border-radius:999px; font-size:0.8em; font-weight:800; <?php echo $is_same_day_prep ? 'background:#fef3c7; color:#92400e; border:1px solid #f59e0b;' : 'background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;'; ?>">
+                                                <?php echo esc_html( $prep_schedule_disp ); ?>
+                                            </span>
+                                        </div>
+                                        <?php endif; ?>
                                     </div>
 
                                     <div class="cmp-allergy-Dynamic-box">
@@ -495,6 +515,16 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                 <span>Save this time slot to dropdown presets for future use</span>
                                             </label>
                                         </div>
+                                    </div>
+
+                                    <!-- Option PREP-C: Staff-Only Kitchen Prep Schedule Selector (Hidden from Customers) -->
+                                    <div style="margin-bottom:10px; padding:8px 10px; background:#EEF7E3; border:1px solid #68B946; border-radius:6px;">
+                                        <label style="font-size:0.8em; font-weight:800; color:#1B5E20; display:block; margin-bottom:4px; text-transform:uppercase;">Kitchen Prep Schedule (Staff Only):</label>
+                                        <select id="edit-prep-timing-<?php echo esc_attr( $sub->id ); ?>" style="width:100%; padding:7px; font-size:0.88em; border:1px solid #cbd5e1; border-radius:6px; background:#ffffff; box-sizing:border-box;">
+                                            <option value="auto" <?php selected( $prep_timing_mode, 'auto' ); ?>>Auto (Same-Day if Same Day &ge; 4:00 PM)</option>
+                                            <option value="same_day" <?php selected( $prep_timing_mode, 'same_day' ); ?>>Same-Day Prep (Manual Override)</option>
+                                            <option value="day_before" <?php selected( $prep_timing_mode, 'day_before' ); ?>>Day-Before Prep (Manual Override)</option>
+                                        </select>
                                     </div>
 
                                     <div style="margin-bottom:10px;">
@@ -675,11 +705,14 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     $status_badge = '<span class="cmp-status-pill pill-confirmed">Selected</span>';
                                 }
 
-                                // Read-Only POS Check Badges for FOH, Menu Manager & Admin
+                                // Option 4A: Read-Only POS Check Badges for FOH, Menu Manager & Admin (Exempts Cancelled & Returned)
                                 $desktop_pos_badge = '';
                                 $mobile_pos_badge  = '';
-                                if ( $can_view_pos_check && $log_id > 0 && ! $is_void ) {
-                                    if ( $pos_updated ) {
+                                if ( $can_view_pos_check && $log_id > 0 ) {
+                                    if ( $is_void ) {
+                                        $desktop_pos_badge = '<span class="cmp-pos-readonly-pill pos-is-pending" title="No POS reconciliation required for Cancelled or Returned meals">No POS Req.</span>';
+                                        $mobile_pos_badge  = '<span class="cmp-pos-micro-pill pos-is-pending" title="No POS Required">No POS</span>';
+                                    } elseif ( $pos_updated ) {
                                         $desktop_pos_badge = '<span class="cmp-pos-readonly-pill pos-is-checked" title="POS Reconciled">✓ POS Checked</span>';
                                         $mobile_pos_badge  = '<span class="cmp-pos-micro-pill pos-is-checked" title="POS Checked">POS ✓</span>';
                                     } else {
