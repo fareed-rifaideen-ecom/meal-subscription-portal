@@ -101,7 +101,7 @@ function cmp_sa_bust_consumption_cache_on_ajax() {
     delete_transient( 'cmp_sa_used_days_sync_lock' );
 }
 
-// AJAX Handler: Delete Subscription Directly from Executive Drill-Down Screen
+// AJAX Handler: Delete Subscription Directly from Executive Drill-Down Screen (Logs to Customer Logs)
 add_action( 'wp_ajax_cmp_sa_delete_subscription', 'cmp_sa_ajax_delete_subscription' );
 function cmp_sa_ajax_delete_subscription() {
     check_ajax_referer( 'cmp_sa_exec_nonce', 'nonce' );
@@ -117,6 +117,21 @@ function cmp_sa_ajax_delete_subscription() {
 
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    $sub_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+
+    if ( $sub_row && function_exists( 'cmp_record_customer_activity_log' ) ) {
+        cmp_record_customer_activity_log( array(
+            'subscription_id' => $sub_id,
+            'wc_order_id'     => intval( $sub_row->wc_order_id ),
+            'user_id'         => intval( $sub_row->user_id ),
+            'plan_name'       => $sub_row->plan_name,
+            'action_type'     => 'Plan Deleted',
+            'target_date'     => date( 'Y-m-d' ),
+            'old_status'      => sprintf( 'Plan Status: %s (%d Total Days)', ucfirst( $sub_row->status ), intval( $sub_row->total_days ) ),
+            'new_status'      => 'Subscription & Daily Logs Permanently Deleted from Executive Portal',
+        ) );
+    }
 
     $wpdb->delete( $table_logs, array( 'subscription_id' => $sub_id ), array( '%d' ) );
     $deleted = $wpdb->delete( $table_subs, array( 'id' => $sub_id ), array( '%d' ) );
@@ -171,9 +186,10 @@ function cmp_sa_format_order_id( $wc_order_id, $sub_id = 0 ) {
     return 'M-' . str_pad( intval( $sub_id ), 4, '0', STR_PAD_LEFT );
 }
 
-function cmp_sa_get_customer_contact( $user_id, $wc_order_id, $fallback_display = '', $fallback_email = '' ) {
+function cmp_sa_get_customer_contact( $user_id, $wc_order_id, $fallback_display = '', $fallback_email = '', $sub_obj = null ) {
     static $cache = array();
-    $cache_key = intval( $user_id ) . '_' . intval( $wc_order_id );
+    $sub_id_key = ( is_object( $sub_obj ) && ! empty( $sub_obj->subscription_id ) ) ? intval( $sub_obj->subscription_id ) : ( ( is_object( $sub_obj ) && ! empty( $sub_obj->id ) ) ? intval( $sub_obj->id ) : 0 );
+    $cache_key  = intval( $user_id ) . '_' . intval( $wc_order_id ) . '_' . $sub_id_key;
     if ( isset( $cache[ $cache_key ] ) ) {
         return $cache[ $cache_key ];
     }
@@ -188,7 +204,10 @@ function cmp_sa_get_customer_contact( $user_id, $wc_order_id, $fallback_display 
 
     $email  = $order ? ( $order->get_billing_email() ?: $fallback_email ) : $fallback_email;
     $phone  = $order ? $order->get_billing_phone() : get_user_meta( $user_id, 'billing_phone', true );
-    $timing = $order ? ( $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' ) ) : '';
+    $timing = ( is_object( $sub_obj ) && ! empty( $sub_obj->delivery_timing ) ) ? $sub_obj->delivery_timing : '';
+    if ( empty( $timing ) && $order ) {
+        $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
+    }
     if ( empty( $timing ) ) {
         $timing = get_user_meta( $user_id, 'delivery_timing', true ) ?: 'Same Day';
     }
@@ -202,6 +221,48 @@ function cmp_sa_get_customer_contact( $user_id, $wc_order_id, $fallback_display 
         'is_day_before' => $is_day_before,
     );
     return $cache[ $cache_key ];
+}
+
+/**
+ * Option 2B Helper: Builds a concise attribution & context string for Cancelled / Returned logs
+ */
+function cmp_sa_format_log_attribution( $log_obj ) {
+    $del_res = ! empty( $log_obj->delivery_result ) ? $log_obj->delivery_result : 'Pending';
+    if ( ! in_array( $del_res, array( 'Cancelled', 'Returned' ), true ) ) {
+        return array(
+            'header' => '',
+            'byline' => '',
+            'pre_prep_cancel' => false,
+        );
+    }
+
+    $by_name = ! empty( $log_obj->updated_by_name ) ? $log_obj->updated_by_name : '';
+    $by_role = ! empty( $log_obj->updated_by_role ) ? $log_obj->updated_by_role : '';
+    $at_time = ( ! empty( $log_obj->updated_at ) && $log_obj->updated_at !== '0000-00-00 00:00:00' ) ? $log_obj->updated_at : '';
+
+    $is_pre_prep = ( $del_res === 'Cancelled' && intval( $log_obj->is_prepared ) === 0 && intval( $log_obj->dispatch_status ) === 0 && strtolower( $by_role ) !== 'kitchen' );
+
+    if ( $del_res === 'Returned' ) {
+        $header = 'DELIVERY RETURNED';
+    } elseif ( $is_pre_prep ) {
+        $header = 'DO NOT PREPARE';
+    } else {
+        $header = ( intval( $log_obj->is_prepared ) === 1 || intval( $log_obj->dispatch_status ) === 1 ) ? 'CANCELLED AFTER PREP' : 'CANCELLED BY KITCHEN';
+    }
+
+    if ( ! empty( $by_name ) ) {
+        $role_str = ! empty( $by_role ) ? ' (' . $by_role . ')' : '';
+        $time_str = ! empty( $at_time ) ? ' • ' . date( 'd M, h:i A', strtotime( $at_time ) ) : '';
+        $byline   = 'By ' . $by_name . $role_str . $time_str;
+    } else {
+        $byline = ( $del_res === 'Returned' ) ? 'Marked Returned' : 'Cancelled prior to cut-off';
+    }
+
+    return array(
+        'header'          => $header,
+        'byline'          => $byline,
+        'pre_prep_cancel' => $is_pre_prep,
+    );
 }
 
 // ==========================================
@@ -264,8 +325,6 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
     }
 
     // 2. Unrenewed Expired / Completed Customers & Cost of Churn SQL Aggregation:
-    //    Strictly selects customers who have a Completed or Expired plan AND do NOT have any currently Active or Paused plan
-    //    (checked across both user_id and user_email so renewed customers never appear here).
     $churn_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT 
             COUNT(s.id) AS churned_count,
@@ -312,8 +371,8 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
     }
 
     // 4. Single SQL Aggregation for Operational Pulse, POS Reconciliation & Aging Bottlenecks
-    //    OPTION A1: Excludes Paused Plans (`s.status = 'paused'`) and Cancelled Meal Days (`l.delivery_result = 'Cancelled'`)
-    //    from Pending Preparation, Dispatch, Delivery Status, and POS Checks.
+    //    OPTION 4A: Excludes Paused Plans (`s.status = 'paused'`), Cancelled Meal Days (`l.delivery_result = 'Cancelled'`),
+    //    AND Returned Meal Days (`l.delivery_result = 'Returned'`) from Pending Preparation, Dispatch, and POS Checks.
     $prep_target_start = date( 'Y-m-d', strtotime( $op_start . ' +1 day' ) );
     $prep_target_end   = date( 'Y-m-d', strtotime( $op_end . ' +1 day' ) );
     $min_log_date      = min( $op_start, $today_date );
@@ -321,9 +380,9 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
 
     $log_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND s.status IN ('active', 'completed') AND l.delivery_result IN ('Successful', 'Returned') THEN 1 END) AS pending_pos_count,
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND s.status IN ('active', 'completed') AND l.delivery_result IN ('Successful', 'Returned') AND DATEDIFF(%s, l.target_date) > 2 THEN 1 END) AS overdue_pos_count,
-            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 AND s.status IN ('active', 'completed') AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled') THEN 1 END) AS completed_pos_count,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND s.status IN ('active', 'completed') AND l.delivery_result = 'Successful' THEN 1 END) AS pending_pos_count,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND s.status IN ('active', 'completed') AND l.delivery_result = 'Successful' AND DATEDIFF(%s, l.target_date) > 2 THEN 1 END) AS overdue_pos_count,
+            COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 AND s.status IN ('active', 'completed') AND l.delivery_result = 'Successful' THEN 1 END) AS completed_pos_count,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result = 'Pending') THEN 1 END) AS pending_delivery_count,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status = 'active' AND (l.delivery_result IS NULL OR l.delivery_result = 'Pending') AND DATEDIFF(%s, l.target_date) > 2 THEN 1 END) AS overdue_delivery_count,
             COUNT(CASE WHEN l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND s.status IN ('active', 'completed') AND l.delivery_result = 'Successful' AND l.pos_updated = 1 THEN 1 END) AS successful_deliveries,
@@ -361,7 +420,7 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
         "SELECT l.id, l.target_date, l.plan_mode, s.allow_custom
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
-         INNER JOIN {$table_users} u ON s.user_id = u.ID
+         INNER JOIN {$table_users} u ON l.user_id = u.ID
          WHERE l.is_chefs_choice = 1
          AND s.status = 'active'
          AND l.target_date >= %s
@@ -571,7 +630,6 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     // GROUP A: SUBSCRIPTION-BASED VIEWS
     if ( in_array( $sa_view, array( 'unrenewed_expired', 'active_plans', 'paused_plans', 'expiring_soon', 'period_sales' ), true ) ) {
         if ( $sa_view === 'unrenewed_expired' ) {
-            // Strictly Completed or Expired customers who do NOT have any currently Active or Paused plan
             $where_sql = $wpdb->prepare(
                 "s.id IN (
                     SELECT MAX(s2.id)
@@ -630,7 +688,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
                 $used_days  = intval( $sub->used_days );
                 $total_days = intval( $sub->total_days );
                 $balance    = max( 0, $total_days - $used_days );
-                $contact    = cmp_sa_get_customer_contact( $uid, $sub->wc_order_id, $sub->display_name, $sub->user_email );
+                $contact    = cmp_sa_get_customer_contact( $uid, $sub->wc_order_id, $sub->display_name, $sub->user_email, $sub );
 
                 $price      = floatval( $sub->plan_price );
                 $discount   = floatval( $sub->discount_amount );
@@ -679,16 +737,16 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     }
 
     // GROUP B: DAILY LOGS-BASED VIEWS
-    // Option A1: Exclude Paused Plans (`s.status = 'paused'`) & Cancelled Meal Days (`l.delivery_result = 'Cancelled'`) from Pending views
+    // Option 4A: Exclude Paused Plans (`s.status = 'paused'`), Cancelled Meal Days, and Returned Meal Days from Pending POS views
     if ( $sa_view === 'pending_pos' ) {
         $where_sql = $wpdb->prepare(
-            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result IN ('Successful', 'Returned')",
+            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 0 AND l.delivery_result = 'Successful'",
             $op_start, $op_end
         );
         $order_by = "(DATEDIFF('{$today_date}', l.target_date) > 2) DESC, l.target_date ASC, l.id DESC";
     } elseif ( $sa_view === 'completed_pos' ) {
         $where_sql = $wpdb->prepare(
-            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')",
+            "s.status IN ('active', 'completed') AND l.target_date >= %s AND l.target_date <= %s AND l.is_locked = 1 AND l.pos_updated = 1 AND l.delivery_result = 'Successful'",
             $op_start, $op_end
         );
         $order_by = "l.target_date DESC, l.id DESC";
@@ -737,7 +795,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     ) );
 
     $raw_logs = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.wc_order_id, s.plan_name, u.display_name, u.user_email,
+        "SELECT l.*, s.wc_order_id, s.plan_name, s.delivery_timing, u.display_name, u.user_email,
                 DATEDIFF(%s, l.target_date) AS age_days
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
@@ -750,11 +808,12 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
     $formatted = array();
     if ( $raw_logs ) {
         foreach ( $raw_logs as $l ) {
-            $contact  = cmp_sa_get_customer_contact( $l->user_id, $l->wc_order_id, $l->display_name, $l->user_email );
+            $contact  = cmp_sa_get_customer_contact( $l->user_id, $l->wc_order_id, $l->display_name, $l->user_email, $l );
             $prep_dt  = date( 'Y-m-d', strtotime( $l->target_date . ' -1 day' ) );
             $del_date = $contact['is_day_before'] ? $prep_dt : $l->target_date;
             $del_res  = ! empty( $l->delivery_result ) ? $l->delivery_result : 'Pending';
             $age_days = intval( $l->age_days );
+            $attrib   = cmp_sa_format_log_attribution( $l );
 
             $formatted[] = array(
                 'log_id'          => intval( $l->id ),
@@ -773,6 +832,9 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
                 'pos_updated'     => intval( $l->pos_updated ),
                 'age_days'        => $age_days,
                 'is_overdue'      => ( $age_days > 2 ),
+                'attrib_header'   => $attrib['header'],
+                'attrib_byline'   => $attrib['byline'],
+                'pre_prep_cancel' => $attrib['pre_prep_cancel'],
             );
         }
     }
@@ -831,16 +893,22 @@ function cmp_sa_export_drilldown_csv() {
             ) );
         }
     } else {
-        fputcsv( $output, array( 'Eating Date', 'Delivery Date', 'Timing', 'Age (Days)', 'Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Name', 'Prepared', 'Dispatched', 'Delivery Result', 'POS Reconciled' ) );
+        fputcsv( $output, array( 'Eating Date', 'Delivery Date', 'Timing', 'Age (Days)', 'Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Name', 'Prepared', 'Dispatched', 'Delivery Result & Attribution', 'POS Reconciled' ) );
         foreach ( $rows as $l ) {
-            $is_canc = ( $l['delivery_result'] === 'Cancelled' );
+            $is_pre_canc = ! empty( $l['pre_prep_cancel'] );
+            $is_canc_ret = in_array( $l['delivery_result'], array( 'Cancelled', 'Returned' ), true );
+            $del_col_txt = $l['delivery_result'];
+            if ( ! empty( $l['attrib_header'] ) ) {
+                $del_col_txt .= ' — ' . $l['attrib_header'] . ' (' . $l['attrib_byline'] . ')';
+            }
+
             fputcsv( $output, array(
                 $l['target_date'], $l['delivery_date'], $l['timing_label'], $l['age_days'], $l['order_id'],
                 $l['name'], $l['email'], $l['phone'], $l['plan_name'],
-                $is_canc ? 'N/A (Cancelled)' : ( $l['is_prepared'] ? 'Yes' : 'No' ),
-                $is_canc ? 'N/A (Cancelled)' : ( $l['dispatch_status'] ? 'Yes' : 'No' ),
-                $l['delivery_result'],
-                $is_canc ? 'N/A (Cancelled)' : ( $l['pos_updated'] ? 'Yes' : 'No' )
+                $is_pre_canc ? 'Exempt (Pre-Prep Cancel)' : ( $l['is_prepared'] ? 'Yes' : 'No' ),
+                $is_pre_canc ? 'Exempt (Pre-Prep Cancel)' : ( $l['dispatch_status'] ? 'Yes' : 'No' ),
+                $del_col_txt,
+                $is_canc_ret ? 'No POS Required' : ( $l['pos_updated'] ? 'Yes' : 'No' )
             ) );
         }
     }
@@ -921,7 +989,6 @@ function cmp_render_super_admin_portal() {
         elseif ( $op_start === $preset_90d )        { $op_preset = '90d'; }
     }
 
-    // Finance Date Filter Active Preset: 7D, 30D, This Month, Last Month, 90D
     $fin_preset = 'custom';
     if ( $fin_start === $preset_7d && $fin_end === $today_date ) {
         $fin_preset = '7d';
@@ -1139,7 +1206,7 @@ function cmp_render_super_admin_portal() {
         .card-value { font-size: 2.25em; font-weight: 900; color: #231F20; line-height: 1.1; }
         .card-subtext { font-size: 0.84em; color: #64748b; margin-top: 8px; font-weight: 500; }
 
-        /* Full-Width 4-Portal Quick Launch Bar (Row Above Finance) */
+        /* Full-Width 4-Portal Quick Launch Bar */
         .quick-launch-bar-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -1324,7 +1391,7 @@ function cmp_render_super_admin_portal() {
              ROW 1: TOP PRIORITY HIGHLIGHT STRIP (POS, DELIVERY & CHURN COST)
              ========================================================= -->
         <div class="acru-priority-strip">
-            <!-- Priority 1: Pending POS Checks -->
+            <!-- Priority 1: Pending POS Checks (Strictly Successful Deliveries Only) -->
             <a href="<?php echo esc_url( add_query_arg( array_merge( $base_args, array( 'sa_view' => 'pending_pos' ) ) ) ); ?>" class="acru-priority-card <?php echo $summary['pending_pos_count'] > 0 ? 'urgent-red' : 'brand-green'; ?>">
                 <div>
                     <div class="priority-badge-row">
@@ -1416,11 +1483,14 @@ function cmp_render_super_admin_portal() {
              ========================================================= -->
         <div class="acru-bento-grid">
 
-            <!-- ROW 2: 4-PORTAL QUICK LAUNCH BAR (MOVED ONE ROW ABOVE FINANCIAL METRICS) -->
+            <!-- ROW 2: 4-PORTAL QUICK LAUNCH BAR -->
             <div class="acru-card col-span-12" style="padding: 18px 24px;">
                 <div class="card-label" style="margin-bottom: 4px;">
                     <span>Quick Launch Portals</span>
-                    <span style="color: #379237;">4 Operational Workstations</span>
+                    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=cmp-customer-logs' ) ); ?>" target="_blank" style="color:#1B5E20; text-decoration:underline; font-size:0.9em;">Customer Logs &nearr;</a>
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=cmp-kitchen-logs' ) ); ?>" target="_blank" style="color:#1B5E20; text-decoration:underline; font-size:0.9em;">Kitchen Logs &nearr;</a>
+                    </div>
                 </div>
                 <div class="quick-launch-bar-grid">
                     <a href="<?php echo esc_url( site_url( '/foh-admin-portal/' ) ); ?>" target="_blank" class="ql-btn">
@@ -1442,10 +1512,9 @@ function cmp_render_super_admin_portal() {
                 </div>
             </div>
 
-            <!-- ROW 3: FULL-WIDTH FINANCIAL HERO CARD (STRETCHED TO COL-SPAN-12) -->
+            <!-- ROW 3: FULL-WIDTH FINANCIAL HERO CARD -->
             <div class="acru-card col-span-12" style="background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; border-color: #1B5E20;">
                 <div>
-                    <!-- Dedicated Finance Date Filter Pills: 7D, 30D, This Month, Last Month, 90D -->
                     <div class="hero-fin-filter-bar">
                         <div class="hero-fin-pills">
                             <span style="font-size:0.75em; font-weight:800; color:#DCECC9; text-transform:uppercase; margin-right:4px;">Finance:</span>
@@ -1527,8 +1596,7 @@ function cmp_render_super_admin_portal() {
                 </div>
             </div>
 
-            <!-- ROW 4: 3 OPERATIONAL & BOTTLENECK CARDS (COL-SPAN-4 EACH) -->
-            <!-- Card 3: Operational Pulse (Period Prep + Live Today Pulse) -->
+            <!-- ROW 4: 3 OPERATIONAL & BOTTLENECK CARDS -->
             <div class="acru-card col-span-4">
                 <div>
                     <div class="card-label">
@@ -1557,7 +1625,6 @@ function cmp_render_super_admin_portal() {
                 </div>
             </div>
 
-            <!-- Card 4: Delivery Analytics & Status Breakdown -->
             <div class="acru-card col-span-4">
                 <div>
                     <div class="card-label">
@@ -1594,7 +1661,6 @@ function cmp_render_super_admin_portal() {
                 </div>
             </div>
 
-            <!-- Card 5: Non-Repeating Kitchen, Renewal & Personalization Bottlenecks -->
             <div class="acru-card col-span-4">
                 <div>
                     <div class="card-label">
@@ -1646,7 +1712,7 @@ function cmp_render_super_admin_portal() {
 }
 
 // ==========================================
-// 8. DEDICATED DRILL-DOWN SCREEN (PHASE 3.3 EMPTY STATES + PHASE 4 PAGINATION)
+// 8. DEDICATED DRILL-DOWN SCREEN (OPTION 2B + OPTION 4A EXEMPTIONS)
 // ==========================================
 function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end, $fin_start, $fin_end ) {
     $search   = isset( $_GET['sa_search'] ) ? sanitize_text_field( wp_unslash( $_GET['sa_search'] ) ) : '';
@@ -1672,10 +1738,10 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
     $total_pages = $result['total_pages'];
 
     $titles = array(
-        'pending_pos'       => array( 'Pending POS Reconciliations', 'Delivered or returned meals on active/completed plans waiting for FOH POS verification (Excludes Cancelled & Paused)', '#d97706' ),
-        'completed_pos'     => array( 'Completed POS Reconciliations', 'Orders verified and reconciled in POS for the selected period', '#379237' ),
+        'pending_pos'       => array( 'Pending POS Reconciliations', 'Successful deliveries on active/completed plans waiting for FOH POS verification (Excludes Cancelled, Returned & Paused)', '#d97706' ),
+        'completed_pos'     => array( 'Completed POS Reconciliations', 'Successful orders verified and reconciled in POS for the selected period', '#379237' ),
         'pending_delivery'  => array( 'Pending Delivery Status Logs', 'Locked meals (up to today) on active plans where delivery status is still Pending (Excludes Cancelled & Paused)', '#dc2626' ),
-        'delivery_logs'     => array( 'Delivery Status Breakdown', 'Complete log of Successful, Cancelled, Returned, and Pending deliveries', '#1B5E20' ),
+        'delivery_logs'     => array( 'Delivery Status Breakdown', 'Complete log of Successful, Cancelled, Returned, and Pending deliveries with full attribution', '#1B5E20' ),
         'unrenewed_expired' => array( 'Unrenewed Completed & Expired Customers — AED ' . number_format( $summary['revenue_at_risk'], 2 ) . ' Revenue at Risk', 'Customers whose previous plan was completed or expired and who have NOT subscribed to any currently active or paused meal plan', '#6d28d9' ),
         'expiring_soon'     => array( 'Renewal Radar: Plans Expiring Soon (<= 3 Balance Days)', 'Active customers with 1 to 3 days remaining — prime candidates for renewal outreach', '#c2410c' ),
         'active_plans'      => array( 'Live Active Subscriptions', 'All currently active customer meal plans across the system', '#379237' ),
@@ -1687,7 +1753,7 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
     $meta = isset( $titles[ $sa_view ] ) ? $titles[ $sa_view ] : $titles['unrenewed_expired'];
 
     $empty_states = array(
-        'pending_pos'       => array( 'title' => 'All caught up! 100% of POS checks are reconciled.', 'sub' => 'Every delivered meal in this period has been verified by FOH.', 'tone' => 'success' ),
+        'pending_pos'       => array( 'title' => 'All caught up! 100% of POS checks are reconciled.', 'sub' => 'Every Successful delivered meal in this period has been verified by FOH.', 'tone' => 'success' ),
         'pending_delivery'  => array( 'title' => 'Zero unlogged deliveries! Kitchen logs are 100% up to date.', 'sub' => 'All locked meals up to today have a confirmed delivery outcome.', 'tone' => 'success' ),
         'unrenewed_expired' => array( 'title' => 'Excellent retention! All recent expirations have renewed.', 'sub' => 'There are currently zero unrenewed completed or expired customers in the database.', 'tone' => 'success' ),
         'pending_chef'      => array( 'title' => "Chef's Desk is 100% prepped!", 'sub' => 'All active Chef Choice days with released menus have been assigned.', 'tone' => 'success' ),
@@ -1929,20 +1995,23 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                 <th>Customer Details</th>
                                 <th>Plan</th>
                                 <th style="text-align:center;">Prep / Dispatch</th>
-                                <th style="text-align:center;">Delivery Status</th>
+                                <th style="text-align:center;">Delivery Status &amp; Attribution</th>
                                 <th style="text-align:center;">POS Check</th>
                                 <th style="text-align:center;">Resolve</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ( $rows as $l ) : 
-                                $prep_date_param = date( 'Y-m-d', strtotime( $l['target_date'] . ' -1 day' ) );
-                                $is_cancelled_row = ( $l['delivery_result'] === 'Cancelled' );
-                                $del_type = 'warning';
+                                $prep_date_param  = date( 'Y-m-d', strtotime( $l['target_date'] . ' -1 day' ) );
+                                $is_pre_prep_canc = ! empty( $l['pre_prep_cancel'] );
+                                $is_canc_or_ret   = in_array( $l['delivery_result'], array( 'Cancelled', 'Returned' ), true );
+                                $del_type         = 'warning';
                                 if ( $l['delivery_result'] === 'Successful' ) {
                                     $del_type = 'success';
-                                } elseif ( in_array( $l['delivery_result'], array( 'Cancelled', 'Returned' ), true ) ) {
+                                } elseif ( $l['delivery_result'] === 'Cancelled' ) {
                                     $del_type = 'danger';
+                                } elseif ( $l['delivery_result'] === 'Returned' ) {
+                                    $del_type = 'purple';
                                 }
                             ?>
                                 <tr style="<?php echo ( $l['is_overdue'] && in_array( $sa_view, array( 'pending_pos', 'pending_delivery' ), true ) ) ? 'background:#fff5f5;' : ''; ?>">
@@ -1963,8 +2032,9 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                     </td>
                                     <td><?php echo esc_html( $l['plan_name'] ); ?></td>
                                     <td style="text-align:center; white-space:nowrap;">
-                                        <?php if ( $is_cancelled_row ) : ?>
-                                            <?php echo cmp_sa_semantic_pill( 'neutral', 'N/A (Cancelled)' ); ?>
+                                        <?php if ( $is_pre_prep_canc ) : ?>
+                                            <!-- Option 4A: Pre-Prep Cancelled Exempts Prep & Dispatch -->
+                                            <?php echo cmp_sa_semantic_pill( 'neutral', '— Exempt —' ); ?>
                                         <?php else : ?>
                                             <?php echo cmp_sa_semantic_pill( $l['is_prepared'] ? 'success' : 'danger', 'Prep: ' . ( $l['is_prepared'] ? 'Yes' : 'No' ) ); ?>
                                             <?php echo cmp_sa_semantic_pill( $l['dispatch_status'] ? 'success' : 'danger', 'Disp: ' . ( $l['dispatch_status'] ? 'Yes' : 'No' ) ); ?>
@@ -1972,10 +2042,18 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                     </td>
                                     <td style="text-align:center;">
                                         <?php echo cmp_sa_semantic_pill( $del_type, $l['delivery_result'] ); ?>
+                                        <?php if ( ! empty( $l['attrib_header'] ) ) : ?>
+                                            <!-- Option 2B: Compact Two-Line Attribution Status Block -->
+                                            <div style="margin-top:5px; font-size:0.78em; line-height:1.3;">
+                                                <strong style="color:#9f1239; display:block;"><?php echo esc_html( $l['attrib_header'] ); ?></strong>
+                                                <span style="color:#64748b; font-weight:600;"><?php echo esc_html( $l['attrib_byline'] ); ?></span>
+                                            </div>
+                                        <?php endif; ?>
                                     </td>
                                     <td style="text-align:center;">
-                                        <?php if ( $is_cancelled_row ) : ?>
-                                            <?php echo cmp_sa_semantic_pill( 'neutral', 'N/A (Cancelled)' ); ?>
+                                        <?php if ( $is_canc_or_ret ) : ?>
+                                            <!-- Option 4A: Cancelled or Returned rows do not require a POS Check -->
+                                            <?php echo cmp_sa_semantic_pill( 'neutral', 'No POS Required' ); ?>
                                         <?php else : ?>
                                             <?php echo cmp_sa_semantic_pill( $l['pos_updated'] ? 'success' : 'warning', $l['pos_updated'] ? 'Verified' : 'Pending' ); ?>
                                         <?php endif; ?>
