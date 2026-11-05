@@ -3,7 +3,7 @@
  * Plugin Name: Meal Subscription Portal
  * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-subscription-portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 3.0.0
+ * Version: 3.1.0
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  * Author URI: https://fareed-rifaideen.netlify.app
  */
@@ -19,6 +19,9 @@ if ( function_exists( 'opcache_invalidate' ) ) {
     if ( file_exists( CMP_PLUGIN_DIR . 'accounts-portal.php' ) ) {
         @opcache_invalidate( CMP_PLUGIN_DIR . 'accounts-portal.php', true );
     }
+    if ( file_exists( CMP_PLUGIN_DIR . 'driver-portal.php' ) ) {
+        @opcache_invalidate( CMP_PLUGIN_DIR . 'driver-portal.php', true );
+    }
 }
 
 // ==========================================
@@ -33,7 +36,9 @@ function cmp_disable_portal_page_caching() {
             has_shortcode( $post->post_content, 'meal_kitchen_portal' ) ||
             has_shortcode( $post->post_content, 'meal_foh_portal' ) ||
             has_shortcode( $post->post_content, 'meal_super_admin_portal' ) ||
-            has_shortcode( $post->post_content, 'meal_customer_portal' )
+            has_shortcode( $post->post_content, 'meal_super_admin' ) ||
+            has_shortcode( $post->post_content, 'meal_customer_portal' ) ||
+            has_shortcode( $post->post_content, 'meal_driver_portal' )
         ) ) {
             if ( ! defined( 'DONOTCACHEPAGE' ) ) { define( 'DONOTCACHEPAGE', true ); }
             if ( ! defined( 'DONOTCACHEOBJECT' ) ) { define( 'DONOTCACHEOBJECT', true ); }
@@ -127,6 +132,11 @@ function cmp_activate_plugin() {
         updated_by_role varchar(100) NULL,
         last_action_type varchar(50) NULL,
         updated_at datetime NULL,
+        delivered_by_id bigint(20) DEFAULT 0,
+        delivered_by_name varchar(255) DEFAULT '',
+        delivered_by_role varchar(100) DEFAULT '',
+        delivered_at datetime NULL,
+        driver_note text NULL,
         PRIMARY KEY  (id)
     ) $charset_collate;";
     dbDelta( $sql_logs );
@@ -168,9 +178,9 @@ function cmp_auto_patch_database() {
     $table_logs     = $wpdb->prefix . 'cmp_daily_logs';
     $table_activity = $wpdb->prefix . 'cmp_activity_logs';
 
-    // Run full check if schema version has not reached 3.0.0 or when inside wp-admin
+    // Run full check if schema version has not reached 3.1.0 or when inside wp-admin
     $schema_ver = get_option( 'cmp_db_schema_version', '' );
-    if ( $schema_ver === '3.0.0' && ! is_admin() ) {
+    if ( $schema_ver === '3.1.0' && ! is_admin() ) {
         return;
     }
 
@@ -246,7 +256,17 @@ function cmp_auto_patch_database() {
         dbDelta( $sql_activity );
     }
 
-    update_option( 'cmp_db_schema_version', '3.0.0' );
+    // Patch 7: Driver Portal Attribution & Note Columns on Daily Logs
+    $col_check_driver = $wpdb->get_results( "SHOW COLUMNS FROM {$table_logs} LIKE 'delivered_by_id'" );
+    if ( empty( $col_check_driver ) ) {
+        $wpdb->query( "ALTER TABLE {$table_logs} ADD delivered_by_id BIGINT(20) DEFAULT 0 AFTER updated_at" );
+        $wpdb->query( "ALTER TABLE {$table_logs} ADD delivered_by_name VARCHAR(255) DEFAULT '' AFTER delivered_by_id" );
+        $wpdb->query( "ALTER TABLE {$table_logs} ADD delivered_by_role VARCHAR(100) DEFAULT '' AFTER delivered_by_name" );
+        $wpdb->query( "ALTER TABLE {$table_logs} ADD delivered_at DATETIME NULL AFTER delivered_by_role" );
+        $wpdb->query( "ALTER TABLE {$table_logs} ADD driver_note TEXT NULL AFTER delivered_at" );
+    }
+
+    update_option( 'cmp_db_schema_version', '3.1.0' );
 }
 
 // ==========================================
@@ -258,6 +278,7 @@ function cmp_register_custom_roles() {
     if (!get_role('kitchen_staff')) { add_role('kitchen_staff', 'Kitchen Staff', array('read' => true)); }
     if (!get_role('menu_manager')) { add_role('menu_manager', 'Menu Manager', array('read' => true)); }
     if (!get_role('accounts_team')) { add_role('accounts_team', 'Accounts Team', array('read' => true)); }
+    if (!get_role('delivery_driver')) { add_role('delivery_driver', 'Delivery Driver', array('read' => true)); }
 }
 
 // ==========================================
@@ -296,6 +317,8 @@ function cmp_get_current_actor_info( $subscription_owner_id = 0 ) {
         $actor_role = 'FOH';
     } elseif ( in_array( 'kitchen_staff', $roles, true ) ) {
         $actor_role = 'Kitchen';
+    } elseif ( in_array( 'delivery_driver', $roles, true ) ) {
+        $actor_role = 'Driver';
     } elseif ( in_array( 'accounts_team', $roles, true ) ) {
         $actor_role = 'Accounts';
     } elseif ( intval( $subscription_owner_id ) > 0 && $actor_id !== intval( $subscription_owner_id ) ) {
@@ -470,7 +493,8 @@ $files_to_include = array(
     'menu-manager-portal.php',
     'super-admin-portal.php',
     'chef-assignment-portal.php',
-    'accounts-portal.php' 
+    'accounts-portal.php',
+    'driver-portal.php'
 );
 
 foreach ( $files_to_include as $file ) {
@@ -1625,6 +1649,7 @@ function cmp_render_customer_logs_admin_page() {
                     <option value="Customer" <?php selected( $role_val, 'Customer' ); ?>>Customer</option>
                     <option value="FOH" <?php selected( $role_val, 'FOH' ); ?>>FOH</option>
                     <option value="Kitchen" <?php selected( $role_val, 'Kitchen' ); ?>>Kitchen</option>
+                    <option value="Driver" <?php selected( $role_val, 'Driver' ); ?>>Driver</option>
                     <option value="Menu Manager" <?php selected( $role_val, 'Menu Manager' ); ?>>Menu Manager</option>
                     <option value="Admin" <?php selected( $role_val, 'Admin' ); ?>>Admin</option>
                 </select>
@@ -1781,5 +1806,397 @@ function cmp_render_customer_logs_admin_page() {
         }
     });
     </script>
+    <?php
+}
+
+
+// ==========================================
+// 8. WP ADMIN DASHBOARD: MEAL PORTAL > DRIVER SETTINGS (SOP BLUEPRINT)
+// ==========================================
+
+/**
+ * Returns all Driver Portal configuration options with safe defaults.
+ */
+function cmp_get_driver_portal_settings() {
+    $presets_raw = get_option(
+        'cmp_driver_reason_presets',
+        'Customer Unreachable, Gate/Security Access Issue, Wrong Address, Customer Requested Hold'
+    );
+    $presets_arr = array_values( array_filter( array_map( 'trim', explode( ',', (string) $presets_raw ) ) ) );
+    if ( empty( $presets_arr ) ) {
+        $presets_arr = array( 'Customer Unreachable', 'Gate/Security Access Issue', 'Wrong Address', 'Customer Requested Hold' );
+    }
+
+    return array(
+        'date_mode'      => get_option( 'cmp_driver_date_mode', '1A' ),
+        'action_ui'      => get_option( 'cmp_driver_action_ui', '2A' ),
+        'kitchen_attr'   => get_option( 'cmp_driver_kitchen_attr', '3A' ),
+        'issue_flow'     => get_option( 'cmp_driver_issue_flow', '4A' ),
+        'shell_mode'     => get_option( 'cmp_driver_shell_mode', '5A' ),
+        'offline_mode'   => get_option( 'cmp_driver_offline_mode', '6A' ),
+        'datasaver'      => get_option( 'cmp_driver_datasaver', '7A' ),
+        'theme_mode'     => get_option( 'cmp_driver_theme_mode', '8A' ),
+        'allow_custom'   => get_option( 'cmp_driver_allow_custom', '9A' ),
+        'default_prof'   => get_option( 'cmp_driver_default_prof', '10A' ),
+        'map_app'        => get_option( 'cmp_driver_map_app', 'both' ),
+        'show_pickups'   => get_option( 'cmp_driver_show_pickups', '1' ),
+        'reason_presets' => $presets_raw,
+        'presets_array'  => $presets_arr,
+    );
+}
+
+add_action( 'admin_menu', 'cmp_register_driver_settings_submenu', 56 );
+function cmp_register_driver_settings_submenu() {
+    add_submenu_page(
+        'cmp-menu-manager',
+        'Driver Portal & PWA Settings',
+        'Driver Settings',
+        'manage_options',
+        'cmp-driver-settings',
+        'cmp_render_driver_settings_admin_page'
+    );
+}
+
+function cmp_render_driver_settings_admin_page() {
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) {
+        wp_die( 'Access Denied: You do not have permission to configure Driver Settings.' );
+    }
+
+    cmp_auto_patch_database();
+    $notice = '';
+
+    if ( isset( $_POST['cmp_save_driver_settings'] ) && check_admin_referer( 'cmp_driver_settings_action', 'cmp_driver_settings_nonce' ) ) {
+        $allowed_map = array(
+            'cmp_driver_date_mode'    => array( '1A', '1B' ),
+            'cmp_driver_action_ui'    => array( '2A', '2B' ),
+            'cmp_driver_kitchen_attr' => array( '3A', '3B' ),
+            'cmp_driver_issue_flow'   => array( '4A', '4B' ),
+            'cmp_driver_shell_mode'   => array( '5A', '5B' ),
+            'cmp_driver_offline_mode' => array( '6A', '6B' ),
+            'cmp_driver_datasaver'    => array( '7A', '7B' ),
+            'cmp_driver_theme_mode'   => array( '8A', '8B' ),
+            'cmp_driver_allow_custom' => array( '9A', '9B' ),
+            'cmp_driver_default_prof' => array( '10A', '10B', '10C' ),
+            'cmp_driver_map_app'      => array( 'both', 'google', 'waze' ),
+            'cmp_driver_show_pickups' => array( '1', '0' ),
+        );
+
+        foreach ( $allowed_map as $opt_key => $valid_values ) {
+            if ( isset( $_POST[ $opt_key ] ) ) {
+                $val = sanitize_text_field( wp_unslash( $_POST[ $opt_key ] ) );
+                if ( in_array( $val, $valid_values, true ) ) {
+                    update_option( $opt_key, $val );
+                }
+            }
+        }
+
+        if ( isset( $_POST['cmp_driver_reason_presets'] ) ) {
+            $presets = sanitize_textarea_field( wp_unslash( $_POST['cmp_driver_reason_presets'] ) );
+            update_option( 'cmp_driver_reason_presets', $presets );
+        }
+
+        $notice = '<div class="notice notice-success is-dismissible"><p><strong>Driver Portal &amp; PWA Settings saved successfully!</strong></p></div>';
+    }
+
+    $cfg = cmp_get_driver_portal_settings();
+    ?>
+    <style>
+        .cmp-drv-admin-wrap { max-width: 1180px; margin: 20px 20px 40px 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .cmp-drv-banner { background: linear-gradient(135deg, #1B5E20 0%, #379237 100%); color: #fff; padding: 24px 28px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 22px; box-shadow: 0 6px 18px rgba(27,94,32,0.15); }
+        .cmp-drv-banner h1 { color: #fff; margin: 0; font-size: 1.6rem; font-weight: 800; }
+        .cmp-drv-banner p { color: #DCECC9; margin: 5px 0 0 0; font-size: 0.93rem; }
+        .cmp-drv-shortcode-pill { background: rgba(255,255,255,0.16); border: 1px solid rgba(220,236,201,0.5); padding: 8px 14px; border-radius: 8px; color: #fff; font-family: monospace; font-size: 0.92rem; font-weight: 700; }
+        .cmp-drv-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 20px; }
+        .cmp-drv-card { background: #fff; border: 1px solid #cbd5e1; border-top: 4px solid #379237; border-radius: 10px; padding: 20px 22px; box-shadow: 0 2px 6px rgba(15,23,42,0.03); }
+        .cmp-drv-card h3 { margin: 0 0 6px 0; font-size: 1.05rem; color: #0f172a; display: flex; justify-content: space-between; align-items: center; }
+        .cmp-drv-card p.desc { margin: 0 0 14px 0; font-size: 0.84rem; color: #64748b; line-height: 1.45; }
+        .cmp-drv-radio-group { display: flex; flex-direction: column; gap: 10px; }
+        .cmp-drv-radio-opt { display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; border: 1.5px solid #e2e8f0; border-radius: 8px; cursor: pointer; background: #f8fafc; transition: all 0.15s ease; }
+        .cmp-drv-radio-opt:hover { border-color: #68B946; background: #f0fdf4; }
+        .cmp-drv-radio-opt input[type="radio"] { margin-top: 3px; accent-color: #379237; transform: scale(1.15); }
+        .cmp-drv-radio-opt strong { display: block; font-size: 0.9rem; color: #1e293b; margin-bottom: 2px; }
+        .cmp-drv-radio-opt span { display: block; font-size: 0.8rem; color: #475569; line-height: 1.35; }
+        .cmp-drv-tag { background: #EEF7E3; color: #1B5E20; border: 1px solid #b7e1a1; font-size: 0.72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; }
+        @media (max-width: 900px) { .cmp-drv-grid { grid-template-columns: 1fr; } }
+    </style>
+
+    <div class="wrap cmp-drv-admin-wrap">
+        <?php echo $notice; ?>
+
+        <div class="cmp-drv-banner">
+            <div>
+                <h1>Driver Portal &amp; Mobile PWA Settings</h1>
+                <p>Configure workflow rules, Kitchen attribution, offline queue behavior, and low-data mobile optimizations.</p>
+            </div>
+            <div class="cmp-drv-shortcode-pill" title="Place this shortcode on your Driver Portal page">
+                Shortcode: [meal_driver_portal]
+            </div>
+        </div>
+
+        <form method="POST" action="">
+            <?php wp_nonce_field( 'cmp_driver_settings_action', 'cmp_driver_settings_nonce' ); ?>
+
+            <div class="cmp-drv-grid">
+                <!-- 1. Date & Shift Logic -->
+                <div class="cmp-drv-card">
+                    <h3><span>1. Date &amp; Shift Logic</span> <span class="cmp-drv-tag">Option 1A / 1B</span></h3>
+                    <p class="desc">Controls how the Driver Portal date selector loads daily deliveries.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_date_mode" value="1A" <?php checked( $cfg['date_mode'], '1A' ); ?>>
+                            <div>
+                                <strong>Option 1A: Synced with Kitchen Prep Batch + Shift Tabs (Recommended)</strong>
+                                <span>Matches the Kitchen Portal prep date 1:1 with tabs for All Stops, Evening Shift (Day Before), Morning Shift (Same Day), and Pick-ups.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_date_mode" value="1B" <?php checked( $cfg['date_mode'], '1B' ); ?>>
+                            <div>
+                                <strong>Option 1B: Strict Physical Calendar Delivery Date</strong>
+                                <span>Filters strictly by physical delivery date (combining today's Morning Same-Day run and Evening Day-Before run).</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 2. Mobile Action UI -->
+                <div class="cmp-drv-card">
+                    <h3><span>2. Mobile Delivery Action UI</span> <span class="cmp-drv-tag">Option 2A / 2B</span></h3>
+                    <p class="desc">Controls how drivers update the delivery status once Kitchen checks Dispatch.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_action_ui" value="2A" <?php checked( $cfg['action_ui'], '2A' ); ?>>
+                            <div>
+                                <strong>Option 2A: Large 1-Tap Action Buttons (Recommended for Mobile)</strong>
+                                <span>Displays a large green "✓ Mark Delivered" button alongside an "⚠️ Issue / Returned" button.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_action_ui" value="2B" <?php checked( $cfg['action_ui'], '2B' ); ?>>
+                            <div>
+                                <strong>Option 2B: Touch-Friendly Full-Width Dropdown</strong>
+                                <span>Displays a full-width select dropdown (Pending, Successful, Returned, Cancelled) matching the Kitchen Portal.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 3. Kitchen Attribution Style -->
+                <div class="cmp-drv-card">
+                    <h3><span>3. Kitchen Portal Driver Attribution</span> <span class="cmp-drv-tag">Option 3A / 3B</span></h3>
+                    <p class="desc">Controls how the driver's name and timestamp appear underneath the Delivery status in the Kitchen Portal.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_kitchen_attr" value="3A" <?php checked( $cfg['kitchen_attr'], '3A' ); ?>>
+                            <div>
+                                <strong>Option 3A: Compact Color-Coded Pill Badge (Recommended)</strong>
+                                <span>Renders a clean pill badge below the Delivery dropdown (e.g., <code>🚚 Rashid • 07:45 AM</code>).</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_kitchen_attr" value="3B" <?php checked( $cfg['kitchen_attr'], '3B' ); ?>>
+                            <div>
+                                <strong>Option 3B: Plain Micro-Text Stamp</strong>
+                                <span>Renders a subtle 10.5px text line (e.g., <code>Updated by Rashid (Driver) • 04 Nov, 07:45 AM</code>).</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 4. Issue / Return Flow -->
+                <div class="cmp-drv-card">
+                    <h3><span>4. Returned / Cancelled Issue Flow</span> <span class="cmp-drv-tag">Option 4A / 4B</span></h3>
+                    <p class="desc">Controls whether drivers are prompted for a reason when marking an order Returned or Cancelled.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_issue_flow" value="4A" <?php checked( $cfg['issue_flow'], '4A' ); ?>>
+                            <div>
+                                <strong>Option 4A: Quick Reason Prompt Modal (Recommended)</strong>
+                                <span>Prompts the driver to tap a preset reason tag or type a short note, visible in the Kitchen Portal &amp; Customer Logs.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_issue_flow" value="4B" <?php checked( $cfg['issue_flow'], '4B' ); ?>>
+                            <div>
+                                <strong>Option 4B: Status Only — No Reason Prompt</strong>
+                                <span>Updates the status immediately after confirmation without asking for a reason note.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 5. App Shell & PWA Mode -->
+                <div class="cmp-drv-card">
+                    <h3><span>5. App Shell &amp; Theme Stripping Mode</span> <span class="cmp-drv-tag">Option 5A / 5B</span></h3>
+                    <p class="desc">Controls whether WordPress theme/WooCommerce bloat is stripped for ultra-fast loading on budget phones.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_shell_mode" value="5A" <?php checked( $cfg['shell_mode'], '5A' ); ?>>
+                            <div>
+                                <strong>Option 5A: Standalone Fullscreen PWA App Shell (&lt;35KB Payload)</strong>
+                                <span>Bypasses heavy WP theme headers/footers &amp; scripts for instant loading and "Add to Home Screen" support.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_shell_mode" value="5B" <?php checked( $cfg['shell_mode'], '5B' ); ?>>
+                            <div>
+                                <strong>Option 5B: Standard WordPress Page Wrapper</strong>
+                                <span>Renders inside your standard WordPress page template while dequeuing non-essential scripts.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 6. Offline Mode & Auto-Sync Engine -->
+                <div class="cmp-drv-card">
+                    <h3><span>6. Offline Queue &amp; Batch Sync Engine</span> <span class="cmp-drv-tag">Option 6A / 6B</span></h3>
+                    <p class="desc">Allows drivers to work inside elevators/basements with zero cellular signal.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_offline_mode" value="6A" <?php checked( $cfg['offline_mode'], '6A' ); ?>>
+                            <div>
+                                <strong>Option 6A: Full Offline "Store &amp; Forward" Queue (Recommended)</strong>
+                                <span>Caches active manifest locally, queues offline deliveries with exact door-drop timestamps, and auto-syncs when signal returns.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_offline_mode" value="6B" <?php checked( $cfg['offline_mode'], '6B' ); ?>>
+                            <div>
+                                <strong>Option 6B: Online-Only Live AJAX Mode</strong>
+                                <span>Requires an active internet connection at the moment of updating delivery status.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 7. Data-Saver & Low-Spec Phone Mode -->
+                <div class="cmp-drv-card">
+                    <h3><span>7. Data-Saver &amp; Storage Guard</span> <span class="cmp-drv-tag">Option 7A / 7B</span></h3>
+                    <p class="desc">Prevents mobile data drain and keeps phone storage permanently under 100KB.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_datasaver" value="7A" <?php checked( $cfg['datasaver'], '7A' ); ?>>
+                            <div>
+                                <strong>Option 7A: Ultra-Lite Delta JSON Sync + Auto-Purge Cache (Recommended)</strong>
+                                <span>Uses ~2KB delta JSON syncs instead of page reloads and auto-purges previous days' cached manifests.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_datasaver" value="7B" <?php checked( $cfg['datasaver'], '7B' ); ?>>
+                            <div>
+                                <strong>Option 7B: Standard Full DOM Rendering &amp; Reloads</strong>
+                                <span>Uses standard page refreshes and renders all card details immediately.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 8. Sunlight / Shift Readability Theme -->
+                <div class="cmp-drv-card">
+                    <h3><span>8. Sunlight &amp; Night Shift Theme</span> <span class="cmp-drv-tag">Option 8A / 8B</span></h3>
+                    <p class="desc">Optimizes screen legibility for bright daytime sun and 5:00 AM / evening runs.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_theme_mode" value="8A" <?php checked( $cfg['theme_mode'], '8A' ); ?>>
+                            <div>
+                                <strong>Option 8A: High-Contrast Daylight + 1-Tap Night/Day Toggle (Recommended)</strong>
+                                <span>Includes a 1-tap 🌙 Night Shift / ☀️ Day Shift switcher in the driver header.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_theme_mode" value="8B" <?php checked( $cfg['theme_mode'], '8B' ); ?>>
+                            <div>
+                                <strong>Option 8B: Fixed Standard Light Theme Only</strong>
+                                <span>Keeps a single fixed light theme without a header theme switcher.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 9. Driver Personal UI Override Permission -->
+                <div class="cmp-drv-card">
+                    <h3><span>9. Driver Personal UI Switcher</span> <span class="cmp-drv-tag">Option 9A / 9B</span></h3>
+                    <p class="desc">Controls whether drivers with high-end phones can switch between Lite, Rich/Pro, and Auto-Adapt modes.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_allow_custom" value="9A" <?php checked( $cfg['allow_custom'], '9A' ); ?>>
+                            <div>
+                                <strong>Option 9A: Admin Default + Driver Personal "⚙️ View &amp; Data" Drawer (Recommended)</strong>
+                                <span>Allows each driver to customize their performance profile (Lite / Rich / Auto), card density, theme, and GPS app.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_allow_custom" value="9B" <?php checked( $cfg['allow_custom'], '9B' ); ?>>
+                            <div>
+                                <strong>Option 9B: Strict Admin Lock (Global Enforcement)</strong>
+                                <span>Hides the ⚙️ drawer on the Driver Portal and strictly enforces the global Admin settings on this page.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 10. Default Driver Performance Profile -->
+                <div class="cmp-drv-card">
+                    <h3><span>10. Default Performance Profile</span> <span class="cmp-drv-tag">Option 10A / 10B / 10C</span></h3>
+                    <p class="desc">Sets the initial performance profile before a driver customizes their personal preference.</p>
+                    <div class="cmp-drv-radio-group">
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_default_prof" value="10A" <?php checked( $cfg['default_prof'], '10A' ); ?>>
+                            <div>
+                                <strong>Option 10A: Smart Auto-Adaptive (Recommended)</strong>
+                                <span>Detects connection speed (4G/5G vs 2G/3G) &amp; device RAM to automatically run Rich Mode on good phones and Lite Mode on weak signals.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_default_prof" value="10B" <?php checked( $cfg['default_prof'], '10B' ); ?>>
+                            <div>
+                                <strong>Option 10B: Default to ⚡ Lite / Data-Saver Mode</strong>
+                                <span>Starts all drivers in ultra-fast, flat Lite Mode with collapsed meal lists.</span>
+                            </div>
+                        </label>
+                        <label class="cmp-drv-radio-opt">
+                            <input type="radio" name="cmp_driver_default_prof" value="10C" <?php checked( $cfg['default_prof'], '10C' ); ?>>
+                            <div>
+                                <strong>Option 10C: Default to ✨ Rich / Pro Mode</strong>
+                                <span>Starts all drivers in full Cycle Bistro Glass UI with expanded meal lists and optional live auto-sync.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Additional Operational Controls -->
+            <div class="cmp-drv-card" style="margin-bottom: 22px;">
+                <h3><span>Additional Navigation, Pick-up &amp; Reason Preset Controls</span> <span class="cmp-drv-tag">Logistics</span></h3>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 12px;">
+                    <div>
+                        <label style="font-weight:700; display:block; margin-bottom:6px; color:#1e293b;">Default Map Navigation Buttons</label>
+                        <select name="cmp_driver_map_app" style="width:100%; height:40px; padding:0 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                            <option value="both" <?php selected( $cfg['map_app'], 'both' ); ?>>Show Both Google Maps &amp; Waze Buttons</option>
+                            <option value="google" <?php selected( $cfg['map_app'], 'google' ); ?>>Google Maps Only</option>
+                            <option value="waze" <?php selected( $cfg['map_app'], 'waze' ); ?>>Waze Only</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label style="font-weight:700; display:block; margin-bottom:6px; color:#1e293b;">Store Pick-ups Visibility (Jumeirah / Motor City)</label>
+                        <select name="cmp_driver_show_pickups" style="width:100%; height:40px; padding:0 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                            <option value="1" <?php selected( $cfg['show_pickups'], '1' ); ?>>Show "Branch Pick-ups" in Separate Tab</option>
+                            <option value="0" <?php selected( $cfg['show_pickups'], '0' ); ?>>Hide Store Pick-ups Completely from Drivers</option>
+                        </select>
+                    </div>
+
+                    <div style="grid-column: 1 / -1;">
+                        <label style="font-weight:700; display:block; margin-bottom:6px; color:#1e293b;">Quick-Tap Issue / Return Reason Presets (Comma-Separated for Option 4A)</label>
+                        <textarea name="cmp_driver_reason_presets" rows="2" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; font-family:inherit;"><?php echo esc_textarea( $cfg['reason_presets'] ); ?></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" name="cmp_save_driver_settings" class="button button-primary" style="background:#379237; border-color:#1B5E20; padding:8px 28px; height:auto; font-size:15px; font-weight:800; border-radius:8px; cursor:pointer;">
+                Save Driver Portal Settings
+            </button>
+        </form>
+    </div>
     <?php
 }
