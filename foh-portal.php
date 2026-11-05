@@ -2,8 +2,13 @@
 /**
  * Front of House (FOH) Command Center Portal
  *
- * Upgrades Included:
- *  - Option 1A: Full Customer Activity Log Auditing across all FOH edits (Expiry, Pause/Resume, FOH Remarks, Financials, Account/Recipient/Mode Edits, Bag Deposit Wallet, Bulk Hold Days, and Plan Deletion)
+ * Phase 2 Upgrades Included:
+ *  - Option PREP-C (Same-Day Preparation Integration for Staff):
+ *      * Auto-detects Same-Day Preparation when Receive By = "Same Day" AND Time Slot starts at or after 4:00 PM (16:00+)
+ *      * Adds Staff-Only "Kitchen Prep Schedule" dropdown ('auto', 'same_day', 'day_before') inside the FOH Inline Account & Plan Editor
+ *      * Displays live "⚡ Same-Day Prep" badge in the Plan Details column when a plan is on Same-Day Preparation
+ *      * Exports "Kitchen Prep Schedule" column in FOH CSV Export
+ *  - Option 1A: Full Customer Activity Log & Kitchen Log Auditing across all FOH edits (Expiry, Pause/Resume, FOH Remarks, Financials, Account/Recipient/Mode/Prep Edits, Bag Deposit Wallet, Bulk Hold Days, and Plan Deletion)
  *  - Inline Recipient Pill Badge next to Customer Name
  *  - Pre-Prep vs. Post-Prep Cancellation Stamping for Bulk Hold Days
  *  - Non-blocking Toast Notifications & Confirmation Modals
@@ -22,9 +27,25 @@ if ( file_exists( __DIR__ . '/customer-portal-backend.php' ) ) {
 }
 
 // ==========================================
-// 0. FALLBACK PER-PLAN LOGISTICS RESOLVER
-//    (Guarantees standalone operation if loaded before customer-portal-backend.php)
+// 0. SCHEMA, LOGISTICS & SAME-DAY PREP HELPERS (OPTION PREP-C)
 // ==========================================
+
+if ( ! function_exists( 'cmp_ensure_prep_timing_column' ) ) {
+    function cmp_ensure_prep_timing_column() {
+        global $wpdb;
+        static $checked = false;
+        if ( $checked ) {
+            return;
+        }
+        $checked    = true;
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $col_check  = $wpdb->get_results( "SHOW COLUMNS FROM {$table_subs} LIKE 'prep_timing'" );
+        if ( empty( $col_check ) ) {
+            $wpdb->query( "ALTER TABLE {$table_subs} ADD COLUMN prep_timing VARCHAR(30) DEFAULT 'auto'" );
+        }
+    }
+}
+
 if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
     function cmp_get_subscription_logistics( $sub ) {
         $order    = ( ! empty( $sub->wc_order_id ) && function_exists( 'wc_get_order' ) ) ? wc_get_order( $sub->wc_order_id ) : false;
@@ -126,6 +147,50 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             'allergies' => $allergies,
             'address'   => $address,
         );
+    }
+}
+
+if ( ! function_exists( 'cmp_is_time_slot_after_4pm' ) ) {
+    function cmp_is_time_slot_after_4pm( $time_slot ) {
+        $time_slot = trim( (string) $time_slot );
+        if ( $time_slot === '' ) {
+            return false;
+        }
+        if ( preg_match( '/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i', $time_slot, $m ) ) {
+            $hour = intval( $m[1] );
+            $ampm = isset( $m[3] ) ? strtoupper( trim( $m[3] ) ) : '';
+
+            if ( $ampm === 'PM' && $hour < 12 ) {
+                $hour += 12;
+            } elseif ( $ampm === 'AM' && $hour === 12 ) {
+                $hour = 0;
+            }
+            return ( $hour >= 16 );
+        }
+        return false;
+    }
+}
+
+if ( ! function_exists( 'cmp_is_same_day_prep_subscription' ) ) {
+    function cmp_is_same_day_prep_subscription( $sub, $resolved = null ) {
+        if ( ! is_array( $resolved ) ) {
+            $resolved = cmp_get_subscription_logistics( $sub );
+        }
+
+        $prep_override = isset( $sub->prep_timing ) ? strtolower( trim( (string) $sub->prep_timing ) ) : 'auto';
+        if ( $prep_override === 'same_day' ) {
+            return true;
+        }
+        if ( $prep_override === 'day_before' ) {
+            return false;
+        }
+
+        $timing       = isset( $resolved['timing'] ) ? (string) $resolved['timing'] : '';
+        $time_slot    = isset( $resolved['time_slot'] ) ? (string) $resolved['time_slot'] : '';
+        $is_same_day  = ( stripos( $timing, 'Same Day' ) !== false );
+        $is_after_4pm = cmp_is_time_slot_after_4pm( $time_slot );
+
+        return ( $is_same_day && $is_after_4pm );
     }
 }
 
@@ -268,7 +333,7 @@ function cmp_ajax_foh_update_financials() {
     wp_send_json_success( array( 'price' => $price, 'discount' => $discount ) );
 }
 
-// 5. AJAX HANDLER: Update Account Details, Recipient & Plan Mode (With Full Option 1A Profile Edit Logging)
+// 5. AJAX HANDLER: Update Account Details, Recipient, Plan Mode & Kitchen Prep Schedule
 add_action( 'wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details' );
 function cmp_ajax_foh_update_account_details() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -280,6 +345,7 @@ function cmp_ajax_foh_update_account_details() {
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
         cmp_ensure_subscription_logistics_columns();
     }
+    cmp_ensure_prep_timing_column();
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -295,6 +361,13 @@ function cmp_ajax_foh_update_account_details() {
     $plan_mode    = sanitize_text_field( wp_unslash( $_POST['plan_mode'] ?? 'standard' ) );
     $is_flexible  = ( $plan_mode === 'flexible' ) ? 1 : 0;
     $allow_custom = ( $plan_mode === 'custom' ) ? 1 : 0;
+
+    // Option PREP-C: Staff-only Kitchen Prep Schedule override ('auto', 'same_day', 'day_before')
+    $has_prep_payload = isset( $_POST['prep_timing'] );
+    $prep_timing      = sanitize_text_field( wp_unslash( $_POST['prep_timing'] ?? 'auto' ) );
+    if ( ! in_array( $prep_timing, array( 'auto', 'same_day', 'day_before' ), true ) ) {
+        $prep_timing = 'auto';
+    }
 
     // Optional per-plan logistics fields if passed
     $has_logistics_payload = isset( $_POST['delivery_timing'] ) || isset( $_POST['time_slot'] ) || isset( $_POST['allergies'] );
@@ -341,13 +414,22 @@ function cmp_ajax_foh_update_account_details() {
         }
     }
 
-    $new_plan_name = '';
+    $new_plan_name    = '';
+    $is_same_day_prep = false;
+
     if ( $sub_id > 0 ) {
         $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
         if ( $sub ) {
             $old_mode = 'Standard';
             if ( ! empty( $sub->is_flexible ) )  $old_mode = 'Flexible';
             if ( ! empty( $sub->allow_custom ) ) $old_mode = 'Custom';
+
+            $old_prep_mode = ! empty( $sub->prep_timing ) ? $sub->prep_timing : 'auto';
+            $prep_labels   = array(
+                'auto'       => 'Auto (4PM+ Rule)',
+                'same_day'   => 'Same-Day Prep',
+                'day_before' => 'Day-Before Prep',
+            );
 
             $plan_parts          = explode( ' - ', $sub->plan_name );
             $potential_recipient = end( $plan_parts );
@@ -369,6 +451,10 @@ function cmp_ajax_foh_update_account_details() {
                 'allow_custom' => $allow_custom,
             );
 
+            if ( $has_prep_payload ) {
+                $update_data['prep_timing'] = $prep_timing;
+            }
+
             if ( $has_logistics_payload ) {
                 if ( ! empty( $delivery_timing ) ) {
                     $update_data['delivery_timing'] = $delivery_timing;
@@ -381,10 +467,17 @@ function cmp_ajax_foh_update_account_details() {
 
             $wpdb->update( $table_subs, $update_data, array( 'id' => $sub_id ) );
 
-            // Option 1A: Log any change to Customer Name, Recipient/Plan Name, Plan Mode, or Logistics
+            $updated_sub      = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+            $resolved         = cmp_get_subscription_logistics( $updated_sub );
+            $is_same_day_prep = cmp_is_same_day_prep_subscription( $updated_sub, $resolved );
+
+            // Option 1A: Log any change to Customer Name, Recipient/Plan Name, Plan Mode, or Kitchen Prep Schedule
             if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
-                $old_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s', $old_full_name ?: 'Customer', $sub->plan_name, $old_mode );
-                $new_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s', $new_full_name ?: 'Customer', $new_plan_name, ucfirst( $plan_mode ) );
+                $old_prep_lbl = $prep_labels[ $old_prep_mode ] ?? $old_prep_mode;
+                $new_prep_lbl = $prep_labels[ $has_prep_payload ? $prep_timing : $old_prep_mode ] ?? $prep_timing;
+
+                $old_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s | Prep: %s', $old_full_name ?: 'Customer', $sub->plan_name, $old_mode, $old_prep_lbl );
+                $new_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s | Prep: %s', $new_full_name ?: 'Customer', $new_plan_name, ucfirst( $plan_mode ), $new_prep_lbl );
 
                 if ( $old_summary !== $new_summary || $has_logistics_payload ) {
                     cmp_record_customer_activity_log( array(
@@ -397,11 +490,22 @@ function cmp_ajax_foh_update_account_details() {
                 }
             }
 
+            // Also record Kitchen Prep Schedule override in Kitchen Activity Logs if changed
+            if ( $has_prep_payload && $old_prep_mode !== $prep_timing && function_exists( 'cmp_record_kitchen_activity_log' ) ) {
+                cmp_record_kitchen_activity_log( array(
+                    'log_id'          => 0,
+                    'subscription_id' => $sub_id,
+                    'user_id'         => $user_id,
+                    'target_date'     => date( 'Y-m-d' ),
+                    'action_type'     => 'Prep Schedule Override (FOH)',
+                    'old_status'      => 'Prep Schedule: ' . ( $prep_labels[ $old_prep_mode ] ?? $old_prep_mode ),
+                    'new_status'      => 'Prep Schedule: ' . ( $prep_labels[ $prep_timing ] ?? $prep_timing ),
+                ) );
+            }
+
             // Record into customer's saved logistics profile history
             if ( $user_id > 0 && function_exists( 'cmp_save_user_logistics_profile_history' ) ) {
                 $active_user_subs = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table_subs} WHERE user_id = %d AND status IN ('active','paused')", $user_id ) ) );
-                $updated_sub      = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
-                $resolved         = cmp_get_subscription_logistics( $updated_sub );
 
                 cmp_save_user_logistics_profile_history(
                     $user_id,
@@ -422,10 +526,12 @@ function cmp_ajax_foh_update_account_details() {
     }
 
     wp_send_json_success( array(
-        'name'      => $new_full_name,
-        'recipient' => $recipient_name,
-        'plan_name' => $new_plan_name,
-        'plan_mode' => $plan_mode,
+        'name'             => $new_full_name,
+        'recipient'        => $recipient_name,
+        'plan_name'        => $new_plan_name,
+        'plan_mode'        => $plan_mode,
+        'prep_timing'      => $prep_timing,
+        'is_same_day_prep' => $is_same_day_prep ? 1 : 0,
     ) );
 }
 
@@ -472,12 +578,14 @@ function cmp_ajax_foh_delete_subscription() {
     }
 }
 
-// 7. AJAX HANDLER: Export CSV (Synchronized with Per-Plan Logistics & Allergies)
+// 7. AJAX HANDLER: Export CSV (Synchronized with Per-Plan Logistics, Allergies & Kitchen Prep Schedule)
 add_action( 'wp_ajax_cmp_foh_export_csv', 'cmp_foh_export_csv' );
 function cmp_foh_export_csv() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
         wp_die( 'Access Denied' );
     }
+
+    cmp_ensure_prep_timing_column();
 
     date_default_timezone_set( 'Asia/Dubai' );
     global $wpdb;
@@ -502,6 +610,7 @@ function cmp_foh_export_csv() {
         'Delivery Method',
         'Receive By',
         'Time Slot',
+        'Kitchen Prep Schedule',
         'Allergies',
         'Plan Details',
         'Plan Mode',
@@ -525,15 +634,17 @@ function cmp_foh_export_csv() {
         $order    = function_exists( 'wc_get_order' ) ? wc_get_order( $sub->wc_order_id ) : false;
         $resolved = cmp_get_subscription_logistics( $sub );
 
-        $full_name      = $resolved['full_name'];
-        $phone          = $resolved['phone'] ?: 'N/A';
-        $address        = $resolved['address'];
-        $method         = $resolved['method'] ?: 'N/A';
-        $pickup         = $resolved['pickup'];
-        $method_display = ( $method === 'Pickup' && ! empty( $pickup ) ) ? $method . ' (' . $pickup . ')' : $method;
-        $timing         = $resolved['timing'] ?: 'N/A';
-        $time_slot      = $resolved['time_slot'] ?: 'N/A';
-        $allergies      = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'None';
+        $full_name        = $resolved['full_name'];
+        $phone            = $resolved['phone'] ?: 'N/A';
+        $address          = $resolved['address'];
+        $method           = $resolved['method'] ?: 'N/A';
+        $pickup           = $resolved['pickup'];
+        $method_display   = ( $method === 'Pickup' && ! empty( $pickup ) ) ? $method . ' (' . $pickup . ')' : $method;
+        $timing           = $resolved['timing'] ?: 'N/A';
+        $time_slot        = $resolved['time_slot'] ?: 'N/A';
+        $allergies        = ! empty( $resolved['allergies'] ) ? $resolved['allergies'] : 'None';
+        $is_same_day_prep = cmp_is_same_day_prep_subscription( $sub, $resolved );
+        $prep_schedule    = $is_same_day_prep ? 'Same-Day Prep' : 'Day-Before Prep';
 
         $filled_days         = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
         $usage_days          = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
@@ -604,6 +715,7 @@ function cmp_foh_export_csv() {
             $method_display,
             $timing,
             $time_slot,
+            $prep_schedule,
             $allergies,
             $core_plan_name,
             $mode_label,
@@ -740,7 +852,6 @@ function cmp_foh_bulk_cancel_days() {
         ? cmp_get_current_actor_info( $sub_row ? $sub_row->user_id : 0 )
         : array( 'id' => get_current_user_id(), 'name' => wp_get_current_user()->display_name, 'role' => 'FOH' );
 
-    // Fetch existing rows before cancelling so we can log their exact "Old Status"
     $select_params = array_merge( array( $sub_id ), $log_ids, array( $today ) );
     $target_logs   = $wpdb->get_results( $wpdb->prepare(
         "SELECT * FROM {$table_logs} WHERE subscription_id = %d AND id IN ($ids_placeholder) AND target_date > %s",
@@ -756,8 +867,8 @@ function cmp_foh_bulk_cancel_days() {
                 ? cmp_format_log_meal_snapshot( $old_log )
                 : 'Selected (' . $old_log->target_date . ')';
 
-            $was_prepped   = ( intval( $old_log->is_prepared ) === 1 || intval( $old_log->dispatch_status ) === 1 );
-            $cancel_stage  = $was_prepped ? 'Cancelled After Prep' : 'Cancelled Before Prep (DO NOT PREPARE)';
+            $was_prepped  = ( intval( $old_log->is_prepared ) === 1 || intval( $old_log->dispatch_status ) === 1 );
+            $cancel_stage = $was_prepped ? 'Cancelled After Prep' : 'Cancelled Before Prep (DO NOT PREPARE)';
 
             $update_fields = array( 'delivery_result' => 'Cancelled' );
             if ( $has_audit_col ) {
@@ -819,6 +930,7 @@ function cmp_render_foh_portal() {
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
         cmp_ensure_subscription_logistics_columns();
     }
+    cmp_ensure_prep_timing_column();
 
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -1052,6 +1164,20 @@ function cmp_render_foh_portal() {
             font-weight: 800;
             display: inline-flex;
             align-items: center;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+        .foh-sameday-prep-pill {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            color: #92400e;
+            border: 1px solid #f59e0b;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-size: 0.74em;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
             line-height: 1.2;
             white-space: nowrap;
         }
@@ -1541,8 +1667,10 @@ function cmp_render_foh_portal() {
                         <?php if ( empty( $tabs[ $tab_key ] ) ) : ?>
                             <tr class="empty-row"><td colspan="6" style="text-align:center; padding:30px; color:#666;">No subscriptions found in this category.</td></tr>
                         <?php else : foreach ( $tabs[ $tab_key ] as $sub ) :
-                            $order    = function_exists( 'wc_get_order' ) ? wc_get_order( $sub->wc_order_id ) : false;
-                            $resolved = cmp_get_subscription_logistics( $sub );
+                            $order            = function_exists( 'wc_get_order' ) ? wc_get_order( $sub->wc_order_id ) : false;
+                            $resolved         = cmp_get_subscription_logistics( $sub );
+                            $is_same_day_prep = cmp_is_same_day_prep_subscription( $sub, $resolved );
+                            $prep_timing_mode = ! empty( $sub->prep_timing ) ? $sub->prep_timing : 'auto';
 
                             $fname     = $resolved['fname'];
                             $lname     = $resolved['lname'];
@@ -1578,7 +1706,7 @@ function cmp_render_foh_portal() {
                                 $display_order_id = 'M-' . str_pad( $sub->id, 4, '0', STR_PAD_LEFT );
                             }
 
-                            $search_data = esc_attr( strtolower( $display_order_id . ' ' . $full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $raw_recipient . ' ' . $core_plan_name . ' ' . $timing . ' ' . $time_slot . ' ' . $allergies ) );
+                            $search_data = esc_attr( strtolower( $display_order_id . ' ' . $full_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $raw_recipient . ' ' . $core_plan_name . ' ' . $timing . ' ' . $time_slot . ' ' . $allergies . ( $is_same_day_prep ? ' same day prep' : '' ) ) );
                             $plan_data   = esc_attr( $core_plan_name );
 
                             $base_price = isset( $sub->plan_price ) ? (float) $sub->plan_price : 0;
@@ -1678,7 +1806,7 @@ function cmp_render_foh_portal() {
                                             </span>
                                         </div>
                                         <?php if ( $can_edit_details ) : ?>
-                                            <button class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:2px 0 0 0; display:inline-flex; align-items:center; flex-shrink:0; transition:color 0.2s;" title="Edit Customer Name, Recipient & Plan Mode">
+                                            <button class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; padding:2px 0 0 0; display:inline-flex; align-items:center; flex-shrink:0; transition:color 0.2s;" title="Edit Customer Name, Recipient, Plan Mode & Kitchen Prep Schedule">
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                                             </button>
                                         <?php endif; ?>
@@ -1690,7 +1818,7 @@ function cmp_render_foh_portal() {
                                     </span>
                                 </div>
                                 
-                                <!-- ACCOUNT, RECIPIENT & PLAN MODE INLINE EDIT BOX -->
+                                <!-- ACCOUNT, RECIPIENT, PLAN MODE & KITCHEN PREP INLINE EDIT BOX (STAFF ONLY) -->
                                 <?php if ( $can_edit_details ) : ?>
                                 <div id="account-edit-<?php echo esc_attr( $sub->id ); ?>" style="display:none; margin-top:10px; background:#f8fafc; padding:10px; border:1px solid #cbd5e1; border-radius:6px;">
                                     <div style="display:flex; gap:6px; margin-bottom:8px;">
@@ -1710,6 +1838,15 @@ function cmp_render_foh_portal() {
                                         </select>
                                     </div>
 
+                                    <div style="margin-bottom:8px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+                                        <label style="font-size:0.78em; font-weight:bold; display:block; margin-bottom: 3px; color:#334155;">Kitchen Prep Schedule (Staff Only):</label>
+                                        <select id="edit-prep-timing-<?php echo esc_attr( $sub->id ); ?>" style="width:100%; padding:5px; font-size:0.85em; border:1px solid #cbd5e1; border-radius:4px; box-sizing:border-box;">
+                                            <option value="auto" <?php selected( $prep_timing_mode, 'auto' ); ?>>Auto (Same-Day if Same Day &ge; 4:00 PM)</option>
+                                            <option value="same_day" <?php selected( $prep_timing_mode, 'same_day' ); ?>>Same-Day Prep (Manual Override)</option>
+                                            <option value="day_before" <?php selected( $prep_timing_mode, 'day_before' ); ?>>Day-Before Prep (Manual Override)</option>
+                                        </select>
+                                    </div>
+
                                     <button class="save-account-btn" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-user-id="<?php echo esc_attr( $sub->user_id ); ?>" data-order-id="<?php echo esc_attr( $sub->wc_order_id ); ?>" style="background:#379237; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
                                 </div>
                                 <?php endif; ?>
@@ -1717,7 +1854,12 @@ function cmp_render_foh_portal() {
                             </td>
                             <td>
                                 <span class="foh-mobile-label">Plan Details</span>
-                                <strong class="foh-plan-title" style="color: #231F20;" id="tab-title-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $core_plan_name ); ?></strong><br>
+                                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:6px;">
+                                    <strong class="foh-plan-title" style="color: #231F20;" id="tab-title-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $core_plan_name ); ?></strong>
+                                    <span id="prep-badge-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo $is_same_day_prep ? 'inline-flex' : 'none'; ?>;">
+                                        <span class="foh-sameday-prep-pill">&#9889; Same-Day Prep</span>
+                                    </span>
+                                </div>
                                 
                                 <div class="foh-price-line" style="margin-top:4px; display:flex; align-items:center; flex-wrap:wrap; gap:6px;">
                                     <span style="color: #1B5E20; font-weight:bold;" id="price-display-<?php echo esc_attr( $sub->id ); ?>">Price: <?php echo $price_display; ?></span>
@@ -2407,18 +2549,20 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Save Account Details, Recipient & Plan Mode
+        // Save Account Details, Recipient, Plan Mode & Kitchen Prep Schedule
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
-                const subId = this.getAttribute('data-sub-id');
-                const userId = this.getAttribute('data-user-id');
-                const orderId = this.getAttribute('data-order-id');
+                const subId      = this.getAttribute('data-sub-id');
+                const userId     = this.getAttribute('data-user-id');
+                const orderId    = this.getAttribute('data-order-id');
                 
-                const fName = document.getElementById('edit-fname-' + subId).value.trim();
-                const lName = document.getElementById('edit-lname-' + subId).value.trim();
-                const recipient = document.getElementById('edit-recipient-' + subId).value.trim();
-                const planMode = document.getElementById('edit-plan-mode-' + subId).value;
+                const fName      = document.getElementById('edit-fname-' + subId).value.trim();
+                const lName      = document.getElementById('edit-lname-' + subId).value.trim();
+                const recipient  = document.getElementById('edit-recipient-' + subId).value.trim();
+                const planMode   = document.getElementById('edit-plan-mode-' + subId).value;
+                const prepSelect = document.getElementById('edit-prep-timing-' + subId);
+                const prepTiming = prepSelect ? prepSelect.value : 'auto';
 
                 const originalText = this.innerText;
 
@@ -2440,6 +2584,7 @@ function cmp_render_foh_portal() {
                 formData.append('last_name', lName);
                 formData.append('recipient_name', recipient);
                 formData.append('plan_mode', planMode);
+                formData.append('prep_timing', prepTiming);
 
                 fetch(fohAjaxUrl, { method: 'POST', body: formData })
                 .then(res => res.json())
@@ -2463,10 +2608,15 @@ function cmp_render_foh_portal() {
                             if (response.data.recipient && coreName.length > 1) coreName.pop();
                             document.getElementById('tab-title-' + subId).innerText = coreName.join(' - ');
                         }
+
+                        let prepBadge = document.getElementById('prep-badge-' + subId);
+                        if (prepBadge) {
+                            prepBadge.style.display = (response.data.is_same_day_prep == 1) ? 'inline-flex' : 'none';
+                        }
                         
                         this.innerText = '✓ Saved';
                         this.style.background = '#1B5E20';
-                        fohShowNotice('Customer details and plan mode updated.', 'success');
+                        fohShowNotice('Customer details, plan mode & prep schedule updated.', 'success');
                         
                         setTimeout(() => {
                             document.getElementById('account-edit-' + subId).style.display = 'none';
