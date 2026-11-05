@@ -335,6 +335,7 @@ function cmp_register_custom_roles() {
 /**
  * Returns the current logged-in user's ID, clean display name, and friendly role label.
  */
+if ( ! function_exists( 'cmp_get_current_actor_info' ) ) {
 function cmp_get_current_actor_info( $subscription_owner_id = 0 ) {
     if ( ! is_user_logged_in() ) {
         return array(
@@ -376,11 +377,13 @@ function cmp_get_current_actor_info( $subscription_owner_id = 0 ) {
         'role' => $actor_role,
     );
 }
+}
 
 /**
  * Builds a concise human-readable snapshot of a daily log row (Status + Date + Meals)
  * for recording "Old Status" and "Current Status" in Customer Logs & Kitchen Logs.
  */
+if ( ! function_exists( 'cmp_format_log_meal_snapshot' ) ) {
 function cmp_format_log_meal_snapshot( $log_row ) {
     if ( empty( $log_row ) ) {
         return 'Pending Selection (Unscheduled)';
@@ -458,10 +461,12 @@ function cmp_format_log_meal_snapshot( $log_row ) {
 
     return "Selected ({$date_str}) | " . implode( ' • ', $parts );
 }
+}
 
 /**
  * Resolves Customer Name (with Recipient tag if present), Plan Name, and Order ID from a subscription ID.
  */
+if ( ! function_exists( 'cmp_resolve_subscription_audit_identity' ) ) {
 function cmp_resolve_subscription_audit_identity( $sub_id, $fallback_user_id = 0, $fallback_order_id = 0, $fallback_plan_name = '', $fallback_cust_name = '' ) {
     global $wpdb;
     $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
@@ -504,10 +509,12 @@ function cmp_resolve_subscription_audit_identity( $sub_id, $fallback_user_id = 0
         'customer_name' => $cust_name,
     );
 }
+}
 
 /**
  * Inserts an audit entry into wp_cmp_activity_logs (Customer Logs).
  */
+if ( ! function_exists( 'cmp_record_customer_activity_log' ) ) {
 function cmp_record_customer_activity_log( $args = array() ) {
     global $wpdb;
     $table_activity = $wpdb->prefix . 'cmp_activity_logs';
@@ -544,10 +551,12 @@ function cmp_record_customer_activity_log( $args = array() ) {
         )
     );
 }
+}
 
 /**
  * Option 5A: Inserts an operational audit entry into wp_cmp_kitchen_logs (Kitchen Logs).
  */
+if ( ! function_exists( 'cmp_record_kitchen_activity_log' ) ) {
 function cmp_record_kitchen_activity_log( $args = array() ) {
     global $wpdb;
     $table_kitchen_logs = $wpdb->prefix . 'cmp_kitchen_logs';
@@ -605,6 +614,7 @@ function cmp_record_kitchen_activity_log( $args = array() ) {
             'created_at'      => $now->format( 'Y-m-d H:i:s' ),
         )
     );
+}
 }
 
 /**
