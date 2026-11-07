@@ -2,6 +2,7 @@
 /**
  * WooCommerce Checkout & Subscription Bridge
  * Synchronized with Post-Payment Subscription Provisioning, Per-Plan Logistics,
+ * Dynamic Custom Plan Day Resolution (Option CP-1), Direct-Link & Auto-Unpublish Controls (Option CP-2),
  * Delivery Timing, Time Slots, Kitchen Prep Schedule (Option PREP-C) & Allergies
  */
 
@@ -18,7 +19,155 @@ if ( file_exists( __DIR__ . '/customer-portal-backend.php' ) ) {
 }
 
 // ==========================================
-// 1. ADD CUSTOM SETTINGS TO WOOCOMMERCE PRODUCTS
+// 0. UNIVERSAL DYNAMIC PLAN DAY & QUOTA RESOLVERS (OPTION CP-1 & CP-2)
+// ==========================================
+
+/**
+ * Resolves the exact number of total days for any standard or custom meal plan.
+ * Priority:
+ *  1. Explicit Order Meta (`_cmp_total_days`)
+ *  2. WooCommerce Product Meta (`_cmp_total_days`)
+ *  3. Product Tag matching `{N} Days` or `{N}-days`
+ *  4. Universal Regex on Plan Title (`10 Days`, `14-Day`, `5 Days`, etc.)
+ *  5. Default Fallback (30)
+ */
+if ( ! function_exists( 'cmp_resolve_plan_total_days' ) ) {
+    function cmp_resolve_plan_total_days( $product_id = 0, $plan_name = '', $order_meta_days = 0 ) {
+        $days = intval( $order_meta_days );
+        if ( $days > 0 ) {
+            return $days;
+        }
+
+        $product_id = intval( $product_id );
+        if ( $product_id > 0 ) {
+            $meta_days = intval( get_post_meta( $product_id, '_cmp_total_days', true ) );
+            if ( $meta_days > 0 ) {
+                return $meta_days;
+            }
+
+            $terms = wp_get_post_terms( $product_id, 'product_tag' );
+            if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+                foreach ( $terms as $term ) {
+                    if ( preg_match( '/(\d+)\s*[-\s]*days?/i', $term->name, $tm ) && intval( $tm[1] ) > 0 ) {
+                        return intval( $tm[1] );
+                    }
+                    if ( preg_match( '/(\d+)\s*[-\s]*days?/i', $term->slug, $sm ) && intval( $sm[1] ) > 0 ) {
+                        return intval( $sm[1] );
+                    }
+                }
+            }
+
+            if ( empty( $plan_name ) && function_exists( 'wc_get_product' ) ) {
+                $prod = wc_get_product( $product_id );
+                if ( $prod ) {
+                    $plan_name = $prod->get_name();
+                }
+            }
+        }
+
+        if ( ! empty( $plan_name ) && preg_match( '/(\d+)\s*[-\s]*days?/i', (string) $plan_name, $m ) ) {
+            $parsed = intval( $m[1] );
+            if ( $parsed > 0 ) {
+                return $parsed;
+            }
+        }
+
+        return 30;
+    }
+}
+
+/**
+ * Resolves the frontend URL of the page containing `[meal_plan_checkout]`.
+ */
+if ( ! function_exists( 'cmp_get_custom_checkout_base_url' ) ) {
+    function cmp_get_custom_checkout_base_url() {
+        global $wpdb;
+        static $cached_url = null;
+        if ( $cached_url !== null ) {
+            return $cached_url;
+        }
+
+        $page_id = intval( $wpdb->get_var(
+            "SELECT ID FROM {$wpdb->posts}
+             WHERE post_type = 'page'
+               AND post_status = 'publish'
+               AND post_content LIKE '%[meal_plan_checkout%'
+             ORDER BY ID ASC LIMIT 1"
+        ) );
+
+        if ( $page_id > 0 ) {
+            $permalink = get_permalink( $page_id );
+            if ( ! empty( $permalink ) ) {
+                $cached_url = $permalink;
+                return $cached_url;
+            }
+        }
+
+        $cached_url = home_url( '/' );
+        return $cached_url;
+    }
+}
+
+/**
+ * Option CP-2: Automatically reverts temporary custom plans (`_cmp_auto_unpublish = 'yes'`)
+ * to Draft status as soon as an order is paid (Processing or Completed).
+ */
+if ( ! function_exists( 'cmp_maybe_auto_unpublish_custom_plan_on_payment' ) ) {
+    function cmp_maybe_auto_unpublish_custom_plan_on_payment( $order_id ) {
+        $order_id = absint( $order_id );
+        if ( ! $order_id || ! function_exists( 'wc_get_order' ) ) {
+            return;
+        }
+
+        $order = wc_get_order( $order_id );
+        if ( ! $order || ! $order->has_status( array( 'processing', 'completed' ) ) ) {
+            return;
+        }
+
+        if ( $order->get_meta( '_cmp_auto_unpublished_processed' ) === '1' ) {
+            return;
+        }
+
+        $did_unpublish = false;
+
+        foreach ( $order->get_items() as $item ) {
+            $product_id = intval( $item->get_product_id() );
+            if ( $product_id <= 0 ) {
+                continue;
+            }
+
+            $auto_unpublish = get_post_meta( $product_id, '_cmp_auto_unpublish', true );
+            if ( $auto_unpublish === 'yes' ) {
+                $post_obj = get_post( $product_id );
+                if ( $post_obj && $post_obj->post_status !== 'draft' ) {
+                    wp_update_post( array(
+                        'ID'          => $product_id,
+                        'post_status' => 'draft',
+                    ) );
+                    if ( function_exists( 'wc_delete_product_transients' ) ) {
+                        wc_delete_product_transients( $product_id );
+                    }
+                    $order->add_order_note( sprintf(
+                        'Custom Meal Plan "%s" (Product #%d) was automatically unpublished (reverted to Draft) after payment.',
+                        $item->get_name(),
+                        $product_id
+                    ) );
+                    $did_unpublish = true;
+                }
+            }
+        }
+
+        if ( $did_unpublish ) {
+            $order->update_meta_data( '_cmp_auto_unpublished_processed', '1' );
+            $order->save();
+        }
+    }
+}
+add_action( 'woocommerce_order_status_processing', 'cmp_maybe_auto_unpublish_custom_plan_on_payment', 25, 1 );
+add_action( 'woocommerce_order_status_completed',  'cmp_maybe_auto_unpublish_custom_plan_on_payment', 25, 1 );
+
+// ==========================================
+// 1. ADD CUSTOM SETTINGS TO WOOCOMMERCE PRODUCTS (WITH OPTION CP-2 DIRECT LINK & AUTO-UNPUBLISH)
 // ==========================================
 add_filter( 'woocommerce_add_to_cart_validation', 'cmp_empty_cart_before_add', 10, 2 );
 function cmp_empty_cart_before_add( $passed, $product_id ) {
@@ -39,11 +188,14 @@ function cmp_rename_order_notes( $fields ) {
 
 add_action( 'woocommerce_product_options_general_product_data', 'cmp_add_product_settings' );
 function cmp_add_product_settings() {
+    global $post;
+    $product_id = isset( $post->ID ) ? intval( $post->ID ) : 0;
+
     echo '<div class="options_group">';
     woocommerce_wp_text_input( array(
         'id'          => '_cmp_total_days',
         'label'       => 'Meal Plan: Total Days',
-        'description' => 'Enter the number of days for this plan (e.g., 7 or 20).',
+        'description' => 'Enter the exact number of days for this plan (e.g., 7, 10, 14, 20, or 24).',
         'type'        => 'number',
         'desc_tip'    => 'true',
     ) );
@@ -60,14 +212,98 @@ function cmp_add_product_settings() {
         'description' => 'Enter EXACTLY "Juices" if this is a Cleanse Booster.',
         'desc_tip'    => 'true',
     ) );
+
+    woocommerce_wp_checkbox( array(
+        'id'          => '_cmp_direct_link_only',
+        'label'       => 'Hide from Public Checkout',
+        'description' => '<strong>Direct Link Only:</strong> Hide this plan from the public Step 1 checkout grid. Customers can only view and buy it using the Direct Link below.',
+    ) );
+
+    woocommerce_wp_checkbox( array(
+        'id'          => '_cmp_auto_unpublish',
+        'label'       => 'Auto-Unpublish After Purchase',
+        'description' => '<strong>Revert to Draft on Payment:</strong> Automatically switch this product back to Draft status as soon as the customer completes payment.',
+    ) );
+
+    if ( $product_id > 0 ) {
+        $direct_url = add_query_arg( 'custom_plan', $product_id, cmp_get_custom_checkout_base_url() );
+        ?>
+        <p class="form-field" style="background:#f0fdf4; border:1px solid #86efac; border-left:4px solid #379237; border-radius:6px; padding:12px 14px !important; margin:12px 12px 14px 12px !important;">
+            <label for="cmp_direct_plan_link_input" style="font-weight:700; color:#1B5E20;">Direct Customer Link</label>
+            <span style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; max-width:680px;">
+                <input type="text" id="cmp_direct_plan_link_input" value="<?php echo esc_url( $direct_url ); ?>" readonly style="flex:1; min-width:260px; background:#ffffff; border:1px solid #cbd5e1; border-radius:5px; padding:6px 10px; font-size:13px; color:#0f172a;" onclick="this.select();">
+                <button type="button" class="button" id="cmp_copy_direct_link_btn" style="background:#379237; color:#ffffff; border-color:#1B5E20; font-weight:700;">Copy Direct Link</button>
+            </span>
+            <span style="display:block; clear:both; margin-top:6px; font-size:12px; color:#475569;">
+                Share this link with the customer on WhatsApp or Email. When opened, this plan will be displayed and automatically selected on Step 1 (make sure the product is <strong>Published</strong> while the customer is completing payment).
+            </span>
+        </p>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            $('#cmp_copy_direct_link_btn').on('click', function(e) {
+                e.preventDefault();
+                var $btn = $(this);
+                var $inp = $('#cmp_direct_plan_link_input');
+                $inp[0].select();
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText($inp.val());
+                } else {
+                    document.execCommand('copy');
+                }
+                var origText = $btn.text();
+                $btn.text('✓ Link Copied!');
+                setTimeout(function() { $btn.text(origText); }, 2000);
+            });
+        });
+        </script>
+        <?php
+    }
     echo '</div>';
 }
 
 add_action( 'woocommerce_process_product_meta', 'cmp_save_product_settings' );
 function cmp_save_product_settings( $post_id ) {
-    update_post_meta( $post_id, '_cmp_total_days', sanitize_text_field( $_POST['_cmp_total_days'] ?? '' ) );
+    $raw_days = sanitize_text_field( $_POST['_cmp_total_days'] ?? '' );
+    if ( empty( $raw_days ) ) {
+        $post_title = isset( $_POST['post_title'] ) ? sanitize_text_field( wp_unslash( $_POST['post_title'] ) ) : '';
+        if ( ! empty( $post_title ) && preg_match( '/(\d+)\s*[-\s]*days?/i', $post_title, $m ) ) {
+            $raw_days = (string) intval( $m[1] );
+        }
+    }
+
+    update_post_meta( $post_id, '_cmp_total_days', $raw_days );
     update_post_meta( $post_id, '_cmp_allowed_meals', sanitize_text_field( $_POST['_cmp_allowed_meals'] ?? '' ) );
     update_post_meta( $post_id, '_cmp_allowed_categories', sanitize_text_field( $_POST['_cmp_allowed_categories'] ?? '' ) );
+
+    $direct_only    = isset( $_POST['_cmp_direct_link_only'] ) ? 'yes' : 'no';
+    $auto_unpublish = isset( $_POST['_cmp_auto_unpublish'] ) ? 'yes' : 'no';
+    update_post_meta( $post_id, '_cmp_direct_link_only', $direct_only );
+    update_post_meta( $post_id, '_cmp_auto_unpublish', $auto_unpublish );
+}
+
+// Display helpful status badges in WP Admin > Products list for Direct-Link & Auto-Unpublish plans
+add_action( 'manage_product_posts_custom_column', 'cmp_render_product_list_custom_plan_badges', 20, 2 );
+function cmp_render_product_list_custom_plan_badges( $column, $post_id ) {
+    if ( $column !== 'name' ) {
+        return;
+    }
+    $direct_only    = get_post_meta( $post_id, '_cmp_direct_link_only', true ) === 'yes';
+    $auto_unpublish = get_post_meta( $post_id, '_cmp_auto_unpublish', true ) === 'yes';
+
+    if ( ! $direct_only && ! $auto_unpublish ) {
+        return;
+    }
+
+    $direct_url = add_query_arg( 'custom_plan', intval( $post_id ), cmp_get_custom_checkout_base_url() );
+    echo '<div style="margin-top:5px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">';
+    if ( $direct_only ) {
+        echo '<span style="background:#ede9fe; color:#6d28d9; border:1px solid #ddd6fe; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:700;">🔒 Direct Link Only</span>';
+        echo '<a href="' . esc_url( $direct_url ) . '" onclick="navigator.clipboard.writeText(this.href); this.innerText=\'✓ Link Copied!\'; setTimeout(()=>{this.innerText=\'📋 Copy Checkout Link\';}, 1800); return false;" style="background:#EEF7E3; color:#1B5E20; border:1px solid #68B946; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; text-decoration:none;">📋 Copy Checkout Link</a>';
+    }
+    if ( $auto_unpublish ) {
+        echo '<span style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; padding:1px 7px; border-radius:999px; font-size:11px; font-weight:700;">⚡ Auto-Unpublish on Pay</span>';
+    }
+    echo '</div>';
 }
 
 function cmp_get_cart_plan_details() {
@@ -75,12 +311,19 @@ function cmp_get_cart_plan_details() {
         return false;
     }
     foreach ( WC()->cart->get_cart() as $cart_item ) {
-        $product_id = $cart_item['product_id'];
-        $days       = get_post_meta( $product_id, '_cmp_total_days', true );
-        if ( ! empty( $days ) ) {
+        $product_id = intval( $cart_item['product_id'] );
+        $prod       = wc_get_product( $product_id );
+        $title      = $prod ? $prod->get_name() : '';
+        $days       = cmp_resolve_plan_total_days( $product_id, $title, 0 );
+
+        if ( $days > 0 ) {
+            $allowed = intval( get_post_meta( $product_id, '_cmp_allowed_meals', true ) );
+            if ( $allowed <= 0 && ! empty( $title ) && preg_match( '/(\d+)\s*Meal/i', $title, $m ) ) {
+                $allowed = intval( $m[1] );
+            }
             return array(
-                'days'        => intval( $days ),
-                'allowed'     => intval( get_post_meta( $product_id, '_cmp_allowed_meals', true ) ),
+                'days'        => $days,
+                'allowed'     => $allowed > 0 ? $allowed : 1,
                 'special_cat' => get_post_meta( $product_id, '_cmp_allowed_categories', true ),
                 'product_id'  => $product_id,
             );
@@ -298,6 +541,7 @@ function cmp_save_checkout_fields( $order_id ) {
     $product         = wc_get_product( $plan['product_id'] );
     $final_plan_name = $product ? $product->get_name() : 'Subscription Plan';
     $base_plan_price = $product ? (float) $product->get_price() : (float) $order->get_subtotal();
+    $resolved_days   = cmp_resolve_plan_total_days( $plan['product_id'], $final_plan_name, $plan['days'] );
 
     if ( ! empty( $recipient_name ) ) {
         $final_plan_name .= ' - ' . $recipient_name;
@@ -305,8 +549,9 @@ function cmp_save_checkout_fields( $order_id ) {
 
     // Store complete Subscription Blueprint in Order Meta (both Post Meta & HPOS Order Meta compatible)
     update_post_meta( $order_id, '_cmp_is_wc_bridge_checkout', '1' );
+    update_post_meta( $order_id, '_cmp_product_id',            intval( $plan['product_id'] ) );
     update_post_meta( $order_id, '_cmp_plan_name',             $final_plan_name );
-    update_post_meta( $order_id, '_cmp_total_days',            intval( $plan['days'] ) );
+    update_post_meta( $order_id, '_cmp_total_days',            $resolved_days );
     update_post_meta( $order_id, '_cmp_allowed_categories',    $categories_string );
     update_post_meta( $order_id, '_cmp_plan_price',            $base_plan_price );
     update_post_meta( $order_id, '_cmp_discount_amount',       (float) $order->get_discount_total() );
@@ -315,8 +560,9 @@ function cmp_save_checkout_fields( $order_id ) {
     update_post_meta( $order_id, '_cmp_prep_timing',           'auto' );
 
     $order->update_meta_data( '_cmp_is_wc_bridge_checkout', '1' );
+    $order->update_meta_data( '_cmp_product_id',            intval( $plan['product_id'] ) );
     $order->update_meta_data( '_cmp_plan_name',             $final_plan_name );
-    $order->update_meta_data( '_cmp_total_days',            intval( $plan['days'] ) );
+    $order->update_meta_data( '_cmp_total_days',            $resolved_days );
     $order->update_meta_data( '_cmp_allowed_categories',    $categories_string );
     $order->update_meta_data( '_cmp_plan_price',            $base_plan_price );
     $order->update_meta_data( '_cmp_discount_amount',       (float) $order->get_discount_total() );
@@ -405,6 +651,7 @@ function cmp_provision_wc_bridge_subscription_on_payment( $order_id ) {
                 array( 'id' => intval( $existing_sub->id ) )
             );
         }
+        cmp_maybe_auto_unpublish_custom_plan_on_payment( $order_id );
         return;
     }
 
@@ -417,8 +664,9 @@ function cmp_provision_wc_bridge_subscription_on_payment( $order_id ) {
         return;
     }
 
+    $product_id        = intval( $order->get_meta( '_cmp_product_id' ) ?: get_post_meta( $order_id, '_cmp_product_id', true ) );
     $final_plan_name   = $order->get_meta( '_cmp_plan_name' ) ?: get_post_meta( $order_id, '_cmp_plan_name', true );
-    $total_days        = intval( $order->get_meta( '_cmp_total_days' ) ?: get_post_meta( $order_id, '_cmp_total_days', true ) );
+    $meta_total_days   = intval( $order->get_meta( '_cmp_total_days' ) ?: get_post_meta( $order_id, '_cmp_total_days', true ) );
     $categories_string = $order->get_meta( '_cmp_allowed_categories' ) ?: get_post_meta( $order_id, '_cmp_allowed_categories', true );
     $plan_price        = (float) ( $order->get_meta( '_cmp_plan_price' ) ?: get_post_meta( $order_id, '_cmp_plan_price', true ) );
     $discount_amount   = (float) ( $order->get_meta( '_cmp_discount_amount' ) ?: get_post_meta( $order_id, '_cmp_discount_amount', true ) );
@@ -429,24 +677,19 @@ function cmp_provision_wc_bridge_subscription_on_payment( $order_id ) {
     $delivery_address  = $order->get_meta( '_cmp_delivery_address' ) ?: get_post_meta( $order_id, '_cmp_delivery_address', true );
     $prep_timing       = $order->get_meta( '_cmp_prep_timing' ) ?: 'auto';
 
-    if ( empty( $final_plan_name ) ) {
+    if ( empty( $final_plan_name ) || $product_id <= 0 ) {
         foreach ( $order->get_items() as $item ) {
-            $final_plan_name = $item->get_name();
-            if ( $total_days <= 0 ) {
-                $total_days = intval( get_post_meta( $item->get_product_id(), '_cmp_total_days', true ) );
+            if ( empty( $final_plan_name ) ) {
+                $final_plan_name = $item->get_name();
+            }
+            if ( $product_id <= 0 ) {
+                $product_id = intval( $item->get_product_id() );
             }
             break;
         }
     }
 
-    if ( $total_days <= 0 ) {
-        $total_days = 30;
-        if ( stripos( $final_plan_name, '7' )  !== false ) $total_days = 7;
-        if ( stripos( $final_plan_name, '20' ) !== false ) $total_days = 20;
-        if ( stripos( $final_plan_name, '24' ) !== false ) $total_days = 24;
-        if ( stripos( $final_plan_name, '5' )  !== false ) $total_days = 5;
-        if ( stripos( $final_plan_name, '3' )  !== false && stripos( $final_plan_name, 'juice' ) !== false ) $total_days = 3;
-    }
+    $total_days = cmp_resolve_plan_total_days( $product_id, $final_plan_name, $meta_total_days );
 
     if ( empty( $categories_string ) ) {
         $categories_string = ( stripos( $final_plan_name, 'juice' ) !== false || stripos( $final_plan_name, 'cleanse' ) !== false )
@@ -532,6 +775,9 @@ function cmp_provision_wc_bridge_subscription_on_payment( $order_id ) {
             ) );
         }
     }
+
+    // Option CP-2: Revert temporary custom plan product to Draft if Auto-Unpublish is enabled
+    cmp_maybe_auto_unpublish_custom_plan_on_payment( $order_id );
 }
 
 // Clean up any legacy 'pending' subscription rows if an order fails, is cancelled, or is trashed
