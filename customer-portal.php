@@ -26,6 +26,8 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
+    @opcache_invalidate( __DIR__ . '/customer-portal-backend.php', true );
+    @opcache_invalidate( __DIR__ . '/customer-portal-assets.php', true );
 }
 
 // ==========================================
@@ -222,7 +224,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                     </a>
                     <a id="cmp-global-export-btn" href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_customer_csv&sub_id=' . $subs[0]->id ) ); ?>" class="cmp-hdr-btn cmp-hdr-btn-export">Export to Excel</a>
                     <?php if ( ! $is_chef_override && ! $is_admin_override ) : ?>
-                        <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-hdr-btn cmp-hdr-btn-logout">Log Out</a>
+                        <a href="' . esc_url( wp_logout_url( get_permalink() ) ) . '" class="cmp-hdr-btn cmp-hdr-btn-logout">Log Out</a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -323,14 +325,49 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 ) ) );
 
                 // Build Ordered Schedule of Regular Slots + Carryover / Redemption Slots
-                $schedule_data   = function_exists( 'cmp_build_subscription_schedule_slots' )
-                    ? cmp_build_subscription_schedule_slots( $sub )
-                    : array(
-                        'regular_slots'   => array(),
-                        'carryover_slots' => array(),
-                        'all_slots'       => array(),
-                        'base_quotas'     => cmp_get_subscription_base_quotas( $sub ),
+                if ( function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
+                    $schedule_data = cmp_build_subscription_schedule_slots( $sub );
+                } else {
+                    // Self-contained fallback schedule builder if backend helper is not loaded yet
+                    $fallback_is_juice = ( stripos( $sub->allowed_categories, 'Juices' ) !== false || stripos( $sub->plan_name, 'juice' ) !== false || stripos( $sub->plan_name, 'cleanse' ) !== false );
+                    $fallback_meals    = 1;
+                    if ( ! $fallback_is_juice && preg_match( '/(\d+)\s*Meal/i', $sub->plan_name, $fm ) ) {
+                        $fallback_meals = max( 1, intval( $fm[1] ) );
+                    }
+                    $fallback_snacks = $fallback_is_juice ? 0 : ( $fallback_meals >= 2 ? 2 : 1 );
+                    $fallback_logs   = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC, id ASC", $sub->id ) );
+                    $fb_voids        = 0;
+                    foreach ( $fallback_logs as $fbl ) {
+                        if ( in_array( $fbl->delivery_result, array( 'Cancelled', 'Returned' ), true ) ) {
+                            $fb_voids++;
+                        }
+                    }
+                    $fb_total_slots = intval( $sub->total_days ) + $fb_voids;
+                    $fb_slots       = array();
+                    for ( $fbi = 1; $fbi <= $fb_total_slots; $fbi++ ) {
+                        $fb_slots[] = array(
+                            'day_num'              => $fbi,
+                            'is_carryover'         => false,
+                            'log'                  => $fallback_logs[ $fbi - 1 ] ?? null,
+                            'alloc_meals'          => $fallback_is_juice ? 3 : $fallback_meals,
+                            'alloc_snacks'         => $fallback_snacks,
+                            'parent_log_id'        => 0,
+                            'tooltip_text'         => '',
+                            'allocation_badge_txt' => '',
+                        );
+                    }
+                    $schedule_data = array(
+                        'regular_slots'     => $fb_slots,
+                        'carryover_slots'   => array(),
+                        'all_slots'         => $fb_slots,
+                        'active_carryovers' => 0,
+                        'base_quotas'       => array(
+                            'is_juice'      => $fallback_is_juice,
+                            'allowed_meals' => $fallback_is_juice ? 3 : $fallback_meals,
+                            'snack_quota'   => $fallback_snacks,
+                        ),
                     );
+                }
 
                 $base_quotas   = $schedule_data['base_quotas'];
                 $is_juice      = $base_quotas['is_juice'];
@@ -370,7 +407,14 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                             <!-- Account Details Card (Edit Icon Visible to FOH, Menu Manager & Admin) -->
                             <div class="cmp-account-card-box">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                                    <h3 style="margin:0; color:#379237; font-size:1.15em; font-weight:800;">Account Details</h3>
+                                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                        <h3 style="margin:0; color:#379237; font-size:1.15em; font-weight:800;">Account Details</h3>
+                                        <?php if ( $can_manage_meal_skip ) : ?>
+                                            <span id="skip-status-pill-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo $allow_meal_skip ? 'inline-flex' : 'none'; ?>; background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; border-radius:999px; padding:2px 8px; font-size:0.7rem; font-weight:800;">
+                                                Skip Enabled
+                                            </span>
+                                        <?php endif; ?>
+                                    </div>
                                     <?php if ( $can_manage_meal_skip ) : ?>
                                         <button type="button" class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; display:inline-flex; align-items:center; gap:4px; padding:0;" title="Edit Account Details &amp; Allow Meal Skipping">
                                             <?php echo $icon_pencil; ?>
@@ -700,7 +744,9 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                 $is_chef_assigned = ( $log && ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 ) );
 
                                 // Check if this regular/carryover row saved a partial/skipped meal count
-                                $saved_counts     = $log ? cmp_count_log_selected_meals_and_snacks( $log, $is_juice, $row_alloc_meals, $row_alloc_snacks ) : array( 'meals' => 0, 'snacks' => 0 );
+                                $saved_counts     = ( $log && function_exists( 'cmp_count_log_selected_meals_and_snacks' ) )
+                                    ? cmp_count_log_selected_meals_and_snacks( $log, $is_juice, $row_alloc_meals, $row_alloc_snacks )
+                                    : array( 'meals' => 0, 'snacks' => 0 );
                                 $has_skipped_meal = ( $log && ! $is_void && ! $is_juice && $saved_counts['meals'] > 0 && $saved_counts['meals'] < $row_alloc_meals );
 
                                 // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow
