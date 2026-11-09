@@ -271,12 +271,12 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
 
         if ( ! is_object( $sub ) ) {
             return array(
-                'regular_slots'       => array(),
-                'carryover_slots'     => array(),
-                'all_slots'           => array(),
-                'regular_void_count'  => 0,
-                'active_carryovers'   => 0,
-                'base_quotas'         => array( 'is_juice' => false, 'allowed_meals' => 1, 'snack_quota' => 1 ),
+                'regular_slots'      => array(),
+                'carryover_slots'    => array(),
+                'all_slots'          => array(),
+                'regular_void_count' => 0,
+                'active_carryovers'  => 0,
+                'base_quotas'        => array( 'is_juice' => false, 'allowed_meals' => 1, 'snack_quota' => 1 ),
             );
         }
 
@@ -302,7 +302,7 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
                     if ( ! isset( $carryover_logs_by_parent[ $p_id ] ) ) {
                         $carryover_logs_by_parent[ $p_id ] = array();
                     }
-                    $carryover_logs_by_parent[ $p_id ][] = $l;
+                    $carryover_logs_by_parent[ $p_id ][]    = $l;
                     $all_carryover_logs[ intval( $l->id ) ] = $l;
                 } else {
                     $regular_logs[] = $l;
@@ -343,8 +343,8 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
             if ( $rlog && ! $is_void && ! $is_juice && $base_meals > 1 ) {
                 $counts = cmp_count_log_selected_meals_and_snacks( $rlog, false, $base_meals, $base_snacks );
                 if ( $counts['meals'] > 0 && $counts['meals'] < $base_meals ) {
-                    $skipped_meals  = $base_meals - $counts['meals'];
-                    $skipped_snacks = max( 0, $base_snacks - $counts['snacks'] );
+                    $skipped_meals     = $base_meals - $counts['meals'];
+                    $skipped_snacks    = max( 0, $base_snacks - $counts['snacks'] );
                     $carryover_queue[] = array(
                         'parent_log_id'  => intval( $rlog->id ),
                         'alloc_meals'    => $skipped_meals,
@@ -370,8 +370,8 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
             $parent_id = intval( $item['parent_log_id'] );
             $children  = $carryover_logs_by_parent[ $parent_id ] ?? array();
 
-            $meal_word  = ( $item['alloc_meals'] === 1 ) ? '1 Meal' : $item['alloc_meals'] . ' Meals';
-            $snack_word = ( $item['alloc_snacks'] > 0 )
+            $meal_word   = ( $item['alloc_meals'] === 1 ) ? '1 Meal' : $item['alloc_meals'] . ' Meals';
+            $snack_word  = ( $item['alloc_snacks'] > 0 )
                 ? ( $item['alloc_snacks'] === 1 ? '1 Snack' : $item['alloc_snacks'] . ' Snacks' )
                 : '0 Snacks';
             $alloc_badge = $meal_word . ' • ' . $snack_word;
@@ -457,8 +457,8 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
             if ( $active_child && intval( $item['alloc_meals'] ) > 1 ) {
                 $ch_counts = cmp_count_log_selected_meals_and_snacks( $active_child, false, $item['alloc_meals'], $item['alloc_snacks'] );
                 if ( $ch_counts['meals'] > 0 && $ch_counts['meals'] < intval( $item['alloc_meals'] ) ) {
-                    $rem_meals  = intval( $item['alloc_meals'] ) - $ch_counts['meals'];
-                    $rem_snacks = max( 0, intval( $item['alloc_snacks'] ) - $ch_counts['snacks'] );
+                    $rem_meals         = intval( $item['alloc_meals'] ) - $ch_counts['meals'];
+                    $rem_snacks        = max( 0, intval( $item['alloc_snacks'] ) - $ch_counts['snacks'] );
                     $carryover_queue[] = array(
                         'parent_log_id'  => intval( $active_child->id ),
                         'alloc_meals'    => $rem_meals,
@@ -503,12 +503,12 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
         }
 
         return array(
-            'regular_slots'       => $regular_slots,
-            'carryover_slots'     => $carryover_slots,
-            'all_slots'           => array_merge( $regular_slots, $carryover_slots ),
-            'regular_void_count'  => $regular_void_count,
-            'active_carryovers'   => $active_carryover_count,
-            'base_quotas'         => $base_quotas,
+            'regular_slots'      => $regular_slots,
+            'carryover_slots'    => $carryover_slots,
+            'all_slots'          => array_merge( $regular_slots, $carryover_slots ),
+            'regular_void_count' => $regular_void_count,
+            'active_carryovers'  => $active_carryover_count,
+            'base_quotas'        => $base_quotas,
         );
     }
 }
@@ -531,12 +531,12 @@ if ( ! function_exists( 'cmp_sync_subscription_carryover_state' ) ) {
             return array( 'active_carryovers' => 0, 'changed' => false );
         }
 
-        $schedule       = cmp_build_subscription_schedule_slots( $sub );
-        $valid_log_ids  = array();
+        $schedule      = cmp_build_subscription_schedule_slots( $sub );
+        $valid_log_ids = array();
 
         foreach ( $schedule['carryover_slots'] as $c_slot ) {
             if ( ! empty( $c_slot['log'] ) && ! empty( $c_slot['log']->id ) ) {
-                $lid = intval( $c_slot['log']->id );
+                $lid                   = intval( $c_slot['log']->id );
                 $valid_log_ids[ $lid ] = true;
 
                 // Keep stored quota metadata on the child log synchronized with its parent's skipped count
@@ -2825,8 +2825,8 @@ if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
                                             <?php if ( ! empty( $row->customer_phone ) ) : ?>
                                                 <span style="font-size:0.82rem; color:#64748b;"><?php echo esc_html( $row->customer_phone ); ?></span>
                                             <?php endif; ?>
-                                        </td>
-                                    <?php endif; ?>
+                                        <?php endif; ?>
+                                    </td>
                                     <td>
                                         <strong><?php echo esc_html( $row->plan_name ?: 'N/A' ); ?></strong>
                                         <?php if ( intval( $row->wc_order_id ) > 0 ) : ?>
