@@ -1933,7 +1933,7 @@ function cmp_render_foh_portal() {
                                             <input type="checkbox" id="edit-allow-skip-<?php echo esc_attr( $sub->id ); ?>" value="1" <?php checked( $allow_meal_skip, 1 ); ?> style="width:16px; height:16px; margin-top:2px; accent-color:#379237; cursor:pointer; flex-shrink:0;">
                                             <span style="font-size:0.78em; line-height:1.3; color:#1B5E20;">
                                                 <strong style="display:block;">Allow Meal Skipping</strong>
-                                                <span style="color:#334155; font-weight:normal;">Enable so the customer or FOH can skip a meal &amp; carry it forward to a Redemption Day. Untick after saving.</span>
+                                                <span style="color:#334155; font-weight:normal;">Enable to skip a meal &amp; carry it forward to a Redemption Day. Untick after saving.</span>
                                             </span>
                                         </label>
                                     </div>
