@@ -3018,7 +3018,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             // FOH / STAFF INLINE LOGISTICS EDIT + HYBRID CUSTOM TIMING
             // & OPTION PREP-C KITCHEN PREP SCHEDULE OVERRIDE
             // =========================================================
-            $('.toggle-logistics-edit').on('click', function(e) {
+            $(document).on('click', '.toggle-logistics-edit', function(e) {
                 e.preventDefault();
                 var subId = $(this).data('sub-id');
                 var viewDiv = $('#logistics-view-' + subId);
@@ -3102,7 +3102,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.save-logistics-btn').on('click', function(e) {
+            $(document).on('click', '.save-logistics-btn', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var subId = btn.data('sub-id');
@@ -3224,8 +3224,29 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                                 });
                                 $profSelect.closest('.cmp-saved-profile-bar').show();
                             });
+                        }
+
+                        btn.text('✓ Saved').css('background', '#1B5E20');
+                        cmpShowNotice('Logistics & allergy preferences saved for this plan.', 'success');
+
+                        setTimeout(function() {
+                            $('#logistics-edit-' + subId).hide();
+                            $('#logistics-view-' + subId).show();
+                            $('.toggle-logistics-edit[data-sub-id="' + subId + '"]').text('Edit');
+                            btn.text(origText).css('background', '#379237').prop('disabled', false);
+                        }, 1000);
+                    } else {
+                        cmpShowNotice('Error: ' + res.data, 'error');
+                        btn.text(origText).prop('disabled', false);
+                    }
+                }).fail(function() {
+                    cmpShowNotice('Connection error. Please try again.', 'error');
+                    btn.text(origText).prop('disabled', false);
+                });
+            });
+
             // STAFF ACCOUNT DETAILS & "ALLOW MEAL SKIPPING" EDIT LOGIC
-            $('.toggle-account-edit').on('click', function(e) {
+            $(document).on('click', '.toggle-account-edit', function(e) {
                 e.preventDefault();
                 var subId   = $(this).data('sub-id');
                 var viewDiv = $('#account-view-' + subId);
@@ -3245,22 +3266,22 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.save-account-btn').on('click', function(e) {
+            $(document).on('click', '.save-account-btn', function(e) {
                 e.preventDefault();
                 var btn       = $(this);
                 var subId     = btn.data('sub-id');
                 var userId    = btn.data('user-id');
                 var orderId   = btn.data('order-id');
-                var fName     = $('#edit-fname-' + subId).val();
-                var lName     = $('#edit-lname-' + subId).val();
-                var recipient = $('#edit-recipient-' + subId).val();
-                var addr      = $('#edit-address-' + subId).val();
+                var fName     = ($('#edit-fname-' + subId).val() || '').trim();
+                var lName     = ($('#edit-lname-' + subId).val() || '').trim();
+                var recipient = ($('#edit-recipient-' + subId).val() || '').trim();
+                var addr      = ($('#edit-address-' + subId).val() || '').trim();
                 var $skipChk  = $('#edit-allow-skip-' + subId);
                 var allowSkip = ($skipChk.length && $skipChk.is(':checked')) ? 1 : 0;
                 var origText  = btn.text();
 
-                if (!fName || !addr) {
-                    cmpShowNotice('First Name and Address are required.', 'error');
+                if (!fName) {
+                    cmpShowNotice('First Name is required.', 'error');
                     return;
                 }
 
@@ -3298,8 +3319,18 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         }
 
                         if (res.data.allow_meal_skip !== undefined) {
+                            var isSkipEnabled = parseInt(res.data.allow_meal_skip) === 1;
                             var $tabContainer = $('#plan-tab-' + subId);
-                            $tabContainer.attr('data-allow-skip', res.data.allow_meal_skip).data('allow-skip', res.data.allow_meal_skip);
+                            $tabContainer.attr('data-allow-skip', isSkipEnabled ? '1' : '0').data('allow-skip', isSkipEnabled ? 1 : 0);
+
+                            var $skipPill = $('#skip-status-pill-' + subId);
+                            if ($skipPill.length) {
+                                if (isSkipEnabled) {
+                                    $skipPill.css('display', 'inline-flex');
+                                } else {
+                                    $skipPill.hide();
+                                }
+                            }
                         }
 
                         btn.text('✓ Saved').css('background', '#1B5E20');
@@ -3320,11 +3351,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         cmpShowNotice('Error: ' + res.data, 'error');
                         btn.text(origText).prop('disabled', false);
                     }
+                }).fail(function() {
+                    cmpShowNotice('Connection error. Please try again.', 'error');
+                    btn.text(origText).prop('disabled', false);
                 });
             });
 
             // PLAN DAYS CONTROLS: ADD / REMOVE DAYS LOGIC
-            $('.admin-adjust-days-btn').on('click', function(e) {
+            $(document).on('click', '.admin-adjust-days-btn', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var subId = btn.data('sub-id');
@@ -3481,7 +3515,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }, 150);
             });
 
-            $('.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary').on('click', function() {
+            $(document).on('click', '.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary', function(e) {
+                if ($(e.target).closest('.cmp-carryover-help-tip').length) {
+                    return;
+                }
                 var $row = $(this).closest('tr.cmp-day-row');
                 if ($row.hasClass('status-void')) {
                     return;
@@ -3505,12 +3542,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.cmp-collapse-all-btn').on('click', function() {
+            $(document).on('click', '.cmp-collapse-all-btn', function(e) {
+                e.preventDefault();
                 var $container = $(this).closest('.cmp-portal-container');
                 $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop').removeClass('is-open');
             });
 
-            $('.cmp-expand-all-btn').on('click', function() {
+            $(document).on('click', '.cmp-expand-all-btn', function(e) {
+                e.preventDefault();
                 var $container = $(this).closest('.cmp-portal-container');
                 $container.find('tr.cmp-day-row:not(.status-void)').removeClass('is-collapsed-desktop');
             });
@@ -3622,14 +3661,18 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
             $('.cmp-day-row').each(function() {
                 var $row = $(this);
-                var hasFood = populateDynamicDropdowns($row);
-                if (hasFood) {
-                    calculateMacros($row);
-                    enforceMealQuota($row);
-                } else {
-                    syncRowCompactAndSummary($row);
+                try {
+                    var hasFood = populateDynamicDropdowns($row);
+                    if (hasFood) {
+                        calculateMacros($row);
+                        enforceMealQuota($row);
+                    } else {
+                        syncRowCompactAndSummary($row);
+                    }
+                    captureRowSnapshot($row);
+                } catch (initErr) {
+                    console.error('CMP Row Init Error:', initErr);
                 }
-                captureRowSnapshot($row);
             });
             updatePendingCounts();
 
@@ -3664,7 +3707,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 });
             });
 
-            $('.cmp-chefs-choice').on('change', function() {
+            $(document).on('change', '.cmp-chefs-choice', function() {
                 var rowElement = $(this).closest('tr');
                 var inputs = rowElement.find('select, input.cmp-meal-custom');
                 if ($(this).is(':checked')) {
@@ -3748,11 +3791,11 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 applyValidDateToRow(rowInput, selectedDate);
             }
 
-            $('.cmp-date-picker').on('change', function() {
+            $(document).on('change', '.cmp-date-picker', function() {
                 handleDatePickerValidation($(this), false);
             });
 
-            $('.cmp-date-picker').on('blur', function() {
+            $(document).on('blur', '.cmp-date-picker', function() {
                 handleDatePickerValidation($(this), true);
             });
 
@@ -3852,7 +3895,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.cmp-save-row').on('click', function(e) {
+            $(document).on('click', '.cmp-save-row', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var shouldKeyboardAdvance = (btn.data('kbd-advance') == 1);
