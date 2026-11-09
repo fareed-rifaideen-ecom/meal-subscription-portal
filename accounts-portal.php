@@ -6,6 +6,11 @@ if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
 }
 
+// Load shared per-plan logistics, carryover & tracking metrics helpers from customer-portal-backend.php if available
+if ( file_exists( __DIR__ . '/customer-portal-backend.php' ) ) {
+    require_once __DIR__ . '/customer-portal-backend.php';
+}
+
 // ==========================================
 // 0. SHARED HELPERS: ORDER ID, NAMES, TIMING & ATTRIBUTION
 // ==========================================
@@ -198,6 +203,10 @@ function cmp_export_accounts_main() {
         wp_die( 'Permission Denied' );
     }
 
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
+
     global $wpdb;
     $start         = isset( $_GET['start'] ) ? sanitize_text_field( $_GET['start'] ) : date( 'Y-m-d', strtotime( '-3 months' ) );
     $end           = isset( $_GET['end'] ) ? sanitize_text_field( $_GET['end'] ) : date( 'Y-m-d' );
@@ -221,7 +230,7 @@ function cmp_export_accounts_main() {
     $output = fopen( 'php://output', 'w' );
     fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
 
-    fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Name', 'Delivery Timing', 'Status', 'Total Days', 'Days Consumed', 'Balance', 'Start Date', 'Expiry Date' ) );
+    fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Name', 'Delivery Timing', 'Status', 'Total Days', 'Days Consumed', 'Balance Days', 'Balance Total Meals', 'Last Filled Date', 'Start Date', 'Expiry Date' ) );
 
     foreach ( $subs as $s ) {
         $order = ( intval( $s->wc_order_id ) > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $s->wc_order_id ) : false;
@@ -232,10 +241,25 @@ function cmp_export_accounts_main() {
         $recipient    = $names['recipient_name'];
         $timing_label = cmp_resolve_accounts_timing( $s, $order );
 
-        $used    = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $s->id ) ) );
-        $balance = max( 0, intval( $s->total_days ) - $used );
+        $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
+            ? cmp_get_subscription_tracking_metrics( $s )
+            : null;
 
-        $is_completed = ( $s->status === 'completed' || $used >= intval( $s->total_days ) || $s->expiry_date < current_time( 'mysql' ) );
+        if ( $metrics ) {
+            $eff_total_days   = intval( $metrics['effective_total_days'] );
+            $used             = intval( $metrics['used_days'] );
+            $balance          = intval( $metrics['balance_days'] );
+            $balance_meals    = intval( $metrics['balance_meals'] );
+            $last_filled_date = ! empty( $metrics['last_filled_date'] ) ? $metrics['last_filled_date'] : 'None';
+        } else {
+            $eff_total_days   = intval( $s->total_days ) + intval( $s->carryover_days ?? 0 );
+            $used             = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $s->id ) ) );
+            $balance          = max( 0, $eff_total_days - $used );
+            $balance_meals    = $balance;
+            $last_filled_date = 'None';
+        }
+
+        $is_completed = ( $s->status === 'completed' || $used >= $eff_total_days || $s->expiry_date < current_time( 'mysql' ) );
 
         if ( $is_completed ) {
             $internal_status = 'completed';
@@ -263,9 +287,11 @@ function cmp_export_accounts_main() {
             $s->plan_name,
             $timing_label,
             $derived_status,
-            $s->total_days,
+            $eff_total_days,
             $used,
             $balance,
+            $balance_meals,
+            $last_filled_date,
             date( 'Y-m-d', strtotime( $s->start_date ) ),
             date( 'Y-m-d', strtotime( $s->expiry_date ) ),
         ) );
@@ -285,6 +311,10 @@ function cmp_export_accounts_sub() {
     }
     $sub_id = intval( $_GET['sub_id'] );
 
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
+
     global $wpdb;
     $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
@@ -300,7 +330,7 @@ function cmp_export_accounts_sub() {
     $recipient    = $names['recipient_name'];
     $timing_label = cmp_resolve_accounts_timing( $sub, $order );
 
-    $logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id ) );
+    $logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY is_carryover ASC, target_date ASC, id ASC", $sub_id ) );
     foreach ( $logs as $l ) {
         $l->wc_order_id     = $sub->wc_order_id;
         $l->user_id         = $sub->user_id;
@@ -371,13 +401,17 @@ function cmp_export_accounts_sub() {
         } else {
             $del_col_str = $del_res;
         }
+        if ( ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1 ) {
+            $del_col_str .= ' [Skipped Meal Carryover]';
+        }
 
         // Option 4A: Cancelled and Returned days do not require a POS Check
         $is_canc_or_ret = in_array( $del_res, array( 'Cancelled', 'Returned' ), true );
         $pos            = $is_canc_or_ret ? 'No POS Required' : ( $l->pos_updated ? 'Yes' : 'No' );
         $del_date       = ! empty( $l->computed_delivery_date ) ? $l->computed_delivery_date : $l->target_date;
+        $day_label      = ( ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1 ) ? $day_num++ . ' (Carryover)' : $day_num++;
 
-        fputcsv( $output, array( $day_num++, $del_date, $l->target_date, $meal_str, $del_col_str, $pos ) );
+        fputcsv( $output, array( $day_label, $del_date, $l->target_date, $meal_str, $del_col_str, $pos ) );
     }
     fclose( $output );
     exit;
@@ -489,6 +523,10 @@ function cmp_render_accounts_portal() {
 // ==========================================
 function cmp_render_accounts_dashboard() {
     global $wpdb;
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
+
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
 
@@ -545,11 +583,35 @@ function cmp_render_accounts_dashboard() {
     $completed_subs = array();
 
     foreach ( $all_subs_data as $sub ) {
-        $used         = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(id) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) ) );
-        $is_completed = ( $sub->status === 'completed' || $used >= intval( $sub->total_days ) || $sub->expiry_date < current_time( 'mysql' ) );
+        $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
+            ? cmp_get_subscription_tracking_metrics( $sub )
+            : null;
 
-        $sub->used    = $used;
-        $sub->balance = max( 0, intval( $sub->total_days ) - $used );
+        if ( $metrics ) {
+            $used                     = intval( $metrics['used_days'] );
+            $eff_total                = intval( $metrics['effective_total_days'] );
+            $sub->used                = $used;
+            $sub->effective_total     = $eff_total;
+            $sub->balance             = intval( $metrics['balance_days'] );
+            $sub->balance_meals       = intval( $metrics['balance_meals'] );
+            $sub->pending_carry_days  = intval( $metrics['pending_carryover_days'] );
+            $sub->pending_carry_meals = intval( $metrics['pending_carryover_meals'] );
+            $sub->last_filled_date    = $metrics['last_filled_date'];
+            $sub->popover_text        = $metrics['popover_text'];
+        } else {
+            $used                     = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(id) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) ) );
+            $eff_total                = intval( $sub->total_days ) + intval( $sub->carryover_days ?? 0 );
+            $sub->used                = $used;
+            $sub->effective_total     = $eff_total;
+            $sub->balance             = max( 0, $eff_total - $used );
+            $sub->balance_meals       = $sub->balance;
+            $sub->pending_carry_days  = 0;
+            $sub->pending_carry_meals = 0;
+            $sub->last_filled_date    = '';
+            $sub->popover_text        = '';
+        }
+
+        $is_completed = ( $sub->status === 'completed' || $used >= $eff_total || $sub->expiry_date < current_time( 'mysql' ) );
 
         if ( $is_completed ) {
             $completed_subs[] = $sub;
@@ -732,8 +794,10 @@ function cmp_render_accounts_dashboard() {
                     $recipient_name = $names['recipient_name'];
                     $timing_label   = cmp_resolve_accounts_timing( $sub, $order );
 
-                    $used    = $sub->used;
-                    $balance = $sub->balance;
+                    $used          = intval( $sub->used );
+                    $eff_total     = isset( $sub->effective_total ) ? intval( $sub->effective_total ) : intval( $sub->total_days );
+                    $balance       = intval( $sub->balance );
+                    $balance_meals = isset( $sub->balance_meals ) ? intval( $sub->balance_meals ) : $balance;
 
                     if ( $sub->status === 'paused' ) {
                         $status_color = '#f59e0b';
@@ -773,7 +837,8 @@ function cmp_render_accounts_dashboard() {
                         $recipient_html = "<div style='margin-bottom:3px;'><span style='font-size:0.75em; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.4px;'>Recipient:</span> <strong style='color:#231F20;'>" . esc_html( $recipient_name ) . "</strong></div>";
                     }
 
-                    $search_blob = strtolower( $display_order_id . ' ' . $name . ' ' . $recipient_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $sub->plan_name . ' ' . $timing_label );
+                    $search_blob  = strtolower( $display_order_id . ' ' . $name . ' ' . $recipient_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $sub->plan_name . ' ' . $timing_label );
+                    $popover_attr = ! empty( $sub->popover_text ) ? " title='" . esc_attr( $sub->popover_text ) . "'" : '';
 
                     echo "<tr class='acc-sub-row' data-search='" . esc_attr( $search_blob ) . "'>
                         <td><strong style='color:#231F20; font-size:1.1em;'>{$display_order_id}</strong></td>
@@ -788,20 +853,26 @@ function cmp_render_accounts_dashboard() {
                             <span style='color:#64748b; font-size:0.9em;'>Started: " . date( 'd M Y', strtotime( $sub->start_date ) ) . "</span><br>
                             <span style='display:inline-block; margin-top:4px; background:#EEF7E3; color:#1B5E20; padding:2px 8px; border-radius:6px; font-size:0.8em; font-weight:700;'>Delivery: " . esc_html( $timing_label ) . "</span>
                         </td>
-                        <td>
+                        <td{$popover_attr} style='cursor:help;'>
                             <div style='display:flex; justify-content:space-between; margin-bottom:4px; font-size:0.95em;'>
                                 <span>Used: <strong>{$used}</strong></span>
-                                <span>Total: <strong>{$sub->total_days}</strong></span>
+                                <span>Total: <strong>{$eff_total}</strong></span>
                             </div>
                             <div style='background:#e2e8f0; width:100%; height:8px; border-radius:4px; overflow:hidden; margin-bottom:5px;'>";
-                    $pct = ( $sub->total_days > 0 ) ? min( 100, ( $used / $sub->total_days ) * 100 ) : 0;
+                    $pct = ( $eff_total > 0 ) ? min( 100, ( $used / $eff_total ) * 100 ) : 0;
                     echo "<div style='width:{$pct}%; background:{$status_color}; height:100%;'></div>
                             </div>
                             <div style='display:flex; justify-content:space-between; font-size:0.85em;'>
                                 <span style='color:{$status_color}; font-weight:bold;'>{$status_label}</span>
-                                <span>Bal: <strong>{$balance}</strong></span>
-                            </div>
-                        </td>
+                                <span>Bal: <strong>{$balance}d ({$balance_meals} Meals)</strong></span>
+                            </div>";
+                    if ( ! empty( $sub->pending_carry_days ) ) {
+                        echo "<div style='font-size:0.76em; color:#0369a1; font-weight:800; margin-top:3px;'>&#8618; " . intval( $sub->pending_carry_days ) . " Carryover Day(s) (" . intval( $sub->pending_carry_meals ) . " Meal(s))</div>";
+                    }
+                    if ( ! empty( $sub->last_filled_date ) ) {
+                        echo "<div style='font-size:0.75em; color:#64748b; margin-top:2px;'>Last Filled: <strong>" . esc_html( date( 'd M Y', strtotime( $sub->last_filled_date ) ) ) . "</strong></div>";
+                    }
+                    echo "</td>
                         <td style='text-align:center;' class='cmp-no-print'>
                             <a href='" . esc_url( add_query_arg( 'view_sub', $sub->id ) ) . "' class='acc-btn'>View Record</a>
                             <div class='deposit-pill-wrapper' data-user-id='{$sub->user_id}' style='margin-top:8px;'>
@@ -1161,10 +1232,14 @@ function cmp_render_pos_audit_view() {
 
 // ==========================================
 // 4. INDIVIDUAL CUSTOMER RECORD VIEW (READ ONLY)
-//    (Option 2B Attribution + Option 4A POS Exemptions)
+//    (Option 2B Attribution + Option 4A POS Exemptions + Carryover Redemption Support)
 // ==========================================
 function cmp_render_accounts_sub_view( $sub_id ) {
     global $wpdb;
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
+
     $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
@@ -1183,7 +1258,7 @@ function cmp_render_accounts_sub_view( $sub_id ) {
     $recipient_name = $names['recipient_name'];
     $timing_label   = cmp_resolve_accounts_timing( $sub, $order );
 
-    $logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id ) );
+    $logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY is_carryover ASC, target_date ASC, id ASC", $sub_id ) );
     foreach ( $logs as $l ) {
         $l->wc_order_id     = $sub->wc_order_id;
         $l->user_id         = $sub->user_id;
@@ -1205,9 +1280,22 @@ function cmp_render_accounts_sub_view( $sub_id ) {
         if ( $l->delivery_result === 'Cancelled' )  $cancelled++;
         if ( $l->delivery_result === 'Returned' )   $returned++;
     }
-    $balance = max( 0, intval( $sub->total_days ) - $used );
 
-    $is_completed   = ( $sub->status === 'completed' || $used >= intval( $sub->total_days ) || $sub->expiry_date < current_time( 'mysql' ) );
+    $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
+        ? cmp_get_subscription_tracking_metrics( $sub )
+        : null;
+
+    if ( $metrics ) {
+        $eff_total_days = intval( $metrics['effective_total_days'] );
+        $balance        = intval( $metrics['balance_days'] );
+        $balance_meals  = intval( $metrics['balance_meals'] );
+    } else {
+        $eff_total_days = intval( $sub->total_days ) + intval( $sub->carryover_days ?? 0 );
+        $balance        = max( 0, $eff_total_days - $used );
+        $balance_meals  = $balance;
+    }
+
+    $is_completed   = ( $sub->status === 'completed' || $used >= $eff_total_days || $sub->expiry_date < current_time( 'mysql' ) );
     $derived_status = $is_completed ? 'Completed' : $sub->status;
 
     $display_order_id = cmp_format_accounts_order_id( $sub->wc_order_id, $sub->id );
@@ -1299,15 +1387,15 @@ function cmp_render_accounts_sub_view( $sub_id ) {
 
         <div class="acc-summary-grid">
             <div class="acc-sum-box">
-                <div class="acc-sum-val"><?php echo intval( $sub->total_days ); ?></div>
-                <div class="acc-sum-label">Total Days</div>
+                <div class="acc-sum-val"><?php echo intval( $eff_total_days ); ?></div>
+                <div class="acc-sum-label">Total Days<?php if ( $eff_total_days > intval( $sub->total_days ) ) echo ' (Incl. Carryover)'; ?></div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #379237;">
                 <div class="acc-sum-val" style="color:#379237;"><?php echo intval( $used ); ?></div>
                 <div class="acc-sum-label">Consumed (Success)</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #3b82f6;">
-                <div class="acc-sum-val" style="color:#3b82f6;"><?php echo intval( $balance ); ?></div>
+                <div class="acc-sum-val" style="color:#3b82f6;"><?php echo intval( $balance ); ?> <span style="font-size:0.52em; color:#64748b;">(<?php echo intval( $balance_meals ); ?> Meals)</span></div>
                 <div class="acc-sum-label">Remaining Balance</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #f59e0b;">
@@ -1342,10 +1430,25 @@ function cmp_render_accounts_sub_view( $sub_id ) {
                 </thead>
                 <tbody>
                     <?php
-                    $day_counter = 1;
+                    $day_counter           = 1;
+                    $carryover_divider_put = false;
                     if ( empty( $logs ) ) : ?>
                         <tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;">No schedule created yet.</td></tr>
                     <?php else : foreach ( $logs as $l ) :
+                        $is_carryover_log = ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1;
+                        if ( $is_carryover_log && ! $carryover_divider_put ) :
+                            $carryover_divider_put = true;
+                    ?>
+                        <tr>
+                            <td colspan="6" style="background:#f8fafc; padding:8px 14px; text-align:center; border-top:2px solid #cbd5e1; border-bottom:2px solid #cbd5e1;">
+                                <span style="background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; padding:3px 12px; border-radius:999px; font-size:0.78em; font-weight:800; text-transform:uppercase; letter-spacing:0.04em;">
+                                    Carryover / Redemption Days (Skipped Meals)
+                                </span>
+                            </td>
+                        </tr>
+                    <?php
+                        endif;
+
                         $meals       = array();
                         $is_assigned = ( $l->breakfast_id || $l->lunch_id || $l->dinner_id || $l->juice_1_id || ! empty( $l->custom_breakfast ) || ! empty( $l->custom_lunch ) || ! empty( $l->custom_dinner ) || ! empty( $l->custom_juice_1 ) );
 
@@ -1388,8 +1491,13 @@ function cmp_render_accounts_sub_view( $sub_id ) {
 
                         $delivery_date_str = ! empty( $l->computed_delivery_date ) ? $l->computed_delivery_date : $l->target_date;
                     ?>
-                    <tr>
-                        <td><strong><?php echo $day_counter++; ?></strong></td>
+                    <tr style="<?php echo $is_carryover_log ? 'border-left: 4px solid #0284c7;' : ''; ?>">
+                        <td>
+                            <strong><?php echo $day_counter++; ?></strong>
+                            <?php if ( $is_carryover_log ) : ?>
+                                <br><span style="background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; padding:1px 6px; border-radius:999px; font-size:0.72em; font-weight:800; white-space:nowrap;">Skipped Meal</span>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <strong style="color:#1B5E20;"><?php echo date( 'd M Y', strtotime( $delivery_date_str ) ); ?></strong><br>
                             <span style="font-size:0.8em; color:#64748b;">(<?php echo esc_html( $l->timing_label ?? $timing_label ); ?>)</span>
