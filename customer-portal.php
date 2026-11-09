@@ -3,14 +3,21 @@
  * Customer Portal - Main Shortcode Controller & HTML View Template
  * Part 3 of the 3-file Customer Portal modular architecture.
  *
- * Phase 3 & Same-Day Prep (Option PREP-C) Upgrades:
+ * Upgrades Included:
+ *  - Allow Meal Skipping & Automatic Carryover (Redemption) Days:
+ *      * Staff-only "Allow Meal Skipping" toggle inside the Account Details Edit drawer (Visible to FOH, Menu Manager & Admin; 100% hidden from Customers)
+ *      * Thin visual divider line separating regular plan days from Carryover / Redemption Days
+ *      * "Skipped Meal" badge with hover/tap "?" Help Tooltip showing the exact source Day & Date and allocated Meal/Snack counts
+ *      * Plan Mode-aware inputs on Carryover Days:
+ *          - Standard Menu: Displays all 3 (Breakfast, Lunch, Dinner) options and dynamically locks the remaining slots once the carried-forward quota is selected
+ *          - Flexible Menu / Bespoke Custom Menu: Displays only the exact number of allocated Meal & Snack inputs
  *  - Option PREP-C: Staff-Only Kitchen Prep Schedule display & override selector ('auto', 'same_day', 'day_before') inside Active Logistics (100% hidden from customers)
  *  - Option 4A: Staff-Only "No POS Required" badge on Cancelled & Returned meal rows
  *  - Option 2B: Staff-Only Full-Width Micro-Footer Audit Strip on Meal Cards (Visible to FOH, Kitchen, Menu Manager & Admin)
  *  - Option 3A: Admin-Only Reset of Cancelled Days (Removes from Kitchen Portal, Reverses Extra Day & Restores Pending Slot)
  *
  * Automatically loads:
- *  1. customer-portal-backend.php (DB setup, Role/Date/Prep Helpers, AJAX Endpoints, CSV Exporters & WP Admin Feedback Page)
+ *  1. customer-portal-backend.php (DB setup, Role/Date/Prep/Carryover Helpers, AJAX Endpoints, CSV Exporters & WP Admin Feedback Page)
  *  2. customer-portal-assets.php  (Responsive CSS Stylesheet & Interactive JS/jQuery Engine)
  */
 
@@ -58,6 +65,9 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
         if ( function_exists( 'cmp_ensure_prep_timing_column' ) ) {
             cmp_ensure_prep_timing_column();
         }
+        if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+            cmp_ensure_meal_skip_carryover_columns();
+        }
 
         global $wpdb;
         $user_id      = get_current_user_id();
@@ -91,10 +101,14 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
         $icon_up     = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
         $icon_undo   = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>';
         $icon_plus   = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
+        $icon_pencil = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
 
         // OVERRIDE & PRIVILEGE DETECTION (CONNECTED TO WP ADMIN -> MEAL SETTINGS)
         $is_super_admin           = current_user_can( 'manage_options' );
-        $is_admin_override        = isset( $_GET['admin_edit_sub'] ) && ( cmp_can_bypass_date_restrictions() || $is_super_admin || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' ) );
+        $can_manage_meal_skip     = function_exists( 'cmp_can_manage_meal_skipping' )
+            ? cmp_can_manage_meal_skipping()
+            : ( $is_super_admin || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' ) );
+        $is_admin_override        = isset( $_GET['admin_edit_sub'] ) && ( cmp_can_bypass_date_restrictions() || $can_manage_meal_skip );
         $is_chef_override         = isset( $_GET['chef_override_sub'] ) && ( cmp_can_bypass_date_restrictions() || current_user_can( 'kitchen_staff' ) );
         $can_bypass_date_lock     = cmp_can_bypass_date_restrictions() || $is_chef_override;
         $can_bypass_quota         = cmp_can_bypass_meal_quota();
@@ -121,8 +135,13 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 if ( $is_admin_override || $is_chef_override ) {
                     $subs[] = $sub;
                 } else {
-                    $usage_days = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
-                    if ( $usage_days < $sub->total_days && $sub->expiry_date >= $today_dt ) {
+                    $metrics_chk = function_exists( 'cmp_get_subscription_tracking_metrics' )
+                        ? cmp_get_subscription_tracking_metrics( $sub )
+                        : null;
+                    $eff_total   = $metrics_chk ? intval( $metrics_chk['effective_total_days'] ) : ( intval( $sub->total_days ) + intval( $sub->carryover_days ?? 0 ) );
+                    $usage_days  = $metrics_chk ? intval( $metrics_chk['used_days'] ) : intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) ) );
+
+                    if ( $usage_days < $eff_total && $sub->expiry_date >= $today_dt ) {
                         $subs[] = $sub;
                     }
                 }
@@ -168,9 +187,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
         // Dynamic status note based on configured WP Admin permissions
         if ( $can_bypass_date_lock ) {
             $global_min_date = '';
-            $quota_note      = $can_bypass_quota
-                ? 'Privilege Mode: Date, cut-off & meal quota restrictions are disabled for your role.'
-                : 'Staff Mode: Date & cut-off restrictions are disabled for your role. Standard subscription meal quotas apply.';
+            $quota_note      = 'Staff Mode: Date & cut-off restrictions are disabled for your role. Standard subscription meal quotas apply unless "Allow Meal Skipping" is enabled in Account Details.';
             $note_text       = $quota_note;
             $note_color      = '#379237';
         } elseif ( $current_hour >= $dynamic_cutoff_hour ) {
@@ -256,6 +273,9 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 $is_same_day_prep   = function_exists( 'cmp_is_same_day_prep_subscription' ) ? cmp_is_same_day_prep_subscription( $sub, $resolved ) : false;
                 $prep_schedule_disp = function_exists( 'cmp_get_prep_schedule_display_label' ) ? cmp_get_prep_schedule_display_label( $sub, $resolved ) : ( $is_same_day_prep ? '⚡ Same-Day Prep' : 'Day-Before Prep' );
 
+                // Meal Skipping Flag (Staff-Only Control inside Account Details Edit)
+                $allow_meal_skip = ! empty( $sub->allow_meal_skip ) && intval( $sub->allow_meal_skip ) === 1 ? 1 : 0;
+
                 // Load saved renewal/multi-plan logistics profiles for this customer
                 $saved_logistics_profiles = function_exists( 'cmp_get_user_saved_logistics_profiles' )
                     ? cmp_get_user_saved_logistics_profiles( $sub->user_id )
@@ -302,38 +322,34 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                     ! empty( $time_slot ) ? array( $time_slot ) : array()
                 ) ) );
 
-                // Quota Engine
-                $is_juice     = ( stripos( $sub->allowed_categories, 'Juices' ) !== false || stripos( $sub->plan_name, 'juice' ) !== false || stripos( $sub->plan_name, 'cleanse' ) !== false );
+                // Build Ordered Schedule of Regular Slots + Carryover / Redemption Slots
+                $schedule_data   = function_exists( 'cmp_build_subscription_schedule_slots' )
+                    ? cmp_build_subscription_schedule_slots( $sub )
+                    : array(
+                        'regular_slots'   => array(),
+                        'carryover_slots' => array(),
+                        'all_slots'       => array(),
+                        'base_quotas'     => cmp_get_subscription_base_quotas( $sub ),
+                    );
+
+                $base_quotas   = $schedule_data['base_quotas'];
+                $is_juice      = $base_quotas['is_juice'];
+                $allowed_quota = $base_quotas['allowed_meals'];
+                $snack_quota   = $base_quotas['snack_quota'];
+
                 $is_flexible  = isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0;
                 $allow_custom = isset( $sub->allow_custom ) ? intval( $sub->allow_custom ) : 0;
 
-                $allowed_quota = 0;
-                $snack_quota   = 0;
-
-                if ( ! $is_juice ) {
-                    preg_match( '/(\d+)\s*Meal/i', $sub->plan_name, $m );
-                    if ( isset( $m[1] ) ) {
-                        $allowed_quota = intval( $m[1] );
-                    } else {
-                        if ( preg_match( '/\b(one|1)\b/i', $sub->plan_name ) )       $allowed_quota = 1;
-                        elseif ( preg_match( '/\b(two|2)\b/i', $sub->plan_name ) )   $allowed_quota = 2;
-                        elseif ( preg_match( '/\b(three|3)\b/i', $sub->plan_name ) ) $allowed_quota = 3;
-                        else {
-                            $cats = explode( ',', $sub->allowed_categories );
-                            foreach ( $cats as $c ) {
-                                if ( in_array( trim( $c ), array( 'Breakfast', 'Lunch', 'Dinner' ), true ) ) {
-                                    $allowed_quota++;
-                                }
-                            }
-                        }
-                    }
-                    if ( $allowed_quota <= 0 ) {
-                        $allowed_quota = 1;
-                    }
-                    $snack_quota = ( $allowed_quota >= 2 ) ? 2 : 1;
-                }
+                $total_schedule_slots = count( $schedule_data['all_slots'] );
             ?>
-            <div id="<?php echo esc_attr( $tab_id ); ?>" class="cmp-tab-content <?php echo esc_attr( $active_class ); ?> cmp-portal-container" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-total-days="<?php echo esc_attr( $sub->total_days ); ?>" data-allowed-meals="<?php echo esc_attr( $allowed_quota ); ?>" data-snack-quota="<?php echo esc_attr( $snack_quota ); ?>" data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>">
+            <div id="<?php echo esc_attr( $tab_id ); ?>"
+                 class="cmp-tab-content <?php echo esc_attr( $active_class ); ?> cmp-portal-container"
+                 data-sub-id="<?php echo esc_attr( $sub->id ); ?>"
+                 data-total-days="<?php echo esc_attr( max( intval( $sub->total_days ), $total_schedule_slots ) ); ?>"
+                 data-allowed-meals="<?php echo esc_attr( $allowed_quota ); ?>"
+                 data-snack-quota="<?php echo esc_attr( $snack_quota ); ?>"
+                 data-is-juice="<?php echo $is_juice ? '1' : '0'; ?>"
+                 data-allow-skip="<?php echo esc_attr( $allow_meal_skip ); ?>">
 
                 <!-- 3. ACCOUNT & ACTIVE LOGISTICS DRAWER (COLLAPSIBLE ON MOBILE / 2-COL GRID ON TABLET & DESKTOP) -->
                 <div class="cmp-info-drawer-wrap" id="info-drawer-<?php echo esc_attr( $sub->id ); ?>">
@@ -351,12 +367,15 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
 
                     <div class="cmp-info-drawer-body">
                         <div class="cmp-info-cards-grid">
-                            <!-- Account Details Card -->
+                            <!-- Account Details Card (Edit Icon Visible to FOH, Menu Manager & Admin) -->
                             <div class="cmp-account-card-box">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                                     <h3 style="margin:0; color:#379237; font-size:1.15em; font-weight:800;">Account Details</h3>
-                                    <?php if ( $is_super_admin ) : ?>
-                                        <button type="button" class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; text-decoration:underline; padding:0;">Edit</button>
+                                    <?php if ( $can_manage_meal_skip ) : ?>
+                                        <button type="button" class="toggle-account-edit" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" style="background:none; border:none; color:#379237; cursor:pointer; font-size:0.85em; font-weight:bold; display:inline-flex; align-items:center; gap:4px; padding:0;" title="Edit Account Details &amp; Allow Meal Skipping">
+                                            <?php echo $icon_pencil; ?>
+                                            <span class="toggle-account-edit-txt">Edit</span>
+                                        </button>
                                     <?php endif; ?>
                                 </div>
 
@@ -382,7 +401,8 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     <div class="cmp-kv-val"><span id="address-val-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $address ); ?></span></div>
                                 </div>
 
-                                <?php if ( $is_super_admin ) : ?>
+                                <?php if ( $can_manage_meal_skip ) : ?>
+                                <!-- STAFF-ONLY ACCOUNT DETAILS & "ALLOW MEAL SKIPPING" EDIT DRAWER (Hidden from Customers) -->
                                 <div id="account-edit-<?php echo esc_attr( $sub->id ); ?>" style="display:none; margin-top:10px;">
                                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
                                         <div style="flex:1; min-width:120px;">
@@ -402,6 +422,22 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                         <label style="font-size:0.82em; font-weight:bold; color:#334155;">Full Address:</label>
                                         <input type="text" id="edit-address-<?php echo esc_attr( $sub->id ); ?>" value="<?php echo esc_attr( $address !== 'Address not provided' ? $address : '' ); ?>" style="width:100%; padding:7px; font-size:0.9em; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box;">
                                     </div>
+
+                                    <!-- STAFF-ONLY SETTING: ALLOW MEAL SKIPPING -->
+                                    <?php if ( ! $is_juice && $allowed_quota > 1 ) : ?>
+                                    <div style="margin-bottom:10px; padding:10px 12px; background:#EEF7E3; border:1.5px solid #68B946; border-radius:8px;">
+                                        <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; margin:0;">
+                                            <input type="checkbox" id="edit-allow-skip-<?php echo esc_attr( $sub->id ); ?>" value="1" <?php checked( $allow_meal_skip, 1 ); ?> style="width:18px; height:18px; margin-top:2px; accent-color:#379237; cursor:pointer; flex-shrink:0;">
+                                            <span>
+                                                <strong style="font-size:0.88em; color:#1B5E20; display:block;">Allow Meal Skipping (Staff Only)</strong>
+                                                <span style="font-size:0.78em; color:#334155; line-height:1.35; display:block; margin-top:2px;">
+                                                    Enable temporarily so the customer or FOH can select fewer meals on a day and automatically carry the skipped meal(s) &amp; snack(s) forward to a Redemption Day at the end of the plan. Untick after saving to restore strict quota enforcement.
+                                                </span>
+                                            </span>
+                                        </label>
+                                    </div>
+                                    <?php endif; ?>
+
                                     <button type="button" class="save-account-btn" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-user-id="<?php echo esc_attr( $sub->user_id ); ?>" data-order-id="<?php echo esc_attr( $sub->wc_order_id ); ?>" style="background:#379237; color:#fff; border:none; padding:9px 14px; border-radius:8px; font-size:0.86em; font-weight:bold; cursor:pointer; width:100%; transition:background 0.2s;">Save Account Details</button>
                                 </div>
                                 <?php endif; ?>
@@ -555,7 +591,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 <div class="cmp-no-print" style="background:#fffbdd; border:1px solid #eab308; border-radius:8px; padding:15px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                     <div>
                         <strong style="color:#b45309; font-size:1.1em;">Plan Days Controls</strong><br>
-                        <span style="color:#92400e; font-size:0.9em;">Current Quota: <strong><?php echo esc_html( $sub->total_days ); ?> Days</strong></span>
+                        <span style="color:#92400e; font-size:0.9em;">Current Base Quota: <strong><?php echo esc_html( $sub->total_days ); ?> Days</strong><?php if ( ! empty( $schedule_data['active_carryovers'] ) ) echo ' &bull; Carryover Redemption Days: <strong>+' . intval( $schedule_data['active_carryovers'] ) . '</strong>'; ?></span>
                     </div>
                     <div style="display:flex; gap:10px;">
                         <button type="button" class="admin-adjust-days-btn" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-operation="add" style="background:#379237; color:#fff; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s;">+ Add Extra Day</button>
@@ -587,7 +623,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                     </div>
                 </div>
 
-                <!-- 5. MEAL SCHEDULE TABLE / RESPONSIVE DAY CARDS -->
+                <!-- 5. MEAL SCHEDULE TABLE / RESPONSIVE DAY CARDS (REGULAR + CARRYOVER REDEMPTION DAYS) -->
                 <div class="cmp-table-responsive">
                     <table class="cmp-table">
                         <thead>
@@ -617,20 +653,36 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                         </thead>
                         <tbody>
                             <?php
-                            $saved_logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC, id ASC", $sub->id ) );
+                            $active_min_date       = $global_min_date;
+                            $carryover_divider_put = false;
 
-                            $void_count = 0;
-                            foreach ( $saved_logs as $log ) {
-                                if ( in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) ) {
-                                    $void_count++;
+                            foreach ( $schedule_data['all_slots'] as $slot ) {
+                                $i                    = intval( $slot['day_num'] );
+                                $is_carryover_slot    = ! empty( $slot['is_carryover'] );
+                                $log                  = $slot['log'];
+                                $log_id               = $log ? intval( $log->id ) : 0;
+                                $row_alloc_meals      = intval( $slot['alloc_meals'] );
+                                $row_alloc_snacks     = intval( $slot['alloc_snacks'] );
+                                $carryover_parent_id  = intval( $slot['parent_log_id'] );
+                                $carryover_tooltip    = $slot['tooltip_text'] ?? '';
+                                $carryover_quota_pill = $slot['allocation_badge_txt'] ?? '';
+
+                                // Render Thin Visual Divider Line right before the first Carryover / Redemption Day
+                                if ( $is_carryover_slot && ! $carryover_divider_put ) {
+                                    $carryover_divider_put = true;
+                                    ?>
+                                    <tr class="cmp-carryover-divider-row cmp-no-print">
+                                        <td colspan="12" class="cmp-carryover-divider-cell">
+                                            <div class="cmp-carryover-divider-line">
+                                                <span class="cmp-carryover-divider-badge">
+                                                    Carryover / Redemption Days (Skipped Meals)
+                                                </span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php
                                 }
-                            }
-                            $display_days    = intval( $sub->total_days ) + $void_count;
-                            $active_min_date = $global_min_date;
 
-                            for ( $i = 1; $i <= $display_days; $i++ ) {
-                                $log                = isset( $saved_logs[ $i - 1 ] ) ? $saved_logs[ $i - 1 ] : null;
-                                $log_id             = $log ? $log->id : 0;
                                 $is_void            = ( $log && in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) );
                                 $saved_chefs_choice = ( $log && $log->is_chefs_choice ) ? true : false;
                                 $pos_updated        = ( $log && ! empty( $log->pos_updated ) ) ? 1 : 0;
@@ -646,6 +698,10 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                 }
 
                                 $is_chef_assigned = ( $log && ( $log->breakfast_id || $log->lunch_id || $log->dinner_id || $log->juice_1_id || $log->custom_breakfast || $log->custom_lunch || $log->custom_dinner || $log->custom_juice_1 ) );
+
+                                // Check if this regular/carryover row saved a partial/skipped meal count
+                                $saved_counts     = $log ? cmp_count_log_selected_meals_and_snacks( $log, $is_juice, $row_alloc_meals, $row_alloc_snacks ) : array( 'meals' => 0, 'snacks' => 0 );
+                                $has_skipped_meal = ( $log && ! $is_void && ! $is_juice && $saved_counts['meals'] > 0 && $saved_counts['meals'] < $row_alloc_meals );
 
                                 // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow
                                 $is_time_locked = false;
@@ -672,6 +728,13 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     $row_status_class = 'status-void row-void';
                                 } elseif ( $log_id > 0 ) {
                                     $row_status_class = 'status-saved';
+                                }
+
+                                if ( $is_carryover_slot ) {
+                                    $row_status_class .= ' is-carryover-row';
+                                }
+                                if ( $has_skipped_meal ) {
+                                    $row_status_class .= ' has-skipped-meal';
                                 }
 
                                 // Keep all Day Cards collapsed by default on Desktop/Tablet
@@ -746,10 +809,19 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                         <div class="cmp-macro-tile tile-fat"><span class="tile-label">Fat</span><span class="tile-val">0g</span></div>
                                     </div>';
 
-                                $min_attr = ( ! empty( $active_min_date ) && ! $can_bypass_date_lock ) ? 'min="' . esc_attr( $active_min_date ) . '"' : '';
+                                $min_attr              = ( ! empty( $active_min_date ) && ! $can_bypass_date_lock ) ? 'min="' . esc_attr( $active_min_date ) . '"' : '';
                                 $action_td_extra_class = ( $is_void && $is_super_admin ) ? ' cmp-cell-action-admin-void' : '';
                             ?>
-                                <tr class="cmp-day-row <?php echo esc_attr( $row_status_class ); ?>" data-row="<?php echo esc_attr( $i ); ?>" data-pos-updated="<?php echo esc_attr( $pos_updated ); ?>" data-is-flexible="<?php echo esc_attr( $row_is_flexible ); ?>" data-allow-custom="<?php echo esc_attr( $row_allow_custom ); ?>">
+                                <tr class="cmp-day-row <?php echo esc_attr( $row_status_class ); ?>"
+                                    data-row="<?php echo esc_attr( $i ); ?>"
+                                    data-pos-updated="<?php echo esc_attr( $pos_updated ); ?>"
+                                    data-is-flexible="<?php echo esc_attr( $row_is_flexible ); ?>"
+                                    data-allow-custom="<?php echo esc_attr( $row_allow_custom ); ?>"
+                                    data-is-carryover="<?php echo $is_carryover_slot ? '1' : '0'; ?>"
+                                    data-carryover-from="<?php echo esc_attr( $carryover_parent_id ); ?>"
+                                    data-row-meals-quota="<?php echo esc_attr( $row_alloc_meals ); ?>"
+                                    data-row-snacks-quota="<?php echo esc_attr( $row_alloc_snacks ); ?>">
+
                                     <td class="cmp-cell-day" title="Click to Expand / Collapse Day <?php echo esc_attr( $i ); ?>">
                                         <div class="cmp-day-header-top">
                                             <div class="cmp-day-title-group">
@@ -763,8 +835,33 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                 <span class="cmp-mobile-status"><?php echo $status_badge; ?></span>
                                             </div>
                                         </div>
+
+                                        <?php if ( $is_carryover_slot ) : ?>
+                                            <!-- Carryover Day "Skipped Meal ?" Badge with Lineage Tooltip & Quota Pill -->
+                                            <div class="cmp-carryover-meta-wrap">
+                                                <span class="cmp-skipped-meal-tag">
+                                                    <span>Skipped Meal</span>
+                                                    <span class="cmp-carryover-help-tip" tabindex="0" data-tooltip="<?php echo esc_attr( $carryover_tooltip ); ?>" aria-label="<?php echo esc_attr( $carryover_tooltip ); ?>">?
+                                                        <span class="cmp-carryover-tooltip-bubble"><?php echo esc_html( $carryover_tooltip ); ?></span>
+                                                    </span>
+                                                </span>
+                                                <?php if ( ! empty( $carryover_quota_pill ) ) : ?>
+                                                    <span class="cmp-carryover-quota-pill"><?php echo esc_html( $carryover_quota_pill ); ?></span>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php elseif ( $has_skipped_meal ) :
+                                            $skipped_m_cnt = $row_alloc_meals - $saved_counts['meals'];
+                                        ?>
+                                            <div class="cmp-carryover-meta-wrap">
+                                                <span class="cmp-partial-day-pill" title="<?php echo esc_attr( $skipped_m_cnt . ' meal(s) skipped and carried forward to a Redemption Day at the end of the plan.' ); ?>">
+                                                    <?php echo intval( $skipped_m_cnt ); ?> Meal<?php echo $skipped_m_cnt > 1 ? 's' : ''; ?> Carried Forward &rarr;
+                                                </span>
+                                            </div>
+                                        <?php endif; ?>
+
                                         <div class="cmp-mobile-meal-preview"></div>
                                     </td>
+
                                     <td class="cmp-cell-date">
                                         <span class="cmp-mobile-label">Date</span>
                                         <input type="date" class="cmp-date-picker" data-row="<?php echo esc_attr( $i ); ?>" <?php echo $min_attr; ?> value="<?php echo $log ? esc_attr( $log->target_date ) : ''; ?>" <?php echo $date_picker_disabled; ?>>
@@ -780,50 +877,63 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     <?php
                                     if ( ! $is_juice ) :
                                         $main_cats = array(
-                                            'Breakfast' => array( 'slot' => 'breakfast', 'idx' => 1, 'label' => $row_is_flexible ? 'Meal 1' : 'Breakfast' ),
-                                            'Lunch'     => array( 'slot' => 'lunch',     'idx' => 2, 'label' => $row_is_flexible ? 'Meal 2' : 'Lunch' ),
-                                            'Dinner'    => array( 'slot' => 'dinner',    'idx' => 3, 'label' => $row_is_flexible ? 'Meal 3' : 'Dinner' ),
+                                            'Breakfast' => array( 'slot' => 'breakfast', 'idx' => 1, 'label' => ( $row_is_flexible || $row_allow_custom ) ? 'Meal 1' : 'Breakfast' ),
+                                            'Lunch'     => array( 'slot' => 'lunch',     'idx' => 2, 'label' => ( $row_is_flexible || $row_allow_custom ) ? 'Meal 2' : 'Lunch' ),
+                                            'Dinner'    => array( 'slot' => 'dinner',    'idx' => 3, 'label' => ( $row_is_flexible || $row_allow_custom ) ? 'Meal 3' : 'Dinner' ),
                                         );
                                         foreach ( $main_cats as $cat => $data ) :
+                                            // Plan Mode Display Rule for Carryover / Redemption Days:
+                                            // - Standard Menu: Show all 3 (Breakfast, Lunch, Dinner) options so the customer can choose which meal category they want, then JS locks the rest once $row_alloc_meals is reached.
+                                            // - Flexible Menu or Bespoke Custom Menu: Show inputs strictly up to the row's allocated meals ($data['idx'] <= $row_alloc_meals).
+                                            $hide_slot_for_allocation = ( ( $row_is_flexible || $row_allow_custom ) && $data['idx'] > $row_alloc_meals );
+                                            $meal_cell_extra_class    = $hide_slot_for_allocation ? ' cmp-slot-outside-allocation' : '';
                                     ?>
-                                            <td class="cmp-cell-meal cmp-cell-meal-<?php echo esc_attr( $data['idx'] ); ?>">
-                                                <span class="cmp-mobile-label"><?php echo esc_html( $data['label'] ); ?></span>
-                                                <?php if ( $row_allow_custom ) : ?>
-                                                    <input type="text" class="cmp-meal-custom cmp-main-meal" data-slot="<?php echo esc_attr( $data['slot'] ); ?>" data-row="<?php echo esc_attr( $i ); ?>" value="<?php echo esc_attr( $log ? $log->{ 'custom_' . $data['slot'] } : '' ); ?>" placeholder="Type <?php echo esc_attr( $data['label'] ); ?>..." <?php echo $meal_select_disabled; ?>>
+                                            <td class="cmp-cell-meal cmp-cell-meal-<?php echo esc_attr( $data['idx'] . $meal_cell_extra_class ); ?>">
+                                                <?php if ( ! $hide_slot_for_allocation ) : ?>
+                                                    <span class="cmp-mobile-label"><?php echo esc_html( $data['label'] ); ?></span>
+                                                    <?php if ( $row_allow_custom ) : ?>
+                                                        <input type="text" class="cmp-meal-custom cmp-main-meal" data-slot="<?php echo esc_attr( $data['slot'] ); ?>" data-row="<?php echo esc_attr( $i ); ?>" value="<?php echo esc_attr( $log ? $log->{ 'custom_' . $data['slot'] } : '' ); ?>" placeholder="Type <?php echo esc_attr( $data['label'] ); ?>..." <?php echo $meal_select_disabled; ?>>
+                                                    <?php else : ?>
+                                                        <select class="cmp-meal-select cmp-main-meal" data-cat="<?php echo esc_attr( $row_is_flexible ? 'Any' : $cat ); ?>" data-slot="<?php echo esc_attr( $data['slot'] ); ?>" data-row="<?php echo esc_attr( $i ); ?>" data-saved-val="<?php echo esc_attr( $log ? $log->{ $data['slot'] . '_id' } : '' ); ?>" <?php echo $meal_select_disabled; ?>>
+                                                            <option value="">- Select <?php echo esc_html( $data['label'] ); ?> -</option>
+                                                        </select>
+                                                    <?php endif; ?>
                                                 <?php else : ?>
-                                                    <select class="cmp-meal-select cmp-main-meal" data-cat="<?php echo esc_attr( $row_is_flexible ? 'Any' : $cat ); ?>" data-slot="<?php echo esc_attr( $data['slot'] ); ?>" data-row="<?php echo esc_attr( $i ); ?>" data-saved-val="<?php echo esc_attr( $log ? $log->{ $data['slot'] . '_id' } : '' ); ?>" <?php echo $meal_select_disabled; ?>>
-                                                        <option value="">- Select <?php echo esc_html( $data['label'] ); ?> -</option>
-                                                    </select>
+                                                    <div class="cmp-unallocated-slot-placeholder">Not Allocated on This Day</div>
                                                 <?php endif; ?>
                                             </td>
                                         <?php endforeach; ?>
 
                                         <?php if ( $snack_quota > 0 ) : ?>
                                         <td class="cmp-cell-snack">
-                                            <div class="cmp-snacks-grid <?php echo ( $snack_quota == 1 ) ? 'single-snack' : ''; ?>">
-                                                <div class="cmp-snack-slot">
-                                                    <span class="cmp-mobile-label"><?php echo ( $snack_quota == 2 ) ? 'Snack 1' : 'Snack'; ?></span>
-                                                    <?php if ( $row_allow_custom ) : ?>
-                                                        <input type="text" class="cmp-meal-custom cmp-snack-1" data-slot="snack_1" data-row="<?php echo esc_attr( $i ); ?>" value="<?php echo esc_attr( $log ? $log->custom_snack_1 : '' ); ?>" placeholder="Type Snack 1..." <?php echo $meal_select_disabled; ?>>
-                                                    <?php else : ?>
-                                                        <select class="cmp-meal-select cmp-snack-1" data-cat="Snacks" data-slot="snack_1" data-row="<?php echo esc_attr( $i ); ?>" data-saved-val="<?php echo esc_attr( $log ? $log->snack_1_id : '' ); ?>" <?php echo $meal_select_disabled; ?>>
-                                                            <option value="">- Select Snack 1 -</option>
-                                                        </select>
+                                            <?php if ( $row_alloc_snacks <= 0 ) : ?>
+                                                <div class="cmp-unallocated-slot-placeholder">0 Carried-Forward Snacks for This Redemption Day</div>
+                                            <?php else : ?>
+                                                <div class="cmp-snacks-grid <?php echo ( $row_alloc_snacks == 1 ) ? 'single-snack' : ''; ?>">
+                                                    <div class="cmp-snack-slot">
+                                                        <span class="cmp-mobile-label"><?php echo ( $row_alloc_snacks == 2 ) ? 'Snack 1' : 'Snack'; ?></span>
+                                                        <?php if ( $row_allow_custom ) : ?>
+                                                            <input type="text" class="cmp-meal-custom cmp-snack-1" data-slot="snack_1" data-row="<?php echo esc_attr( $i ); ?>" value="<?php echo esc_attr( $log ? $log->custom_snack_1 : '' ); ?>" placeholder="Type Snack 1..." <?php echo $meal_select_disabled; ?>>
+                                                        <?php else : ?>
+                                                            <select class="cmp-meal-select cmp-snack-1" data-cat="Snacks" data-slot="snack_1" data-row="<?php echo esc_attr( $i ); ?>" data-saved-val="<?php echo esc_attr( $log ? $log->snack_1_id : '' ); ?>" <?php echo $meal_select_disabled; ?>>
+                                                                <option value="">- Select Snack 1 -</option>
+                                                            </select>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <?php if ( $row_alloc_snacks >= 2 ) : ?>
+                                                    <div class="cmp-snack-slot">
+                                                        <span class="cmp-mobile-label">Snack 2</span>
+                                                        <?php if ( $row_allow_custom ) : ?>
+                                                            <input type="text" class="cmp-meal-custom cmp-snack-2" data-slot="snack_2" data-row="<?php echo esc_attr( $i ); ?>" value="<?php echo esc_attr( $log ? $log->custom_snack_2 : '' ); ?>" placeholder="Type Snack 2..." <?php echo $meal_select_disabled; ?>>
+                                                        <?php else : ?>
+                                                            <select class="cmp-meal-select cmp-snack-2" data-cat="Snacks" data-slot="snack_2" data-row="<?php echo esc_attr( $i ); ?>" data-saved-val="<?php echo esc_attr( $log ? $log->snack_2_id : '' ); ?>" <?php echo $meal_select_disabled; ?>>
+                                                                <option value="">- Select Snack 2 -</option>
+                                                            </select>
+                                                        <?php endif; ?>
+                                                    </div>
                                                     <?php endif; ?>
                                                 </div>
-                                                <?php if ( $snack_quota == 2 ) : ?>
-                                                <div class="cmp-snack-slot">
-                                                    <span class="cmp-mobile-label">Snack 2</span>
-                                                    <?php if ( $row_allow_custom ) : ?>
-                                                        <input type="text" class="cmp-meal-custom cmp-snack-2" data-slot="snack_2" data-row="<?php echo esc_attr( $i ); ?>" value="<?php echo esc_attr( $log ? $log->custom_snack_2 : '' ); ?>" placeholder="Type Snack 2..." <?php echo $meal_select_disabled; ?>>
-                                                    <?php else : ?>
-                                                        <select class="cmp-meal-select cmp-snack-2" data-cat="Snacks" data-slot="snack_2" data-row="<?php echo esc_attr( $i ); ?>" data-saved-val="<?php echo esc_attr( $log ? $log->snack_2_id : '' ); ?>" <?php echo $meal_select_disabled; ?>>
-                                                            <option value="">- Select Snack 2 -</option>
-                                                        </select>
-                                                    <?php endif; ?>
-                                                </div>
-                                                <?php endif; ?>
-                                            </div>
+                                            <?php endif; ?>
                                         </td>
                                         <?php endif; ?>
 
