@@ -6,6 +6,11 @@ if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
 }
 
+// Load shared per-plan logistics, carryover & tracking metrics helpers from customer-portal-backend.php if available
+if ( file_exists( __DIR__ . '/customer-portal-backend.php' ) ) {
+    require_once __DIR__ . '/customer-portal-backend.php';
+}
+
 // ==========================================
 // 1. PHASE 1: SCHEMA AUTO-PATCHER, WOO ORDER SYNC & CONSUMPTION CACHE
 // ==========================================
@@ -13,6 +18,10 @@ function cmp_sa_ensure_schema_and_sync( $force = false ) {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
 
     // 1.1 Ensure `used_days` column exists on wp_cmp_subscriptions
     $col_check = $wpdb->get_results( "SHOW COLUMNS FROM {$table_subs} LIKE 'used_days'" );
@@ -89,6 +98,9 @@ function cmp_sa_ensure_schema_and_sync( $force = false ) {
 
 // Bust cache immediately whenever logs or subscriptions are modified or deleted
 add_action( 'wp_ajax_cmp_kitchen_action', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
+add_action( 'wp_ajax_cmp_save_daily_log', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
+add_action( 'wp_ajax_cmp_cp_admin_update_account_details', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
+add_action( 'wp_ajax_cmp_foh_update_account_details', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_ajax_cmp_foh_bulk_cancel_days', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_ajax_cmp_cancel_daily_log', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
 add_action( 'wp_ajax_cmp_clear_daily_log', 'cmp_sa_bust_consumption_cache_on_ajax', 1 );
@@ -286,15 +298,15 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
     $pp_end    = date( 'Y-m-d', strtotime( $fin_start . ' -1 day' ) );
     $pp_start  = date( 'Y-m-d', strtotime( $pp_end . " -{$days_diff} days" ) );
 
-    // 1. Single SQL Aggregation for Subscriptions & Financials (Excludes Deleted Plans & Deleted Users)
+    // 1. Single SQL Aggregation for Subscriptions & Financials (Accounts for Carryover Redemption Days)
     $sub_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT
-            COUNT(CASE WHEN s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s THEN 1 END) AS live_active_count,
+            COUNT(CASE WHEN s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s THEN 1 END) AS live_active_count,
             COUNT(CASE WHEN s.status = 'paused' THEN 1 END) AS live_paused_count,
-            COUNT(CASE WHEN s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s AND (s.total_days - s.used_days) BETWEEN 1 AND 3 THEN 1 END) AS expiring_soon_count,
-            COUNT(CASE WHEN s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s AND s.allow_custom = 1 THEN 1 END) AS active_custom_count,
-            COUNT(CASE WHEN s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s AND s.allow_custom = 0 AND s.is_flexible = 1 THEN 1 END) AS active_flex_count,
-            COUNT(CASE WHEN s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s AND s.allow_custom = 0 AND s.is_flexible = 0 THEN 1 END) AS active_std_count,
+            COUNT(CASE WHEN s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s AND ((s.total_days + COALESCE(s.carryover_days, 0)) - s.used_days) BETWEEN 1 AND 3 THEN 1 END) AS expiring_soon_count,
+            COUNT(CASE WHEN s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s AND s.allow_custom = 1 THEN 1 END) AS active_custom_count,
+            COUNT(CASE WHEN s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s AND s.allow_custom = 0 AND s.is_flexible = 1 THEN 1 END) AS active_flex_count,
+            COUNT(CASE WHEN s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s AND s.allow_custom = 0 AND s.is_flexible = 0 THEN 1 END) AS active_std_count,
             COUNT(CASE WHEN DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s THEN 1 END) AS period_new_plans,
             COALESCE(SUM(CASE WHEN DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s THEN s.plan_price ELSE 0 END), 0) AS gross_turnover,
             COALESCE(SUM(CASE WHEN DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s THEN s.discount_amount ELSE 0 END), 0) AS total_discounts,
@@ -324,7 +336,7 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
         $fin_delta_pct = 0.0;
     }
 
-    // 2. Unrenewed Expired / Completed Customers & Cost of Churn SQL Aggregation:
+    // 2. Unrenewed Expired / Completed Customers & Cost of Churn SQL Aggregation (Accounts for Carryover Days):
     $churn_agg = $wpdb->get_row( $wpdb->prepare(
         "SELECT 
             COUNT(s.id) AS churned_count,
@@ -337,14 +349,14 @@ function cmp_sa_get_dashboard_summary( $op_start, $op_end, $fin_start, $fin_end 
              FROM {$table_subs} s2
              INNER JOIN {$table_users} u2 ON s2.user_id = u2.ID
              WHERE s2.status IN ('active', 'completed')
-               AND (s2.status = 'completed' OR s2.used_days >= s2.total_days OR s2.expiry_date < %s)
+               AND (s2.status = 'completed' OR s2.used_days >= (s2.total_days + COALESCE(s2.carryover_days, 0)) OR s2.expiry_date < %s)
                AND NOT EXISTS (
                    SELECT 1 FROM {$table_subs} s_act
                    LEFT JOIN {$table_users} u_act ON s_act.user_id = u_act.ID
                    WHERE (s_act.user_id = s2.user_id OR (u_act.user_email != '' AND u_act.user_email = u2.user_email))
                      AND (
                          s_act.status = 'paused'
-                         OR (s_act.status = 'active' AND s_act.used_days < s_act.total_days AND s_act.expiry_date >= %s)
+                         OR (s_act.status = 'active' AND s_act.used_days < (s_act.total_days + COALESCE(s_act.carryover_days, 0)) AND s_act.expiry_date >= %s)
                      )
                )
              GROUP BY s2.user_id
@@ -627,7 +639,7 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
 
     $limit_sql = ( $per_page > 0 ) ? $wpdb->prepare( " LIMIT %d OFFSET %d", $per_page, $offset ) : '';
 
-    // GROUP A: SUBSCRIPTION-BASED VIEWS
+    // GROUP A: SUBSCRIPTION-BASED VIEWS (ACCOUNTS FOR CARRYOVER REDEMPTION DAYS)
     if ( in_array( $sa_view, array( 'unrenewed_expired', 'active_plans', 'paused_plans', 'expiring_soon', 'period_sales' ), true ) ) {
         if ( $sa_view === 'unrenewed_expired' ) {
             $where_sql = $wpdb->prepare(
@@ -636,14 +648,14 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
                     FROM {$table_subs} s2
                     INNER JOIN {$table_users} u2 ON s2.user_id = u2.ID
                     WHERE s2.status IN ('active', 'completed')
-                      AND (s2.status = 'completed' OR s2.used_days >= s2.total_days OR s2.expiry_date < %s)
+                      AND (s2.status = 'completed' OR s2.used_days >= (s2.total_days + COALESCE(s2.carryover_days, 0)) OR s2.expiry_date < %s)
                       AND NOT EXISTS (
                           SELECT 1 FROM {$table_subs} s_act
                           LEFT JOIN {$table_users} u_act ON s_act.user_id = u_act.ID
                           WHERE (s_act.user_id = s2.user_id OR (u_act.user_email != '' AND u_act.user_email = u2.user_email))
                             AND (
                                 s_act.status = 'paused'
-                                OR (s_act.status = 'active' AND s_act.used_days < s_act.total_days AND s_act.expiry_date >= %s)
+                                OR (s_act.status = 'active' AND s_act.used_days < (s_act.total_days + COALESCE(s_act.carryover_days, 0)) AND s_act.expiry_date >= %s)
                             )
                       )
                     GROUP BY s2.user_id
@@ -652,14 +664,14 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
             );
             $order_by = "s.expiry_date DESC, s.id DESC";
         } elseif ( $sa_view === 'active_plans' ) {
-            $where_sql = $wpdb->prepare( "s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s", $today_time );
+            $where_sql = $wpdb->prepare( "s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s", $today_time );
             $order_by  = "s.id DESC";
         } elseif ( $sa_view === 'paused_plans' ) {
             $where_sql = "s.status = 'paused'";
             $order_by  = "s.id DESC";
         } elseif ( $sa_view === 'expiring_soon' ) {
-            $where_sql = $wpdb->prepare( "s.status = 'active' AND s.used_days < s.total_days AND s.expiry_date >= %s AND (s.total_days - s.used_days) BETWEEN 1 AND 3", $today_time );
-            $order_by  = "(s.total_days - s.used_days) ASC, s.expiry_date ASC";
+            $where_sql = $wpdb->prepare( "s.status = 'active' AND s.used_days < (s.total_days + COALESCE(s.carryover_days, 0)) AND s.expiry_date >= %s AND ((s.total_days + COALESCE(s.carryover_days, 0)) - s.used_days) BETWEEN 1 AND 3", $today_time );
+            $order_by  = "((s.total_days + COALESCE(s.carryover_days, 0)) - s.used_days) ASC, s.expiry_date ASC";
         } else {
             $where_sql = $wpdb->prepare( "s.status IN ('active', 'paused', 'completed') AND DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s", $fin_start, $fin_end );
             $order_by  = "s.start_date DESC, s.id DESC";
@@ -683,12 +695,31 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
         $formatted = array();
         if ( $raw_rows ) {
             foreach ( $raw_rows as $sub ) {
-                $uid        = intval( $sub->user_id );
-                $sub_id     = intval( $sub->id );
-                $used_days  = intval( $sub->used_days );
-                $total_days = intval( $sub->total_days );
-                $balance    = max( 0, $total_days - $used_days );
-                $contact    = cmp_sa_get_customer_contact( $uid, $sub->wc_order_id, $sub->display_name, $sub->user_email, $sub );
+                $uid     = intval( $sub->user_id );
+                $sub_id  = intval( $sub->id );
+                $contact = cmp_sa_get_customer_contact( $uid, $sub->wc_order_id, $sub->display_name, $sub->user_email, $sub );
+
+                $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
+                    ? cmp_get_subscription_tracking_metrics( $sub )
+                    : null;
+
+                if ( $metrics ) {
+                    $used_days               = intval( $metrics['used_days'] );
+                    $total_days              = intval( $metrics['effective_total_days'] );
+                    $balance                 = intval( $metrics['balance_days'] );
+                    $balance_meals           = intval( $metrics['balance_meals'] );
+                    $pending_carryover_days  = intval( $metrics['pending_carryover_days'] );
+                    $pending_carryover_meals = intval( $metrics['pending_carryover_meals'] );
+                    $last_filled_date        = $metrics['last_filled_date'];
+                } else {
+                    $used_days               = intval( $sub->used_days );
+                    $total_days              = intval( $sub->total_days ) + intval( $sub->carryover_days ?? 0 );
+                    $balance                 = max( 0, $total_days - $used_days );
+                    $balance_meals           = $balance;
+                    $pending_carryover_days  = 0;
+                    $pending_carryover_meals = 0;
+                    $last_filled_date        = '';
+                }
 
                 $price      = floatval( $sub->plan_price );
                 $discount   = floatval( $sub->discount_amount );
@@ -707,23 +738,27 @@ function cmp_sa_query_drilldown_records( $sa_view, $op_start, $op_end, $fin_star
                 }
 
                 $formatted[] = array(
-                    'sub_id'       => $sub_id,
-                    'user_id'      => $uid,
-                    'order_id'     => cmp_sa_format_order_id( $sub->wc_order_id, $sub_id ),
-                    'name'         => $contact['name'],
-                    'email'        => $contact['email'],
-                    'phone'        => $contact['phone'],
-                    'plan_name'    => $sub->plan_name,
-                    'status_key'   => $status_key,
-                    'status_label' => $status_label,
-                    'used_days'    => $used_days,
-                    'total_days'   => $total_days,
-                    'balance'      => $balance,
-                    'price'        => $price,
-                    'discount'     => $discount,
-                    'paid'         => $final_paid,
-                    'start_date'   => substr( $sub->start_date, 0, 10 ),
-                    'expiry_date'  => substr( $sub->expiry_date, 0, 10 ),
+                    'sub_id'                  => $sub_id,
+                    'user_id'                 => $uid,
+                    'order_id'                => cmp_sa_format_order_id( $sub->wc_order_id, $sub_id ),
+                    'name'                    => $contact['name'],
+                    'email'                   => $contact['email'],
+                    'phone'                   => $contact['phone'],
+                    'plan_name'               => $sub->plan_name,
+                    'status_key'              => $status_key,
+                    'status_label'            => $status_label,
+                    'used_days'               => $used_days,
+                    'total_days'              => $total_days,
+                    'balance'                 => $balance,
+                    'balance_meals'           => $balance_meals,
+                    'pending_carryover_days'  => $pending_carryover_days,
+                    'pending_carryover_meals' => $pending_carryover_meals,
+                    'last_filled_date'        => $last_filled_date,
+                    'price'                   => $price,
+                    'discount'                => $discount,
+                    'paid'                    => $final_paid,
+                    'start_date'              => substr( $sub->start_date, 0, 10 ),
+                    'expiry_date'             => substr( $sub->expiry_date, 0, 10 ),
                 );
             }
         }
@@ -883,11 +918,12 @@ function cmp_sa_export_drilldown_csv() {
             ) );
         }
     } elseif ( in_array( $view, array( 'active_plans', 'paused_plans', 'expiring_soon', 'period_sales' ), true ) ) {
-        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Name', 'Status', 'Used Days', 'Total Days', 'Balance Days', 'Gross Price (AED)', 'Discount (AED)', 'Net Paid (AED)', 'Start Date', 'Expiry Date' ) );
+        fputcsv( $output, array( 'Order ID', 'Customer Name', 'Email', 'Phone', 'Plan Name', 'Status', 'Used Days', 'Total Days', 'Balance Days', 'Balance Total Meals', 'Last Filled Date', 'Gross Price (AED)', 'Discount (AED)', 'Net Paid (AED)', 'Start Date', 'Expiry Date' ) );
         foreach ( $rows as $s ) {
             fputcsv( $output, array(
                 $s['order_id'], $s['name'], $s['email'], $s['phone'], $s['plan_name'], $s['status_label'],
-                $s['used_days'], $s['total_days'], $s['balance'],
+                $s['used_days'], $s['total_days'], $s['balance'], $s['balance_meals'] ?? $s['balance'],
+                ! empty( $s['last_filled_date'] ) ? $s['last_filled_date'] : 'None',
                 number_format( $s['price'], 2, '.', '' ), number_format( $s['discount'], 2, '.', '' ), number_format( $s['paid'], 2, '.', '' ),
                 $s['start_date'], $s['expiry_date']
             ) );
@@ -1960,7 +1996,10 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                     <td><?php echo cmp_sa_semantic_pill( $p_type, $s['status_label'] ); ?></td>
                                     <td>
                                         Used: <strong><?php echo intval( $s['used_days'] ); ?> / <?php echo intval( $s['total_days'] ); ?></strong><br>
-                                        <span style="color:<?php echo $s['balance'] <= 3 ? '#dc2626' : '#1B5E20'; ?>; font-weight:800;">Balance: <?php echo intval( $s['balance'] ); ?> Days</span>
+                                        <span style="color:<?php echo $s['balance'] <= 3 ? '#dc2626' : '#1B5E20'; ?>; font-weight:800;">Balance: <?php echo intval( $s['balance'] ); ?> Days (<?php echo intval( $s['balance_meals'] ?? $s['balance'] ); ?> Meals)</span>
+                                        <?php if ( ! empty( $s['pending_carryover_days'] ) ) : ?>
+                                            <br><span style="color:#0369a1; font-size:0.8em; font-weight:800;">&#8618; <?php echo intval( $s['pending_carryover_days'] ); ?> Carryover Day<?php echo intval( $s['pending_carryover_days'] ) > 1 ? 's' : ''; ?> (<?php echo intval( $s['pending_carryover_meals'] ); ?> Meal<?php echo intval( $s['pending_carryover_meals'] ) > 1 ? 's' : ''; ?>)</span>
+                                        <?php endif; ?>
                                     </td>
                                     <td style="white-space:nowrap;">
                                         Net: <strong style="color:#1B5E20;">AED <?php echo number_format( $s['paid'], 2 ); ?></strong><br>
@@ -1971,6 +2010,9 @@ function cmp_sa_render_drilldown_screen( $sa_view, $summary, $op_start, $op_end,
                                     <td style="font-size:0.88em; color:#475569; white-space:nowrap;">
                                         Start: <?php echo esc_html( date( 'd M Y', strtotime( $s['start_date'] ) ) ); ?><br>
                                         Exp: <?php echo esc_html( date( 'd M Y', strtotime( $s['expiry_date'] ) ) ); ?>
+                                        <?php if ( ! empty( $s['last_filled_date'] ) ) : ?>
+                                            <br><span style="color:#1B5E20; font-weight:700;">Last Filled: <?php echo esc_html( date( 'd M Y', strtotime( $s['last_filled_date'] ) ) ); ?></span>
+                                        <?php endif; ?>
                                     </td>
                                     <td style="text-align:center;">
                                         <div style="display:flex; gap:6px; justify-content:center; align-items:center; flex-wrap:wrap;">
