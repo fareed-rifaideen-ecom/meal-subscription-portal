@@ -326,6 +326,16 @@ function cmp_ajax_foh_update_financials() {
             'action_type'     => 'Plan Financials Updated',
             'target_date'     => date( 'Y-m-d' ),
             'old_status'      => sprintf( 'Base: AED %.2f | Disc: AED %.2f | Net: AED %.2f', $old_price, $old_discount, $old_net ),
+            'new_status'      => sprintf( 'Base: AED %.2f | Disc: AED %.2f | Net: AED %.2f', $price, $discount, $new_net ),
+        ) );
+    }
+
+    wp_send_json_success( array(
+        'price'    => $price,
+        'discount' => $discount,
+    ) );
+}
+
 // 5. AJAX HANDLER: Update Account Details, Recipient, Plan Mode, Kitchen Prep Schedule & Allow Meal Skipping
 add_action( 'wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details' );
 function cmp_ajax_foh_update_account_details() {
@@ -572,6 +582,24 @@ function cmp_ajax_foh_delete_subscription() {
             'subscription_id' => $sub_id,
             'wc_order_id'     => intval( $sub_row->wc_order_id ),
             'user_id'         => intval( $sub_row->user_id ),
+            'plan_name'       => $sub_row->plan_name,
+            'action_type'     => 'Plan Deleted',
+            'target_date'     => date( 'Y-m-d' ),
+            'old_status'      => sprintf( 'Plan Status: %s (%d Total Days)', ucfirst( $sub_row->status ), intval( $sub_row->total_days ) ),
+            'new_status'      => 'Subscription & Daily Logs Permanently Deleted by Super Admin',
+        ) );
+    }
+
+    $wpdb->delete( $table_logs, array( 'subscription_id' => $sub_id ), array( '%d' ) );
+    $deleted = $wpdb->delete( $table_subs, array( 'id' => $sub_id ), array( '%d' ) );
+
+    if ( $deleted ) {
+        wp_send_json_success();
+    } else {
+        wp_send_json_error( 'Database error: Could not delete subscription.' );
+    }
+}
+
 // 7. AJAX HANDLER: Export CSV (Synchronized with Per-Plan Logistics, Allergies, Kitchen Prep Schedule & Balance Total Meals)
 add_action( 'wp_ajax_cmp_foh_export_csv', 'cmp_foh_export_csv' );
 function cmp_foh_export_csv() {
@@ -2612,6 +2640,14 @@ function cmp_render_foh_portal() {
                 
                 if (editDiv.style.display === 'none') {
                     editDiv.style.display = 'block';
+                    this.innerHTML = '<span style="font-size:0.85em; font-weight:bold; text-decoration:underline; color:#dc2626;">Cancel</span>';
+                } else {
+                    editDiv.style.display = 'none';
+                    this.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+                }
+            });
+        });
+
         // Save Account Details, Recipient, Plan Mode, Kitchen Prep Schedule & Allow Meal Skipping
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
