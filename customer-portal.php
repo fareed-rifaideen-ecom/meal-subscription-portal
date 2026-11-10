@@ -4,13 +4,17 @@
  * Part 3 of the 3-file Customer Portal modular architecture.
  *
  * Upgrades Included:
- *  - Allow Meal Skipping & Automatic Carryover (Redemption) Days:
- *      * Staff-only "Allow Meal Skipping" toggle inside the Account Details Edit drawer (Visible to FOH, Menu Manager & Admin; 100% hidden from Customers)
- *      * Thin visual divider line separating regular plan days from Carryover / Redemption Days
- *      * "Skipped Meal" badge with hover/tap "?" Help Tooltip showing the exact source Day & Date and allocated Meal/Snack counts
- *      * Plan Mode-aware inputs on Carryover Days:
- *          - Standard Menu: Displays all 3 (Breakfast, Lunch, Dinner) options and dynamically locks the remaining slots once the carried-forward quota is selected
- *          - Flexible Menu / Bespoke Custom Menu: Displays only the exact number of allocated Meal & Snack inputs
+ *  - Strict Admin-Only Reset Selection Button (`.cmp-clear-row`):
+ *      * Rendered strictly for Super Administrators (`$is_super_admin`) across both regular mode and Chef Override Mode.
+ *      * Hidden for Customers, FOH Managers, Menu Managers, and Kitchen Staff.
+ *  - Strict Terminal Delivery Status Lock (`Successful`, `Returned`, `Cancelled`):
+ *      * Locks all inputs and hides Save/Update/Cancel buttons for Customers, FOH, Menu Managers, and Kitchen Staff
+ *        once a day's `delivery_result` is `Successful`, `Returned`, or `Cancelled`.
+ *      * Only Super Admins (`$is_super_admin`) can edit, reset, or cancel a terminal-status day.
+ *  - Configurable 3-Mode Dish Details Display (`DISH-1`, `DISH-2`, `DISH-3`, `off`):
+ *      * Reads `cmp_get_dish_details_display_mode()` from WP Admin > Meal Portal > Menu Manager and passes it to the
+ *        responsive frontend engine in `customer-portal-assets.php`.
+ *  - Allow Meal Skipping & Automatic Carryover (Redemption) Days
  *  - Option PREP-C: Staff-Only Kitchen Prep Schedule display & override selector ('auto', 'same_day', 'day_before') inside Active Logistics (100% hidden from customers)
  *  - Option 4A: Staff-Only "No POS Required" badge on Cancelled & Returned meal rows
  *  - Option 2B: Staff-Only Full-Width Micro-Footer Audit Strip on Meal Cards (Visible to FOH, Kitchen, Menu Manager & Admin)
@@ -84,6 +88,11 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
         $blackout_dates_array = ! empty( $blackout_string ) ? explode( ',', str_replace( ' ', '', $blackout_string ) ) : array();
         $raw_wa               = get_option( 'cmp_whatsapp_number', '' );
         $clean_wa             = preg_replace( '/[^0-9]/', '', $raw_wa );
+
+        // Dish Details Display Mode configured in WP Admin > Meal Portal > Menu Manager ('dish_1', 'dish_2', 'dish_3', 'off')
+        $dish_display_mode = function_exists( 'cmp_get_dish_details_display_mode' )
+            ? cmp_get_dish_details_display_mode()
+            : get_option( 'cmp_dish_details_display_mode', 'dish_1' );
 
         // Load Custom Delivery Timings & Time Slots saved by Staff
         $custom_saved_timings = get_option( 'cmp_custom_delivery_timings', array() );
@@ -180,7 +189,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
             $greeting_name = ! empty( $curr_name ) ? $curr_name : $current_user->display_name;
         }
 
-        // Fetch active foods for frontend dropdown population
+        // Fetch active foods (including description/ingredients & macros) for frontend dropdown population
         $foods = $wpdb->get_results( "SELECT * FROM $table_foods WHERE is_active = 1 ORDER BY category_name, food_name" );
 
         $current_hour      = (int) $now_dubai->format( 'H' );
@@ -194,11 +203,11 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
             $note_color      = '#379237';
         } elseif ( $current_hour >= $dynamic_cutoff_hour ) {
             $global_min_date = $customer_min_date;
-            $note_text       = 'Note: It is past ' . str_pad( $dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT ) . ':00 GST. Meal selections, resets, and cancellations are now locked for today and tomorrow.';
+            $note_text       = 'Note: It is past ' . str_pad( $dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT ) . ':00 GST. Meal selections and cancellations are now locked for today and tomorrow.';
             $note_color      = '#d63638';
         } else {
             $global_min_date = $customer_min_date;
-            $note_text       = 'Note: Please make selections, resets, or cancellations before ' . str_pad( $dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT ) . ':00 GST the day prior to delivery.';
+            $note_text       = 'Note: Please make meal selections or cancellations before ' . str_pad( $dynamic_cutoff_hour, 2, '0', STR_PAD_LEFT ) . ':00 GST the day prior to delivery.';
             $note_color      = '#1B5E20';
         }
 
@@ -210,7 +219,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
         }
         ?>
 
-        <div class="cmp-dashboard-wrap">
+        <div class="cmp-dashboard-wrap" data-dish-mode="<?php echo esc_attr( $dish_display_mode ); ?>">
             <!-- 1. HEADER BANNER & ACTION BUTTONS -->
             <div class="cmp-header-banner">
                 <div>
@@ -328,7 +337,6 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                 if ( function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
                     $schedule_data = cmp_build_subscription_schedule_slots( $sub );
                 } else {
-                    // Self-contained fallback schedule builder if backend helper is not loaded yet
                     $fallback_is_juice = ( stripos( $sub->allowed_categories, 'Juices' ) !== false || stripos( $sub->plan_name, 'juice' ) !== false || stripos( $sub->plan_name, 'cleanse' ) !== false );
                     $fallback_meals    = 1;
                     if ( ! $fallback_is_juice && preg_match( '/(\d+)\s*Meal/i', $sub->plan_name, $fm ) ) {
@@ -727,10 +735,12 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     <?php
                                 }
 
-                                $is_void            = ( $log && in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) );
-                                $has_saved_date     = ( $log_id > 0 && ! empty( $log->target_date ) && $log->target_date !== '0000-00-00' );
-                                $saved_chefs_choice = ( $log && $log->is_chefs_choice ) ? true : false;
-                                $pos_updated        = ( $log && ! empty( $log->pos_updated ) ) ? 1 : 0;
+                                $is_void             = ( $log && in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) );
+                                $is_terminal_status  = ( $log && in_array( $log->delivery_result, array( 'Successful', 'Cancelled', 'Returned' ), true ) );
+                                $is_terminal_locked  = ( $is_terminal_status && ! $is_super_admin );
+                                $has_saved_date      = ( $log_id > 0 && ! empty( $log->target_date ) && $log->target_date !== '0000-00-00' );
+                                $saved_chefs_choice  = ( $log && $log->is_chefs_choice ) ? true : false;
+                                $pos_updated         = ( $log && ! empty( $log->pos_updated ) ) ? 1 : 0;
 
                                 // Evaluate Plan Mode at the Log Level
                                 $log_mode = ( $log && ! empty( $log->plan_mode ) ) ? $log->plan_mode : null;
@@ -750,7 +760,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     : array( 'meals' => 0, 'snacks' => 0 );
                                 $has_skipped_meal = ( $log && ! $is_void && ! $is_juice && $saved_counts['meals'] > 0 && $saved_counts['meals'] < $row_alloc_meals );
 
-                                // Strict Lock Evaluation: Past dates, Today, and Post-Cutoff Tomorrow
+                                // Strict Lock Evaluation: Past dates, Today, Post-Cutoff Tomorrow, and Terminal Statuses
                                 $is_time_locked = false;
                                 if ( $log && ! empty( $log->target_date ) ) {
                                     if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
@@ -758,11 +768,11 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     }
                                 }
 
-                                $base_input_disabled = ( $is_void || ( ! $can_bypass_date_lock && ( $is_time_locked || $is_paused ) ) ) ? 'disabled' : '';
+                                $base_input_disabled = ( $is_void || $is_terminal_locked || ( ! $can_bypass_date_lock && ( $is_time_locked || $is_paused ) ) ) ? 'disabled' : '';
 
                                 if ( $is_chef_override ) {
                                     $chefs_choice_checkbox_disabled = 'disabled';
-                                    $meal_select_disabled           = $saved_chefs_choice ? '' : 'disabled';
+                                    $meal_select_disabled           = ( $saved_chefs_choice && ! $is_terminal_locked && ! $is_void ) ? '' : 'disabled';
                                     $date_picker_disabled           = 'disabled';
                                 } else {
                                     $chefs_choice_checkbox_disabled = $base_input_disabled;
@@ -929,9 +939,6 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                             'Dinner'    => array( 'slot' => 'dinner',    'idx' => 3, 'label' => ( $row_is_flexible || $row_allow_custom ) ? 'Meal 3' : 'Dinner' ),
                                         );
                                         foreach ( $main_cats as $cat => $data ) :
-                                            // Plan Mode Display Rule for Carryover / Redemption Days:
-                                            // - Standard Menu: Show all 3 (Breakfast, Lunch, Dinner) options so the customer can choose which meal category they want, then JS locks the rest once $row_alloc_meals is reached.
-                                            // - Flexible Menu or Bespoke Custom Menu: Show inputs strictly up to the row's allocated meals ($data['idx'] <= $row_alloc_meals).
                                             $hide_slot_for_allocation = ( ( $row_is_flexible || $row_allow_custom ) && $data['idx'] > $row_alloc_meals );
                                             $meal_cell_extra_class    = $hide_slot_for_allocation ? ' cmp-slot-outside-allocation' : '';
                                     ?>
@@ -1021,26 +1028,35 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                         <div class="cmp-action-box">
                                             <?php
                                             if ( $is_chef_override ) {
-                                                if ( $saved_chefs_choice && ! $is_void ) {
+                                                // CHEF OVERRIDE MODE:
+                                                // - Non-admins are strictly locked out of Successful, Returned, or Cancelled days
+                                                // - Reset Selection (.cmp-clear-row) is strictly restricted to Super Admins ($is_super_admin)
+                                                if ( $saved_chefs_choice && ! $is_void && ! $is_terminal_locked ) {
                                                     $chef_btn_text  = $is_chef_assigned ? 'Update' : 'Save';
                                                     $chef_btn_color = $is_chef_assigned ? '#1B5E20' : '#379237';
                                                     echo '<button type="button" class="cmp-save-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-row="' . esc_attr( $i ) . '" style="background:' . esc_attr( $chef_btn_color ) . ';">' . esc_html( $chef_btn_text ) . '</button>';
                                                     echo '<button type="button" class="cmp-undo-row" data-row="' . esc_attr( $i ) . '" title="Discard unsaved changes and restore previous selection (Shortcut: Esc)">' . $icon_undo . ' <span>Undo</span></button>';
-                                                    if ( $has_saved_date ) {
+                                                    if ( $has_saved_date && $is_super_admin ) {
                                                         echo '<div class="cmp-secondary-actions">';
-                                                        echo '<button type="button" class="cmp-clear-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Reset / Clear Selection">' . $icon_reset . '</button>';
+                                                        echo '<button type="button" class="cmp-clear-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Admin Only: Reset / Clear Selection">' . $icon_reset . '</button>';
                                                         echo '</div>';
                                                     }
                                                 } else {
-                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . ( $is_void ? 'Cancelled' : 'Customer Pick' ) . ')</span>';
+                                                    $chef_lock_lbl = $is_void
+                                                        ? esc_html( $log ? $log->delivery_result : 'Cancelled' )
+                                                        : ( ( $log && $log->delivery_result === 'Successful' ) ? 'Delivered' : 'Customer Pick' );
+                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . $chef_lock_lbl . ')</span>';
                                                 }
                                             } elseif ( $is_void ) {
-                                                // OPTION 3A: Strictly allow ONLY Super Admins (`manage_options`) to Reset/Clear a Cancelled Day
+                                                // OPTION 3A: Strictly allow ONLY Super Admins (`manage_options`) to Reset/Clear a Cancelled or Returned Day
                                                 if ( $is_super_admin && $log_id > 0 ) {
                                                     echo '<button type="button" class="cmp-admin-reset-cancel-btn" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-is-cancelled-reset="1" title="Admin Only: Reset this cancellation, remove from Kitchen Portal, and reverse the extra compensation day">' . $icon_reset . ' <span>Reset Cancel</span></button>';
                                                 } else {
-                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Void)</span>';
+                                                    echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (' . esc_html( $log ? $log->delivery_result : 'Void' ) . ')</span>';
                                                 }
+                                            } elseif ( $is_terminal_locked ) {
+                                                // STRICT TERMINAL STATUS LOCK: Successful days are locked for Customers, FOH, Menu Managers & Kitchen
+                                                echo '<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Delivered)</span>';
                                             } else {
                                                 if ( ( ! $is_time_locked || $can_bypass_date_lock ) && ( ! $is_paused || $can_bypass_date_lock ) ) {
                                                     $btn_txt   = $has_saved_date ? 'Update' : 'Save';
@@ -1050,7 +1066,10 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
 
                                                     if ( $has_saved_date ) {
                                                         echo '<div class="cmp-secondary-actions">';
-                                                        echo '<button type="button" class="cmp-clear-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Reset Selection">' . $icon_reset . '</button>';
+                                                        // Reset Selection (.cmp-clear-row) is strictly visible ONLY to Super Admins ($is_super_admin)
+                                                        if ( $is_super_admin ) {
+                                                            echo '<button type="button" class="cmp-clear-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Admin Only: Reset Selection">' . $icon_reset . '</button>';
+                                                        }
                                                         echo '<button type="button" class="cmp-cancel-day-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Cancel Day">' . $icon_cancel . '</button>';
                                                         echo '</div>';
                                                     }
@@ -1058,6 +1077,8 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                     $lock_reason = 'Cutoff Passed';
                                                     if ( $is_paused ) {
                                                         $lock_reason = 'Paused';
+                                                    } elseif ( $log && $log->delivery_result === 'Successful' ) {
+                                                        $lock_reason = 'Delivered';
                                                     } elseif ( $log && ! empty( $log->target_date ) && $log->target_date <= $today_ymd ) {
                                                         $lock_reason = ( $log->target_date === $today_ymd ) ? 'Today Locked' : 'Past Date';
                                                     }
@@ -1201,10 +1222,12 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
             cmp_render_customer_portal_scripts( array(
                 'ajax_url'             => admin_url( 'admin-ajax.php' ),
                 'nonce'                => wp_create_nonce( 'cmp_portal_nonce' ),
+                'is_super_admin'       => $is_super_admin,
                 'can_bypass_date_lock' => $can_bypass_date_lock,
                 'can_bypass_quota'     => $can_bypass_quota,
                 'is_chef_override'     => $is_chef_override,
                 'can_view_pos_check'   => $can_view_pos_check,
+                'dish_display_mode'    => $dish_display_mode,
                 'label_chefs_choice'   => $label_chefs_choice,
                 'blackout_dates'       => $blackout_dates_array,
                 'customer_min_date'    => $customer_min_date,
