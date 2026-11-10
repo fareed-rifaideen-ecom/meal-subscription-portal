@@ -110,6 +110,10 @@ function cmp_render_admin_page() {
     // Get unique date ranges for the delete dropdown
     $menu_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE valid_from IS NOT NULL ORDER BY valid_from DESC");
 
+    if ( ! defined( 'CMP_DISH_MODE_BANNER_RENDERED' ) ) {
+        define( 'CMP_DISH_MODE_BANNER_RENDERED', true );
+    }
+
     // --- PHASE 4: HTML FOR ADMIN PAGE ---
     ?>
     <div class="wrap">
