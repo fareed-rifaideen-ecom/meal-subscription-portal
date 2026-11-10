@@ -352,7 +352,7 @@ if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
                         'source_day_num' => $i,
                         'source_date'    => $rlog->target_date,
                         'origin_day_num' => $i,
-                        'origin_date'    => $rlog->target_date,
+                        'origin_date'          => $rlog->target_date,
                         'hop'            => 1,
                     );
                 }
@@ -607,11 +607,6 @@ if ( ! function_exists( 'cmp_sync_subscription_carryover_state' ) ) {
 
 /**
  * Centralized Tracking Metrics & Balance Total Meals Calculator for FOH, Executive & Accounts Portals.
- * Calculates:
- *  - Filled Days, Used Days, Effective Total Days (Base + Carryover), Balance Days, Pending to Fill Days
- *  - Total Plan Meals, Used Meals, Balance Total Meals (Main Meals/Juices Only — Excludes Snacks)
- *  - Pending Carryover Days & Pending Carryover Meals
- *  - Last Filled Date & formatted FOH Popover string
  */
 if ( ! function_exists( 'cmp_get_subscription_tracking_metrics' ) ) {
     function cmp_get_subscription_tracking_metrics( $sub ) {
@@ -658,12 +653,10 @@ if ( ! function_exists( 'cmp_get_subscription_tracking_metrics' ) ) {
                 continue;
             }
 
-            if ( $log && intval( $log->id ) > 0 ) {
+            if ( $log && intval( $log->id ) > 0 && ! empty( $log->target_date ) && $log->target_date !== '0000-00-00' ) {
                 $filled_days++;
-                if ( ! empty( $log->target_date ) && $log->target_date !== '0000-00-00' ) {
-                    if ( $last_filled_date === '' || $log->target_date > $last_filled_date ) {
-                        $last_filled_date = $log->target_date;
-                    }
+                if ( $last_filled_date === '' || $log->target_date > $last_filled_date ) {
+                    $last_filled_date = $log->target_date;
                 }
 
                 if ( $log->delivery_result === 'Successful' ) {
@@ -1467,7 +1460,6 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
 
                 // 3. Check if customer/staff is skipping 1 or more main meals ($submitted_count < $row_meals_quota)
                 if ( $submitted_count < $row_meals_quota ) {
-                    // Check if this row was already saved with this exact reduced meal count previously
                     $existing_counts = $existing_log ? cmp_count_log_selected_meals_and_snacks( $existing_log, false, $row_meals_quota, $row_snacks_quota ) : array( 'meals' => 0, 'snacks' => 0 );
                     $was_already_skipped_same_count = ( $existing_log && $existing_counts['meals'] === $submitted_count );
 
