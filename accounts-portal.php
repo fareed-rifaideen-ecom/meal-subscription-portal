@@ -2,17 +2,8 @@
 // Prevent direct file access
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
-if ( function_exists( 'opcache_invalidate' ) ) {
-    @opcache_invalidate( __FILE__, true );
-}
-
-// Load shared per-plan logistics, carryover & tracking metrics helpers from customer-portal-backend.php if available
-if ( file_exists( __DIR__ . '/customer-portal-backend.php' ) ) {
-    require_once __DIR__ . '/customer-portal-backend.php';
-}
-
 // ==========================================
-// 0. SHARED HELPERS: ORDER ID, NAMES, TIMING & ATTRIBUTION
+// 0. SHARED HELPERS: ORDER ID, NAMES & TIMING
 // ==========================================
 
 if ( ! function_exists( 'cmp_format_accounts_order_id' ) ) {
@@ -64,10 +55,12 @@ if ( ! function_exists( 'cmp_resolve_accounts_names' ) ) {
         // 2. Resolve Recipient Name (ONLY when explicitly available)
         $recipient_name = '';
 
+        // Check subscription row property if present
         if ( ! empty( $sub->recipient_name ) ) {
             $recipient_name = trim( $sub->recipient_name );
         }
 
+        // Check explicit order recipient meta fields
         if ( empty( $recipient_name ) && $order ) {
             $meta_keys = array( '_cmp_recipient_name', 'recipient_name', '_recipient_name', 'billing_recipient_name', '_billing_recipient_name' );
             foreach ( $meta_keys as $mk ) {
@@ -79,6 +72,7 @@ if ( ! function_exists( 'cmp_resolve_accounts_names' ) ) {
             }
         }
 
+        // Check if Plan Name has a " - [Recipient Name]" suffix
         if ( empty( $recipient_name ) && ! empty( $sub->plan_name ) ) {
             $parts = explode( ' - ', trim( $sub->plan_name ) );
             if ( count( $parts ) > 1 ) {
@@ -93,6 +87,7 @@ if ( ! function_exists( 'cmp_resolve_accounts_names' ) ) {
             }
         }
 
+        // Check WooCommerce shipping name only if distinct from Customer Name
         if ( empty( $recipient_name ) && $order ) {
             $ship_name = trim( $order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name() );
             if ( ! empty( $ship_name ) && strcasecmp( $ship_name, $customer_name ) !== 0 ) {
@@ -102,7 +97,7 @@ if ( ! function_exists( 'cmp_resolve_accounts_names' ) ) {
 
         return array(
             'customer_name'  => $customer_name ? $customer_name : 'N/A',
-            'recipient_name' => $recipient_name,
+            'recipient_name' => $recipient_name, // Empty string if no recipient name is available
         );
     }
 }
@@ -126,335 +121,159 @@ if ( ! function_exists( 'cmp_resolve_accounts_timing' ) ) {
     }
 }
 
-/**
- * Option 2B Helper: Builds a two-line status & attribution block for Cancelled or Returned logs
- */
-if ( ! function_exists( 'cmp_accounts_format_log_attribution' ) ) {
-    function cmp_accounts_format_log_attribution( $log_obj ) {
-        global $wpdb;
-
-        $del_res = ! empty( $log_obj->delivery_result ) ? $log_obj->delivery_result : 'Pending';
-        if ( ! in_array( $del_res, array( 'Cancelled', 'Returned' ), true ) ) {
-            return array(
-                'header'          => '',
-                'byline'          => '',
-                'pre_prep_cancel' => false,
-            );
-        }
-
-        $by_name = ! empty( $log_obj->updated_by_name ) ? $log_obj->updated_by_name : '';
-        $by_role = ! empty( $log_obj->updated_by_role ) ? $log_obj->updated_by_role : '';
-        $at_time = ( ! empty( $log_obj->updated_at ) && $log_obj->updated_at !== '0000-00-00 00:00:00' ) ? $log_obj->updated_at : '';
-
-        if ( empty( $by_name ) && ! empty( $log_obj->subscription_id ) && ! empty( $log_obj->target_date ) ) {
-            $table_activity = $wpdb->prefix . 'cmp_activity_logs';
-            $act_exists     = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_activity ) );
-            if ( $act_exists === $table_activity ) {
-                $like_term = ( $del_res === 'Returned' ) ? '%Return%' : '%Cancel%';
-                $act_row   = $wpdb->get_row( $wpdb->prepare(
-                    "SELECT actor_name, actor_role, created_at FROM {$table_activity} WHERE subscription_id = %d AND target_date = %s AND (action_type LIKE %s OR new_status LIKE %s) ORDER BY id DESC LIMIT 1",
-                    intval( $log_obj->subscription_id ),
-                    $log_obj->target_date,
-                    $like_term,
-                    $like_term
-                ) );
-                if ( $act_row ) {
-                    $by_name = $act_row->actor_name;
-                    $by_role = $act_row->actor_role;
-                    $at_time = $act_row->created_at;
-                }
-            }
-        }
-
-        $is_pre_prep = ( $del_res === 'Cancelled' && intval( $log_obj->is_prepared ) === 0 && intval( $log_obj->dispatch_status ) === 0 && strtolower( $by_role ) !== 'kitchen' );
-
-        if ( $del_res === 'Returned' ) {
-            $header = 'DELIVERY RETURNED';
-        } elseif ( $is_pre_prep ) {
-            $header = 'DO NOT PREPARE';
-        } else {
-            $header = ( intval( $log_obj->is_prepared ) === 1 || intval( $log_obj->dispatch_status ) === 1 ) ? 'CANCELLED AFTER PREP' : 'CANCELLED BY KITCHEN';
-        }
-
-        if ( ! empty( $by_name ) ) {
-            $role_str = ! empty( $by_role ) ? ' (' . $by_role . ')' : '';
-            $time_str = ! empty( $at_time ) ? ' • ' . date( 'd M, h:i A', strtotime( $at_time ) ) : '';
-            $byline   = 'By ' . $by_name . $role_str . $time_str;
-        } else {
-            $byline = ( $del_res === 'Returned' ) ? 'Marked Returned' : 'Cancelled prior to cut-off';
-        }
-
-        return array(
-            'header'          => $header,
-            'byline'          => $byline,
-            'pre_prep_cancel' => $is_pre_prep,
-        );
-    }
-}
-
 
 // ==========================================
 // 1. AJAX EXPORTS FOR ACCOUNTS
 // ==========================================
 
-add_action( 'wp_ajax_cmp_export_accounts_main', 'cmp_export_accounts_main' );
+add_action('wp_ajax_cmp_export_accounts_main', 'cmp_export_accounts_main');
 function cmp_export_accounts_main() {
-    if ( ! is_user_logged_in() || ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) ) {
-        wp_die( 'Permission Denied' );
-    }
-
-    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
-        cmp_ensure_meal_skip_carryover_columns();
-    }
-
+    if (!is_user_logged_in() || (!current_user_can('manage_options') && !current_user_can('accounts_team'))) { wp_die('Permission Denied'); }
+    
     global $wpdb;
-    $start         = isset( $_GET['start'] ) ? sanitize_text_field( $_GET['start'] ) : date( 'Y-m-d', strtotime( '-3 months' ) );
-    $end           = isset( $_GET['end'] ) ? sanitize_text_field( $_GET['end'] ) : date( 'Y-m-d' );
-    $status_filter = isset( $_GET['status_filter'] ) ? sanitize_text_field( $_GET['status_filter'] ) : 'active';
-
-    $subs = $wpdb->get_results( $wpdb->prepare(
+    $start = isset($_GET['start']) ? sanitize_text_field($_GET['start']) : date('Y-m-d', strtotime('-3 months'));
+    $end = isset($_GET['end']) ? sanitize_text_field($_GET['end']) : date('Y-m-d');
+    $status_filter = isset($_GET['status_filter']) ? sanitize_text_field($_GET['status_filter']) : 'active';
+    
+    $subs = $wpdb->get_results($wpdb->prepare(
         "SELECT s.*, u.user_email, u.display_name FROM {$wpdb->prefix}cmp_subscriptions s 
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID 
-         WHERE s.status NOT IN ('pending', 'deleted') AND DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s ORDER BY s.id DESC",
-        $start,
-        $end
-    ) );
+         WHERE s.status != 'pending' AND DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s ORDER BY s.id DESC", 
+        $start, $end
+    ));
 
-    $filename_status = ucfirst( $status_filter );
-    if ( $status_filter === 'completed' ) {
-        $filename_status = 'Completed';
-    }
+    $filename_status = ucfirst($status_filter);
+    if ($status_filter === 'completed') $filename_status = 'Completed';
 
-    header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename="Accounts_' . $filename_status . '_Plans_' . $start . '_to_' . $end . '.csv"' );
-    $output = fopen( 'php://output', 'w' );
-    fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="Accounts_' . $filename_status . '_Plans_' . $start . '_to_' . $end . '.csv"');
+    $output = fopen('php://output', 'w');
+    fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
+    
+    fputcsv($output, array('Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Name', 'Delivery Timing', 'Status', 'Total Days', 'Days Consumed', 'Balance', 'Start Date', 'Expiry Date'));
 
-    fputcsv( $output, array( 'Order ID', 'Customer Name', 'Recipient Name', 'Email', 'Phone', 'Plan Name', 'Delivery Timing', 'Status', 'Total Days', 'Days Consumed', 'Balance Days', 'Balance Total Meals', 'Last Filled Date', 'Start Date', 'Expiry Date' ) );
-
-    foreach ( $subs as $s ) {
-        $order = ( intval( $s->wc_order_id ) > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $s->wc_order_id ) : false;
-        $phone = $order ? $order->get_billing_phone() : get_user_meta( $s->user_id, 'billing_phone', true );
-
-        $names        = cmp_resolve_accounts_names( $s, $order );
-        $name         = $names['customer_name'];
-        $recipient    = $names['recipient_name'];
-        $timing_label = cmp_resolve_accounts_timing( $s, $order );
-
-        $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
-            ? cmp_get_subscription_tracking_metrics( $s )
-            : null;
-
-        if ( $metrics ) {
-            $eff_total_days   = intval( $metrics['effective_total_days'] );
-            $used             = intval( $metrics['used_days'] );
-            $balance          = intval( $metrics['balance_days'] );
-            $balance_meals    = intval( $metrics['balance_meals'] );
-            $last_filled_date = ! empty( $metrics['last_filled_date'] ) ? $metrics['last_filled_date'] : 'None';
-        } else {
-            $eff_total_days   = intval( $s->total_days ) + intval( $s->carryover_days ?? 0 );
-            $used             = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $s->id ) ) );
-            $balance          = max( 0, $eff_total_days - $used );
-            $balance_meals    = $balance;
-            $last_filled_date = 'None';
-        }
-
-        $is_completed = ( $s->status === 'completed' || $used >= $eff_total_days || $s->expiry_date < current_time( 'mysql' ) );
-
-        if ( $is_completed ) {
+    foreach($subs as $s) {
+        $order = (intval($s->wc_order_id) > 0 && function_exists('wc_get_order')) ? wc_get_order($s->wc_order_id) : false;
+        $phone = $order ? $order->get_billing_phone() : get_user_meta($s->user_id, 'billing_phone', true);
+        
+        $names = cmp_resolve_accounts_names($s, $order);
+        $name = $names['customer_name'];
+        $recipient = $names['recipient_name']; // Blank if not available
+        $timing_label = cmp_resolve_accounts_timing($s, $order);
+        
+        $used = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $s->id));
+        $balance = $s->total_days - $used;
+        
+        $is_completed = ($used >= $s->total_days || $s->expiry_date < current_time('mysql'));
+        
+        if ($is_completed) {
             $internal_status = 'completed';
-            $derived_status  = 'Completed/Expired';
-        } elseif ( $s->status === 'paused' ) {
+            $derived_status = 'Completed/Expired';
+        } elseif ($s->status === 'paused') {
             $internal_status = 'paused';
-            $derived_status  = 'Paused';
+            $derived_status = 'Paused';
         } else {
             $internal_status = 'active';
-            $derived_status  = 'Active';
+            $derived_status = 'Active';
         }
 
-        if ( $status_filter !== 'all' && $status_filter !== $internal_status ) {
-            continue;
+        if ($status_filter !== 'all' && $status_filter !== $internal_status) {
+            continue; 
         }
 
-        $display_order_id = cmp_format_accounts_order_id( $s->wc_order_id, $s->id );
+        $display_order_id = cmp_format_accounts_order_id($s->wc_order_id, $s->id);
 
-        fputcsv( $output, array(
+        fputcsv($output, array(
             $display_order_id,
-            $name,
-            $recipient,
-            $s->user_email,
-            $phone,
-            $s->plan_name,
-            $timing_label,
-            $derived_status,
-            $eff_total_days,
-            $used,
-            $balance,
-            $balance_meals,
-            $last_filled_date,
-            date( 'Y-m-d', strtotime( $s->start_date ) ),
-            date( 'Y-m-d', strtotime( $s->expiry_date ) ),
-        ) );
+            $name, $recipient, $s->user_email, $phone, $s->plan_name, $timing_label, $derived_status,
+            $s->total_days, $used, $balance, 
+            date('Y-m-d', strtotime($s->start_date)), date('Y-m-d', strtotime($s->expiry_date))
+        ));
     }
-    fclose( $output );
-    exit;
+    fclose($output); exit;
 }
 
-add_action( 'wp_ajax_cmp_export_accounts_sub', 'cmp_export_accounts_sub' );
+add_action('wp_ajax_cmp_export_accounts_sub', 'cmp_export_accounts_sub');
 function cmp_export_accounts_sub() {
-    if ( ! is_user_logged_in() || ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) ) {
-        wp_die( 'Permission Denied' );
-    }
-
-    if ( ! isset( $_GET['sub_id'] ) ) {
-        wp_die( 'No Sub ID' );
-    }
-    $sub_id = intval( $_GET['sub_id'] );
-
-    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
-        cmp_ensure_meal_skip_carryover_columns();
-    }
-
+    if (!is_user_logged_in() || (!current_user_can('manage_options') && !current_user_can('accounts_team'))) { wp_die('Permission Denied'); }
+    
+    if (!isset($_GET['sub_id'])) wp_die('No Sub ID');
+    $sub_id = intval($_GET['sub_id']);
+    
     global $wpdb;
-    $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
+    
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT s.*, u.display_name, u.user_email FROM {$wpdb->prefix}cmp_subscriptions s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.id = %d", $sub_id));
+    if (!$sub) wp_die('Not found');
 
-    $sub = $wpdb->get_row( $wpdb->prepare( "SELECT s.*, u.display_name, u.user_email FROM {$wpdb->prefix}cmp_subscriptions s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.id = %d", $sub_id ) );
-    if ( ! $sub ) {
-        wp_die( 'Not found' );
+    $order = (intval($sub->wc_order_id) > 0 && function_exists('wc_get_order')) ? wc_get_order($sub->wc_order_id) : false;
+    $names = cmp_resolve_accounts_names($sub, $order);
+    $name = $names['customer_name'];
+    $recipient = $names['recipient_name'];
+    $timing_label = cmp_resolve_accounts_timing($sub, $order);
+    
+    $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
+    foreach ($logs as $l) {
+        $l->wc_order_id = $sub->wc_order_id;
+        $l->user_id     = $sub->user_id;
     }
+    $logs = cmp_process_timing_data($logs);
 
-    $order        = ( intval( $sub->wc_order_id ) > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $sub->wc_order_id ) : false;
-    $names        = cmp_resolve_accounts_names( $sub, $order );
-    $name         = $names['customer_name'];
-    $recipient    = $names['recipient_name'];
-    $timing_label = cmp_resolve_accounts_timing( $sub, $order );
+    $foods = $wpdb->get_results("SELECT id, food_name FROM $table_foods");
+    $fmap = array(); foreach($foods as $f) $fmap[$f->id] = $f->food_name;
 
-    $logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY is_carryover ASC, target_date ASC, id ASC", $sub_id ) );
-    foreach ( $logs as $l ) {
-        $l->wc_order_id     = $sub->wc_order_id;
-        $l->user_id         = $sub->user_id;
-        $l->delivery_timing = $sub->delivery_timing ?? '';
-    }
-    $logs = cmp_process_timing_data( $logs );
+    $display_order_id = cmp_format_accounts_order_id($sub->wc_order_id, $sub->id);
 
-    $foods = $wpdb->get_results( "SELECT id, food_name FROM $table_foods" );
-    $fmap  = array();
-    foreach ( $foods as $f ) {
-        $fmap[ $f->id ] = $f->food_name;
-    }
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="Customer_Record_' . str_replace(' ', '_', $name) . '.csv"');
+    $output = fopen('php://output', 'w');
+    fputs($output, chr(0xEF) . chr(0xBB) . chr(0xBF)); 
 
-    $display_order_id = cmp_format_accounts_order_id( $sub->wc_order_id, $sub->id );
-
-    header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename="Customer_Record_' . str_replace( ' ', '_', $name ) . '.csv"' );
-    $output = fopen( 'php://output', 'w' );
-    fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
-
-    fputcsv( $output, array( 'CUSTOMER RECORD' ) );
-    if ( ! empty( $recipient ) ) {
-        fputcsv( $output, array( 'Customer Name:', $name, 'Recipient Name:', $recipient, 'Order:', $display_order_id ) );
+    fputcsv($output, array('CUSTOMER RECORD'));
+    if (!empty($recipient)) {
+        fputcsv($output, array('Customer Name:', $name, 'Recipient Name:', $recipient, 'Order:', $display_order_id));
     } else {
-        fputcsv( $output, array( 'Customer Name:', $name, 'Order:', $display_order_id ) );
+        fputcsv($output, array('Customer Name:', $name, 'Order:', $display_order_id));
     }
-    fputcsv( $output, array( 'Plan:', $sub->plan_name, 'Delivery Timing:', $timing_label ) );
-    fputcsv( $output, array( '' ) );
-    fputcsv( $output, array( 'Day', 'Delivery Date', 'Eating Date', 'Meals Scheduled', 'Delivery Status & Attribution', 'POS Reconciled' ) );
+    fputcsv($output, array('Plan:', $sub->plan_name, 'Delivery Timing:', $timing_label));
+    fputcsv($output, array(''));
+    fputcsv($output, array('Day', 'Delivery Date', 'Eating Date', 'Meals Scheduled', 'Delivery Status', 'POS Reconciled'));
 
     $day_num = 1;
-    foreach ( $logs as $l ) {
-        $meals       = array();
-        $is_assigned = ( $l->breakfast_id || $l->lunch_id || $l->dinner_id || $l->juice_1_id || ! empty( $l->custom_breakfast ) || ! empty( $l->custom_lunch ) || ! empty( $l->custom_dinner ) || ! empty( $l->custom_juice_1 ) );
-        if ( $l->is_chefs_choice && ! $is_assigned ) {
+    foreach ($logs as $l) {
+        $meals = [];
+        if ($l->is_chefs_choice && !$l->breakfast_id && !$l->lunch_id && !$l->dinner_id && !$l->juice_1_id) {
             $meals[] = "Chef's Choice (Pending)";
         } else {
-            if ( ! empty( $l->custom_breakfast ) )     $meals[] = 'BF: ' . $l->custom_breakfast;
-            elseif ( $l->breakfast_id )                $meals[] = 'BF: ' . ( $fmap[ $l->breakfast_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_lunch ) )         $meals[] = 'L: ' . $l->custom_lunch;
-            elseif ( $l->lunch_id )                    $meals[] = 'L: ' . ( $fmap[ $l->lunch_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_dinner ) )        $meals[] = 'D: ' . $l->custom_dinner;
-            elseif ( $l->dinner_id )                   $meals[] = 'D: ' . ( $fmap[ $l->dinner_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_snack_1 ) )       $meals[] = 'S1: ' . $l->custom_snack_1;
-            elseif ( $l->snack_1_id )                  $meals[] = 'S1: ' . ( $fmap[ $l->snack_1_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_snack_2 ) )       $meals[] = 'S2: ' . $l->custom_snack_2;
-            elseif ( $l->snack_2_id )                  $meals[] = 'S2: ' . ( $fmap[ $l->snack_2_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_juice_1 ) )       $meals[] = 'J1: ' . $l->custom_juice_1;
-            elseif ( $l->juice_1_id )                  $meals[] = 'J1: ' . ( $fmap[ $l->juice_1_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_juice_2 ) )       $meals[] = 'J2: ' . $l->custom_juice_2;
-            elseif ( $l->juice_2_id )                  $meals[] = 'J2: ' . ( $fmap[ $l->juice_2_id ] ?? 'Unknown' );
-
-            if ( ! empty( $l->custom_juice_3 ) )       $meals[] = 'J3: ' . $l->custom_juice_3;
-            elseif ( $l->juice_3_id )                  $meals[] = 'J3: ' . ( $fmap[ $l->juice_3_id ] ?? 'Unknown' );
+            if ($l->breakfast_id) $meals[] = "BF: " . ($fmap[$l->breakfast_id] ?? 'Unknown');
+            if ($l->lunch_id) $meals[] = "L: " . ($fmap[$l->lunch_id] ?? 'Unknown');
+            if ($l->dinner_id) $meals[] = "D: " . ($fmap[$l->dinner_id] ?? 'Unknown');
+            if ($l->snack_1_id) $meals[] = "S1: " . ($fmap[$l->snack_1_id] ?? 'Unknown');
+            if ($l->snack_2_id) $meals[] = "S2: " . ($fmap[$l->snack_2_id] ?? 'Unknown');
+            if ($l->juice_1_id) $meals[] = "J1: " . ($fmap[$l->juice_1_id] ?? 'Unknown');
+            if ($l->juice_2_id) $meals[] = "J2: " . ($fmap[$l->juice_2_id] ?? 'Unknown');
+            if ($l->juice_3_id) $meals[] = "J3: " . ($fmap[$l->juice_3_id] ?? 'Unknown');
         }
-        $meal_str = implode( ' | ', $meals );
+        $meal_str = implode(" | ", $meals);
+        $pos = $l->pos_updated ? 'Yes' : 'No';
+        $del_date = !empty($l->computed_delivery_date) ? $l->computed_delivery_date : $l->target_date;
 
-        $del_res = ! empty( $l->delivery_result ) ? $l->delivery_result : 'Pending';
-        $attrib  = cmp_accounts_format_log_attribution( $l );
-        if ( ! empty( $attrib['header'] ) ) {
-            $del_col_str = $del_res . ' — ' . $attrib['header'] . ' (' . $attrib['byline'] . ')';
-        } else {
-            $del_col_str = $del_res;
-        }
-        if ( ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1 ) {
-            $del_col_str .= ' [Skipped Meal Carryover]';
-        }
-
-        // Option 4A: Cancelled and Returned days do not require a POS Check
-        $is_canc_or_ret = in_array( $del_res, array( 'Cancelled', 'Returned' ), true );
-        $pos            = $is_canc_or_ret ? 'No POS Required' : ( $l->pos_updated ? 'Yes' : 'No' );
-        $del_date       = ! empty( $l->computed_delivery_date ) ? $l->computed_delivery_date : $l->target_date;
-        $day_label      = ( ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1 ) ? $day_num++ . ' (Carryover)' : $day_num++;
-
-        fputcsv( $output, array( $day_label, $del_date, $l->target_date, $meal_str, $del_col_str, $pos ) );
+        fputcsv($output, array($day_num++, $del_date, $l->target_date, $meal_str, $l->delivery_result, $pos));
     }
-    fclose( $output );
-    exit;
+    fclose($output); exit;
 }
 
-// 1.5 AJAX HANDLER: ACCOUNTS DEPOSIT TOGGLE (With Option 1A Audit Trail Logging)
-add_action( 'wp_ajax_cmp_acc_toggle_deposit', 'cmp_acc_toggle_deposit' );
+// 1.5 AJAX HANDLER: ACCOUNTS DEPOSIT TOGGLE
+add_action('wp_ajax_cmp_acc_toggle_deposit', 'cmp_acc_toggle_deposit');
 function cmp_acc_toggle_deposit() {
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) {
-        wp_send_json_error( 'Access Denied' );
-    }
-    check_ajax_referer( 'cmp_acc_nonce', 'nonce' );
-
-    global $wpdb;
-    $user_id    = intval( $_POST['user_id'] );
-    $new_status = sanitize_text_field( $_POST['new_status'] );
-    $old_status = get_user_meta( $user_id, '_cmp_deposit_held', true );
-
-    $status_labels = array(
-        'yes'     => 'Bag Deposit Held (Waived)',
-        'own_bag' => "Customer's Own Bag (Waived)",
-        'no'      => 'Refunded / No Deposit',
-    );
-    $old_label = isset( $status_labels[ $old_status ] ) ? $status_labels[ $old_status ] : 'Default';
-    $new_label = isset( $status_labels[ $new_status ] ) ? $status_labels[ $new_status ] : $new_status;
-
-    update_user_meta( $user_id, '_cmp_deposit_held', $new_status );
-
-    if ( $old_status !== $new_status && function_exists( 'cmp_record_customer_activity_log' ) ) {
-        $latest_sub_id = intval( $wpdb->get_var( $wpdb->prepare(
-            "SELECT id FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d ORDER BY id DESC LIMIT 1",
-            $user_id
-        ) ) );
-        cmp_record_customer_activity_log( array(
-            'subscription_id' => $latest_sub_id,
-            'user_id'         => $user_id,
-            'action_type'     => 'Deposit Wallet Updated',
-            'target_date'     => date( 'Y-m-d' ),
-            'old_status'      => 'Bag Deposit: ' . $old_label,
-            'new_status'      => 'Bag Deposit: ' . $new_label,
-        ) );
-    }
-
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) { wp_send_json_error('Access Denied'); }
+    check_ajax_referer('cmp_acc_nonce', 'nonce');
+    
+    $user_id = intval($_POST['user_id']);
+    $new_status = sanitize_text_field($_POST['new_status']); 
+    
+    update_user_meta($user_id, '_cmp_deposit_held', $new_status);
     wp_send_json_success();
 }
 
@@ -462,24 +281,20 @@ function cmp_acc_toggle_deposit() {
 // ==========================================
 // HELPER: PROCESS TIMING DATA
 // ==========================================
-if ( ! function_exists( 'cmp_process_timing_data' ) ) {
-    function cmp_process_timing_data( $log_array ) {
-        foreach ( $log_array as $p ) {
-            $order  = ( ! empty( $p->wc_order_id ) && intval( $p->wc_order_id ) > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $p->wc_order_id ) : false;
-            $timing = ! empty( $p->delivery_timing ) ? $p->delivery_timing : '';
-            if ( empty( $timing ) && $order ) {
-                $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
-            }
-            if ( empty( $timing ) && ! empty( $p->user_id ) ) {
-                $timing = get_user_meta( $p->user_id, 'delivery_timing', true ) ?: 'N/A';
-            }
-
-            $timing        = str_ireplace( array( 'Deliver Day Before', 'Deliver Same Day' ), array( 'Day Before', 'Same Day' ), (string) $timing );
-            $is_day_before = ( stripos( $timing, 'Day Before' ) !== false );
-
-            $prep_date                 = date( 'Y-m-d', strtotime( $p->target_date . ' - 1 day' ) );
+if(!function_exists('cmp_process_timing_data')){
+    function cmp_process_timing_data($log_array) {
+        foreach($log_array as $p) {
+            $order = (!empty($p->wc_order_id) && intval($p->wc_order_id) > 0 && function_exists('wc_get_order')) ? wc_get_order($p->wc_order_id) : false;
+            $timing = !empty($p->delivery_timing) ? $p->delivery_timing : '';
+            if (empty($timing) && $order) { $timing = $order->get_meta('_cmp_delivery_timing') ?: $order->get_meta('delivery_timing'); }
+            if (empty($timing) && !empty($p->user_id)) { $timing = get_user_meta($p->user_id, 'delivery_timing', true) ?: 'N/A'; }
+            
+            $timing = str_ireplace(['Deliver Day Before', 'Deliver Same Day'], ['Day Before', 'Same Day'], (string) $timing);
+            $is_day_before = (stripos($timing, 'Day Before') !== false);
+            
+            $prep_date = date('Y-m-d', strtotime($p->target_date . ' - 1 day'));
             $p->computed_delivery_date = $is_day_before ? $prep_date : $p->target_date;
-            $p->timing_label           = $is_day_before ? 'Day Before' : 'Same Day';
+            $p->timing_label = $is_day_before ? 'Day Before' : 'Same Day';
         }
         return $log_array;
     }
@@ -488,9 +303,9 @@ if ( ! function_exists( 'cmp_process_timing_data' ) ) {
 // ==========================================
 // 2. ACCOUNTS PORTAL ROUTER
 // ==========================================
-add_shortcode( 'meal_accounts_portal', 'cmp_render_accounts_portal' );
+add_shortcode('meal_accounts_portal', 'cmp_render_accounts_portal');
 function cmp_render_accounts_portal() {
-
+    
     // Security & Custom Glassmorphism UI/UX Login Screen
     if ( ! is_user_logged_in() || ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'accounts_team' ) ) ) {
         if ( function_exists( 'cmp_render_portal_login_ui' ) ) {
@@ -505,14 +320,14 @@ function cmp_render_accounts_portal() {
     }
 
     // Smart Routing
-    $view = isset( $_GET['view'] ) ? sanitize_text_field( $_GET['view'] ) : '';
-
-    if ( $view === 'kitchen_audit' ) {
+    $view = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : '';
+    
+    if ($view === 'kitchen_audit') {
         return cmp_render_kitchen_audit_view();
-    } elseif ( $view === 'pos_audit' ) {
+    } elseif ($view === 'pos_audit') {
         return cmp_render_pos_audit_view();
-    } elseif ( isset( $_GET['view_sub'] ) && intval( $_GET['view_sub'] ) > 0 ) {
-        return cmp_render_accounts_sub_view( intval( $_GET['view_sub'] ) );
+    } elseif ( isset($_GET['view_sub']) && intval($_GET['view_sub']) > 0 ) {
+        return cmp_render_accounts_sub_view(intval($_GET['view_sub']));
     } else {
         return cmp_render_accounts_dashboard();
     }
@@ -523,99 +338,57 @@ function cmp_render_accounts_portal() {
 // ==========================================
 function cmp_render_accounts_dashboard() {
     global $wpdb;
-    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
-        cmp_ensure_meal_skip_carryover_columns();
-    }
-
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    
+    $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
+    $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
 
-    $foh_days = intval( get_option( 'cmp_pos_alert_days', '7' ) );
-    $kit_days = intval( get_option( 'cmp_kitchen_alert_days', '7' ) );
+    $dash_start = isset($_GET['dash_start']) ? sanitize_text_field($_GET['dash_start']) : date('Y-m-d', strtotime('-3 months'));
+    $dash_end   = isset($_GET['dash_end']) ? sanitize_text_field($_GET['dash_end']) : date('Y-m-d');
+    
+    $pos_start  = isset($_GET['pos_start']) ? sanitize_text_field($_GET['pos_start']) : date('Y-m-d', strtotime("-{$foh_days} days"));
+    $pos_end    = isset($_GET['pos_end']) ? sanitize_text_field($_GET['pos_end']) : date('Y-m-d');
 
-    $dash_start = isset( $_GET['dash_start'] ) ? sanitize_text_field( $_GET['dash_start'] ) : date( 'Y-m-d', strtotime( '-3 months' ) );
-    $dash_end   = isset( $_GET['dash_end'] ) ? sanitize_text_field( $_GET['dash_end'] ) : date( 'Y-m-d' );
+    $kit_start  = isset($_GET['kit_start']) ? sanitize_text_field($_GET['kit_start']) : date('Y-m-d', strtotime("-{$kit_days} days"));
+    $kit_end    = isset($_GET['kit_end']) ? sanitize_text_field($_GET['kit_end']) : date('Y-m-d');
 
-    $pos_start = isset( $_GET['pos_start'] ) ? sanitize_text_field( $_GET['pos_start'] ) : date( 'Y-m-d', strtotime( "-{$foh_days} days" ) );
-    $pos_end   = isset( $_GET['pos_end'] ) ? sanitize_text_field( $_GET['pos_end'] ) : date( 'Y-m-d' );
+    $pending_kitchen_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(l.id) FROM $table_logs l 
+         WHERE l.is_locked = 1 
+         AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending') 
+         AND l.target_date >= %s AND l.target_date <= %s",
+        $kit_start, $kit_end
+    ));
 
-    $kit_start = isset( $_GET['kit_start'] ) ? sanitize_text_field( $_GET['kit_start'] ) : date( 'Y-m-d', strtotime( "-{$kit_days} days" ) );
-    $kit_end   = isset( $_GET['kit_end'] ) ? sanitize_text_field( $_GET['kit_end'] ) : date( 'Y-m-d' );
+    $pending_pos_count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(l.id) FROM $table_logs l 
+         WHERE l.pos_updated = 0 AND l.delivery_result != 'Pending' AND l.is_locked = 1 
+         AND l.target_date >= %s AND l.target_date <= %s",
+        $pos_start, $pos_end
+    ));
 
-    // Option 4A: Exclude Paused plans and Cancelled / Returned meal days from Pending Kitchen Compliance
-    $pending_kitchen_count = intval( $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(l.id)
-         FROM {$table_logs} l
-         INNER JOIN {$table_subs} s ON l.subscription_id = s.id
-         WHERE l.is_locked = 1
-           AND s.status = 'active'
-           AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned'))
-           AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending')
-           AND l.target_date >= %s AND l.target_date <= %s",
-        $kit_start,
-        $kit_end
-    ) ) );
-
-    // Option 4A: Only Successful deliveries require a POS Check (Cancelled & Returned are exempted)
-    $pending_pos_count = intval( $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(l.id)
-         FROM {$table_logs} l
-         INNER JOIN {$table_subs} s ON l.subscription_id = s.id
-         WHERE l.pos_updated = 0
-           AND l.is_locked = 1
-           AND s.status IN ('active', 'completed')
-           AND l.delivery_result = 'Successful'
-           AND l.target_date >= %s AND l.target_date <= %s",
-        $pos_start,
-        $pos_end
-    ) ) );
-
-    $all_subs_data = $wpdb->get_results( $wpdb->prepare(
+    $all_subs_data = $wpdb->get_results($wpdb->prepare(
         "SELECT s.*, u.user_email, u.display_name FROM $table_subs s 
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID 
-         WHERE s.status NOT IN ('pending', 'deleted') AND DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s ORDER BY s.id DESC",
-        $dash_start,
-        $dash_end
-    ) );
+         WHERE s.status != 'pending' AND DATE(s.start_date) >= %s AND DATE(s.start_date) <= %s ORDER BY s.id DESC",
+        $dash_start, $dash_end
+    ));
 
-    $active_subs    = array();
-    $paused_subs    = array();
-    $completed_subs = array();
+    $active_subs = [];
+    $paused_subs = [];
+    $completed_subs = [];
 
-    foreach ( $all_subs_data as $sub ) {
-        $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
-            ? cmp_get_subscription_tracking_metrics( $sub )
-            : null;
+    foreach($all_subs_data as $sub) {
+        $used = $wpdb->get_var($wpdb->prepare("SELECT COUNT(id) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id));
+        $is_completed = ($used >= $sub->total_days || $sub->expiry_date < current_time('mysql'));
+        
+        $sub->used = $used;
+        $sub->balance = $sub->total_days - $used;
 
-        if ( $metrics ) {
-            $used                     = intval( $metrics['used_days'] );
-            $eff_total                = intval( $metrics['effective_total_days'] );
-            $sub->used                = $used;
-            $sub->effective_total     = $eff_total;
-            $sub->balance             = intval( $metrics['balance_days'] );
-            $sub->balance_meals       = intval( $metrics['balance_meals'] );
-            $sub->pending_carry_days  = intval( $metrics['pending_carryover_days'] );
-            $sub->pending_carry_meals = intval( $metrics['pending_carryover_meals'] );
-            $sub->last_filled_date    = $metrics['last_filled_date'];
-            $sub->popover_text        = $metrics['popover_text'];
-        } else {
-            $used                     = intval( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(id) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) ) );
-            $eff_total                = intval( $sub->total_days ) + intval( $sub->carryover_days ?? 0 );
-            $sub->used                = $used;
-            $sub->effective_total     = $eff_total;
-            $sub->balance             = max( 0, $eff_total - $used );
-            $sub->balance_meals       = $sub->balance;
-            $sub->pending_carry_days  = 0;
-            $sub->pending_carry_meals = 0;
-            $sub->last_filled_date    = '';
-            $sub->popover_text        = '';
-        }
-
-        $is_completed = ( $sub->status === 'completed' || $used >= $eff_total || $sub->expiry_date < current_time( 'mysql' ) );
-
-        if ( $is_completed ) {
+        if ($is_completed) {
             $completed_subs[] = $sub;
-        } elseif ( $sub->status === 'paused' ) {
+        } elseif ($sub->status === 'paused') {
             $paused_subs[] = $sub;
         } else {
             $active_subs[] = $sub;
@@ -687,26 +460,26 @@ function cmp_render_accounts_dashboard() {
         <div class="acc-section-title cmp-no-print" style="margin-top: 10px;">
             <span style="color:#231F20;">Operational Auditing</span>
             <form method="GET" class="acc-filter">
-                <input type="hidden" name="dash_start" value="<?php echo esc_attr( $dash_start ); ?>">
-                <input type="hidden" name="dash_end" value="<?php echo esc_attr( $dash_end ); ?>">
+                <input type="hidden" name="dash_start" value="<?php echo esc_attr($dash_start); ?>">
+                <input type="hidden" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
                 <span>Audit Period:</span>
-                <input type="date" name="kit_start" value="<?php echo esc_attr( $kit_start ); ?>"> <span>to</span>
-                <input type="date" name="kit_end" value="<?php echo esc_attr( $kit_end ); ?>">
+                <input type="date" name="kit_start" value="<?php echo esc_attr($kit_start); ?>"> <span>to</span>
+                <input type="date" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
                 <button type="submit" style="background:#ea580c;">Apply to Both</button>
             </form>
         </div>
 
         <div class="acc-kpi-grid cmp-no-print" style="margin-bottom: 40px;">
-            <a href="?view=kitchen_audit&kit_start=<?php echo esc_attr( $kit_start ); ?>&kit_end=<?php echo esc_attr( $kit_end ); ?>" class="acc-kpi-card <?php echo $pending_kitchen_count > 0 ? 'red' : 'green'; ?>">
+            <a href="?view=kitchen_audit&kit_start=<?php echo esc_attr($kit_start); ?>&kit_end=<?php echo esc_attr($kit_end); ?>" class="acc-kpi-card <?php echo $pending_kitchen_count > 0 ? 'red' : 'green'; ?>">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase;">Kitchen Compliance</div>
-                <div class="acc-kpi-val"><?php echo number_format( $pending_kitchen_count ); ?></div>
-                <div style="font-size:0.85em; color:#64748b; margin-top:5px; font-weight:bold;">Incomplete Active Kitchen Logs (Click to view)</div>
+                <div class="acc-kpi-val"><?php echo number_format($pending_kitchen_count); ?></div>
+                <div style="font-size:0.85em; color:#64748b; margin-top:5px; font-weight:bold;">Incomplete Kitchen Logs (Click to view)</div>
             </a>
             
-            <a href="?view=pos_audit&pos_start=<?php echo esc_attr( $kit_start ); ?>&pos_end=<?php echo esc_attr( $kit_end ); ?>" class="acc-kpi-card <?php echo $pending_pos_count > 0 ? 'orange' : 'green'; ?>">
+            <a href="?view=pos_audit&pos_start=<?php echo esc_attr($kit_start); ?>&pos_end=<?php echo esc_attr($kit_end); ?>" class="acc-kpi-card <?php echo $pending_pos_count > 0 ? 'orange' : 'green'; ?>">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase;">POS Reconciliations</div>
-                <div class="acc-kpi-val"><?php echo number_format( $pending_pos_count ); ?></div>
-                <div style="font-size:0.85em; color:#64748b; margin-top:5px; font-weight:bold;">Pending Successful POS Checks (Click to view)</div>
+                <div class="acc-kpi-val"><?php echo number_format($pending_pos_count); ?></div>
+                <div style="font-size:0.85em; color:#64748b; margin-top:5px; font-weight:bold;">Pending POS Checks (Click to view)</div>
             </a>
         </div>
 
@@ -715,13 +488,13 @@ function cmp_render_accounts_dashboard() {
         <div class="acc-section-title cmp-no-print" style="margin-top: 50px;">
             <span>Subscription Metrics</span>
             <form method="GET" class="acc-filter">
-                <input type="hidden" name="kit_start" value="<?php echo esc_attr( $kit_start ); ?>">
-                <input type="hidden" name="kit_end" value="<?php echo esc_attr( $kit_end ); ?>">
-                <input type="hidden" name="pos_start" value="<?php echo esc_attr( $pos_start ); ?>">
-                <input type="hidden" name="pos_end" value="<?php echo esc_attr( $pos_end ); ?>">
+                <input type="hidden" name="kit_start" value="<?php echo esc_attr($kit_start); ?>">
+                <input type="hidden" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
+                <input type="hidden" name="pos_start" value="<?php echo esc_attr($pos_start); ?>">
+                <input type="hidden" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
                 <span>Filter:</span>
-                <input type="date" name="dash_start" value="<?php echo esc_attr( $dash_start ); ?>"> <span>to</span>
-                <input type="date" name="dash_end" value="<?php echo esc_attr( $dash_end ); ?>">
+                <input type="date" name="dash_start" value="<?php echo esc_attr($dash_start); ?>"> <span>to</span>
+                <input type="date" name="dash_end" value="<?php echo esc_attr($dash_end); ?>">
                 <button type="submit">Apply</button>
             </form>
         </div>
@@ -729,17 +502,17 @@ function cmp_render_accounts_dashboard() {
         <div class="acc-kpi-grid cmp-no-print">
             <div class="acc-kpi-card green active-tab" onclick="switchAccTab('acc-active', this)">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase; pointer-events:none;">Active Plans</div>
-                <div class="acc-kpi-val"><?php echo count( $active_subs ); ?></div>
+                <div class="acc-kpi-val"><?php echo count($active_subs); ?></div>
                 <div style="font-size:0.85em; color:#64748b; margin-top:5px; pointer-events:none;">Originating in selected period</div>
             </div>
             <div class="acc-kpi-card orange" onclick="switchAccTab('acc-paused', this)">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase; pointer-events:none;">Paused Plans</div>
-                <div class="acc-kpi-val"><?php echo count( $paused_subs ); ?></div>
+                <div class="acc-kpi-val"><?php echo count($paused_subs); ?></div>
                 <div style="font-size:0.85em; color:#64748b; margin-top:5px; pointer-events:none;">Originating in selected period</div>
             </div>
             <div class="acc-kpi-card red" onclick="switchAccTab('acc-completed', this)">
                 <div style="font-weight:800; color:#1B5E20; text-transform:uppercase; pointer-events:none;">Completed / Expired</div>
-                <div class="acc-kpi-val"><?php echo count( $completed_subs ); ?></div>
+                <div class="acc-kpi-val"><?php echo count($completed_subs); ?></div>
                 <div style="font-size:0.85em; color:#64748b; margin-top:5px; pointer-events:none;">Fully consumed or expired</div>
             </div>
         </div>
@@ -754,20 +527,18 @@ function cmp_render_accounts_dashboard() {
             <button type="button" id="accSubSearchClear" class="acc-search-clear" onclick="clearAccSubSearch()" title="Clear Search">&times;</button>
         </div>
 
-        <?php
-        if ( ! function_exists( 'render_accounts_sub_table' ) ) {
-        function render_accounts_sub_table( $subs_array, $table_id, $status_filter, $dash_start, $dash_end, $is_active = false ) {
+        <!-- HELPER FUNCTION FOR TABLES -->
+        <?php 
+        function render_accounts_sub_table($subs_array, $table_id, $status_filter, $dash_start, $dash_end, $is_active = false) {
             $display = $is_active ? 'active' : '';
-            $title   = ucfirst( $status_filter ) . ' Plans';
-            if ( $status_filter === 'completed' ) {
-                $title = 'Completed/Expired Plans';
-            }
+            $title = ucfirst($status_filter) . ' Plans';
+            if($status_filter == 'completed') $title = 'Completed/Expired Plans';
 
             echo "<div id='{$table_id}' class='acc-tab-content {$display}'>
                     <div style='display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px; flex-wrap:wrap; gap:10px;'>
                         <h3 style='margin:0; color:#231F20;'>{$title}</h3>
                         <div class='cmp-no-print' style='display:flex; gap:10px;'>
-                            <a href='" . esc_url( admin_url( 'admin-ajax.php?action=cmp_export_accounts_main&status_filter=' . $status_filter . '&start=' . $dash_start . '&end=' . $dash_end ) ) . "' style='background:#379237; color:white; padding:8px 15px; border-radius:6px; text-decoration:none; font-weight:bold; font-size:0.9em;'>Export {$title} to CSV</a>
+                            <a href='" . esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_main&status_filter='.$status_filter.'&start='.$dash_start.'&end='.$dash_end)) . "' style='background:#379237; color:white; padding:8px 15px; border-radius:6px; text-decoration:none; font-weight:bold; font-size:0.9em;'>Export {$title} to CSV</a>
                             <button onclick='window.print()' style='background:#475569; color:white; border:none; padding:8px 15px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:0.9em;'>Print PDF</button>
                         </div>
                     </div>
@@ -782,107 +553,83 @@ function cmp_render_accounts_dashboard() {
                         </tr>
                     </thead>
                     <tbody>";
-            if ( empty( $subs_array ) ) {
+            if(empty($subs_array)) {
                 echo "<tr class='acc-empty-default'><td colspan='5' style='text-align:center; padding:30px; color:#64748b;'>No plans found in this category.</td></tr>";
             } else {
-                foreach ( $subs_array as $sub ) {
-                    $order = ( intval( $sub->wc_order_id ) > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $sub->wc_order_id ) : false;
-                    $phone = $order ? $order->get_billing_phone() : get_user_meta( $sub->user_id, 'billing_phone', true );
-
-                    $names          = cmp_resolve_accounts_names( $sub, $order );
-                    $name           = $names['customer_name'];
+                foreach($subs_array as $sub) {
+                    $order = (intval($sub->wc_order_id) > 0 && function_exists('wc_get_order')) ? wc_get_order($sub->wc_order_id) : false;
+                    $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
+                    
+                    $names = cmp_resolve_accounts_names($sub, $order);
+                    $name = $names['customer_name'];
                     $recipient_name = $names['recipient_name'];
-                    $timing_label   = cmp_resolve_accounts_timing( $sub, $order );
+                    $timing_label = cmp_resolve_accounts_timing($sub, $order);
+                    
+                    $used = $sub->used;
+                    $balance = $sub->balance;
+                    
+                    if ($sub->status === 'paused') { $status_color = '#f59e0b'; $status_label = 'PAUSED'; }
+                    elseif ($balance <= 0 || $sub->expiry_date < current_time('mysql')) { $status_color = '#ef4444'; $status_label = 'COMPLETED'; }
+                    else { $status_color = '#379237'; $status_label = 'ACTIVE'; }
 
-                    $used          = intval( $sub->used );
-                    $eff_total     = isset( $sub->effective_total ) ? intval( $sub->effective_total ) : intval( $sub->total_days );
-                    $balance       = intval( $sub->balance );
-                    $balance_meals = isset( $sub->balance_meals ) ? intval( $sub->balance_meals ) : $balance;
+                    $display_order_id = esc_html(cmp_format_accounts_order_id($sub->wc_order_id, $sub->id));
 
-                    if ( $sub->status === 'paused' ) {
-                        $status_color = '#f59e0b';
-                        $status_label = 'PAUSED';
-                    } elseif ( $balance <= 0 || $sub->expiry_date < current_time( 'mysql' ) || $sub->status === 'completed' ) {
-                        $status_color = '#ef4444';
-                        $status_label = 'COMPLETED';
-                    } else {
-                        $status_color = '#379237';
-                        $status_label = 'ACTIVE';
-                    }
-
-                    $display_order_id = esc_html( cmp_format_accounts_order_id( $sub->wc_order_id, $sub->id ) );
-
+                    // Deposit Logic for Pill
                     global $wpdb;
-                    $deposit_held = get_user_meta( $sub->user_id, '_cmp_deposit_held', true );
-                    if ( $deposit_held === '' ) {
-                        $past_plans   = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id ) );
-                        $deposit_held = ( intval( $past_plans ) > 0 ) ? 'yes' : 'no';
+                    $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
+                    if ($deposit_held === '') {
+                        $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
+                        $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
                     }
-                    $b_color = '#dc2626';
-                    $b_bg    = '#fee2e2';
-                    $b_text  = 'Refunded / No Deposit';
-                    if ( $deposit_held === 'yes' ) {
-                        $b_color = '#379237';
-                        $b_bg    = '#dcfce7';
-                        $b_text  = 'Bag Deposit Held';
-                    }
-                    if ( $deposit_held === 'own_bag' ) {
-                        $b_color = '#8b5cf6';
-                        $b_bg    = '#ede9fe';
-                        $b_text  = "Customer's Own Bag";
-                    }
+                    $b_color = '#dc2626'; $b_bg = '#fee2e2'; $b_text = 'Refunded / No Deposit';
+                    if ($deposit_held === 'yes') { $b_color = '#379237'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
+                    if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
 
+                    // Only render Recipient row when a Recipient Name is actually available
                     $recipient_html = '';
-                    if ( ! empty( $recipient_name ) ) {
-                        $recipient_html = "<div style='margin-bottom:3px;'><span style='font-size:0.75em; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.4px;'>Recipient:</span> <strong style='color:#231F20;'>" . esc_html( $recipient_name ) . "</strong></div>";
+                    if (!empty($recipient_name)) {
+                        $recipient_html = "<div style='margin-bottom:3px;'><span style='font-size:0.75em; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.4px;'>Recipient:</span> <strong style='color:#231F20;'>" . esc_html($recipient_name) . "</strong></div>";
                     }
 
-                    $search_blob  = strtolower( $display_order_id . ' ' . $name . ' ' . $recipient_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $sub->plan_name . ' ' . $timing_label );
-                    $popover_attr = ! empty( $sub->popover_text ) ? " title='" . esc_attr( $sub->popover_text ) . "'" : '';
+                    $search_blob = strtolower($display_order_id . ' ' . $name . ' ' . $recipient_name . ' ' . $sub->user_email . ' ' . $phone . ' ' . $sub->plan_name . ' ' . $timing_label);
 
-                    echo "<tr class='acc-sub-row' data-search='" . esc_attr( $search_blob ) . "'>
+                    echo "<tr class='acc-sub-row' data-search='" . esc_attr($search_blob) . "'>
                         <td><strong style='color:#231F20; font-size:1.1em;'>{$display_order_id}</strong></td>
                         <td>
-                            <div style='margin-bottom:3px;'><span style='font-size:0.75em; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.4px;'>Customer:</span> <strong style='color:#379237;'>" . esc_html( $name ) . "</strong></div>
+                            <div style='margin-bottom:3px;'><span style='font-size:0.75em; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:0.4px;'>Customer:</span> <strong style='color:#379237;'>" . esc_html($name) . "</strong></div>
                             {$recipient_html}
-                            <span style='color:#64748b; font-size:0.9em;'>" . esc_html( $sub->user_email ) . "</span><br>
-                            <span style='color:#64748b; font-size:0.9em;'>" . esc_html( $phone ?: 'N/A' ) . "</span>
+                            <span style='color:#64748b; font-size:0.9em;'>" . esc_html($sub->user_email) . "</span><br>
+                            <span style='color:#64748b; font-size:0.9em;'>" . esc_html($phone ?: 'N/A') . "</span>
                         </td>
                         <td>
-                            <strong>" . esc_html( $sub->plan_name ) . "</strong><br>
-                            <span style='color:#64748b; font-size:0.9em;'>Started: " . date( 'd M Y', strtotime( $sub->start_date ) ) . "</span><br>
-                            <span style='display:inline-block; margin-top:4px; background:#EEF7E3; color:#1B5E20; padding:2px 8px; border-radius:6px; font-size:0.8em; font-weight:700;'>Delivery: " . esc_html( $timing_label ) . "</span>
+                            <strong>" . esc_html($sub->plan_name) . "</strong><br>
+                            <span style='color:#64748b; font-size:0.9em;'>Started: " . date('d M Y', strtotime($sub->start_date)) . "</span><br>
+                            <span style='display:inline-block; margin-top:4px; background:#EEF7E3; color:#1B5E20; padding:2px 8px; border-radius:6px; font-size:0.8em; font-weight:700;'>Delivery: " . esc_html($timing_label) . "</span>
                         </td>
-                        <td{$popover_attr} style='cursor:help;'>
+                        <td>
                             <div style='display:flex; justify-content:space-between; margin-bottom:4px; font-size:0.95em;'>
                                 <span>Used: <strong>{$used}</strong></span>
-                                <span>Total: <strong>{$eff_total}</strong></span>
+                                <span>Total: <strong>{$sub->total_days}</strong></span>
                             </div>
                             <div style='background:#e2e8f0; width:100%; height:8px; border-radius:4px; overflow:hidden; margin-bottom:5px;'>";
-                    $pct = ( $eff_total > 0 ) ? min( 100, ( $used / $eff_total ) * 100 ) : 0;
+                    $pct = ($sub->total_days > 0) ? min(100, ($used / $sub->total_days)*100) : 0;
                     echo "<div style='width:{$pct}%; background:{$status_color}; height:100%;'></div>
                             </div>
                             <div style='display:flex; justify-content:space-between; font-size:0.85em;'>
                                 <span style='color:{$status_color}; font-weight:bold;'>{$status_label}</span>
-                                <span>Bal: <strong>{$balance}d ({$balance_meals} Meals)</strong></span>
-                            </div>";
-                    if ( ! empty( $sub->pending_carry_days ) ) {
-                        echo "<div style='font-size:0.76em; color:#0369a1; font-weight:800; margin-top:3px;'>&#8618; " . intval( $sub->pending_carry_days ) . " Carryover Day(s) (" . intval( $sub->pending_carry_meals ) . " Meal(s))</div>";
-                    }
-                    if ( ! empty( $sub->last_filled_date ) ) {
-                        echo "<div style='font-size:0.75em; color:#64748b; margin-top:2px;'>Last Filled: <strong>" . esc_html( date( 'd M Y', strtotime( $sub->last_filled_date ) ) ) . "</strong></div>";
-                    }
-                    echo "</td>
+                                <span>Bal: <strong>{$balance}</strong></span>
+                            </div>
+                        </td>
                         <td style='text-align:center;' class='cmp-no-print'>
-                            <a href='" . esc_url( add_query_arg( 'view_sub', $sub->id ) ) . "' class='acc-btn'>View Record</a>
+                            <a href='" . add_query_arg('view_sub', $sub->id) . "' class='acc-btn'>View Record</a>
                             <div class='deposit-pill-wrapper' data-user-id='{$sub->user_id}' style='margin-top:8px;'>
                                 <span class='deposit-status-pill' style='color:{$b_color}; font-weight:bold; background:{$b_bg}; padding:4px 8px; border-radius:12px; font-size:0.75em; display:inline-block; cursor:pointer; border:1px solid {$b_color}; transition:0.2s;' title='Click to Change Status'>
                                     {$b_text} &#9662;
                                 </span>
                                 <select class='deposit-status-select' style='display:none; width:100%; padding:4px; font-size:0.8em; border-radius:4px; border:1px solid #cbd5e1; margin-top:4px;'>
-                                    <option value='yes' " . selected( $deposit_held, 'yes', false ) . ">Held (Waived)</option>
-                                    <option value='own_bag' " . selected( $deposit_held, 'own_bag', false ) . ">Own Bag (Waived)</option>
-                                    <option value='no' " . selected( $deposit_held, 'no', false ) . ">Refunded / No Deposit</option>
+                                    <option value='yes' ".selected($deposit_held, 'yes', false).">Held (Waived)</option>
+                                    <option value='own_bag' ".selected($deposit_held, 'own_bag', false).">Own Bag (Waived)</option>
+                                    <option value='no' ".selected($deposit_held, 'no', false).">Refunded / No Deposit</option>
                                 </select>
                             </div>
                         </td>
@@ -892,13 +639,12 @@ function cmp_render_accounts_dashboard() {
             }
             echo "</tbody></table></div></div>";
         }
-        }
         ?>
 
         <!-- Render the 3 Tables -->
-        <?php render_accounts_sub_table( $active_subs, 'acc-active', 'active', $dash_start, $dash_end, true ); ?>
-        <?php render_accounts_sub_table( $paused_subs, 'acc-paused', 'paused', $dash_start, $dash_end, false ); ?>
-        <?php render_accounts_sub_table( $completed_subs, 'acc-completed', 'completed', $dash_start, $dash_end, false ); ?>
+        <?php render_accounts_sub_table($active_subs, 'acc-active', 'active', $dash_start, $dash_end, true); ?>
+        <?php render_accounts_sub_table($paused_subs, 'acc-paused', 'paused', $dash_start, $dash_end, false); ?>
+        <?php render_accounts_sub_table($completed_subs, 'acc-completed', 'completed', $dash_start, $dash_end, false); ?>
 
     </div>
 
@@ -961,32 +707,26 @@ function cmp_render_accounts_dashboard() {
 
 // ==========================================
 // DRILL-DOWN: KITCHEN AUDIT VIEW
-// (Option 4A: Excludes Paused Plans, Cancelled Days & Returned Days)
 // ==========================================
 function cmp_render_kitchen_audit_view() {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    
+    $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
+    $kit_start = isset($_GET['kit_start']) ? sanitize_text_field($_GET['kit_start']) : date('Y-m-d', strtotime("-{$kit_days} days"));
+    $kit_end = isset($_GET['kit_end']) ? sanitize_text_field($_GET['kit_end']) : date('Y-m-d');
 
-    $kit_days  = intval( get_option( 'cmp_kitchen_alert_days', '7' ) );
-    $kit_start = isset( $_GET['kit_start'] ) ? sanitize_text_field( $_GET['kit_start'] ) : date( 'Y-m-d', strtotime( "-{$kit_days} days" ) );
-    $kit_end   = isset( $_GET['kit_end'] ) ? sanitize_text_field( $_GET['kit_end'] ) : date( 'Y-m-d' );
-
-    $pending_kitchen = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.id as sub_id, s.wc_order_id, s.user_id, s.plan_name, s.delivery_timing, u.display_name, u.user_email
-         FROM {$table_logs} l 
-         JOIN {$table_subs} s ON l.subscription_id = s.id 
+    $pending_kitchen = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.id as sub_id, s.wc_order_id, s.user_id, s.plan_name, u.display_name, u.user_email FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-         WHERE l.is_locked = 1
-           AND s.status = 'active'
-           AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned'))
-           AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending')
-           AND l.target_date >= %s AND l.target_date <= %s
-         ORDER BY l.target_date DESC",
-        $kit_start,
-        $kit_end
-    ) );
-    $pending_kitchen = cmp_process_timing_data( $pending_kitchen );
+         WHERE l.is_locked = 1 
+         AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending') 
+         AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $kit_start, $kit_end
+    ));
+    $pending_kitchen = cmp_process_timing_data($pending_kitchen);
 
     ob_start();
     ?>
@@ -1003,23 +743,23 @@ function cmp_render_kitchen_audit_view() {
         </div>
         
         <div class="acc-section-title cmp-no-print">
-            <span style="color:#231F20;">Audit: Kitchen Operations (Excludes Cancelled, Returned &amp; Paused)</span>
+            <span style="color:#231F20;">Audit: Kitchen Operations</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="view" value="kitchen_audit">
                 <span>Period:</span>
-                <input type="date" name="kit_start" value="<?php echo esc_attr( $kit_start ); ?>"> <span>to</span>
-                <input type="date" name="kit_end" value="<?php echo esc_attr( $kit_end ); ?>">
+                <input type="date" name="kit_start" value="<?php echo esc_attr($kit_start); ?>"> <span>to</span>
+                <input type="date" name="kit_end" value="<?php echo esc_attr($kit_end); ?>">
                 <button type="submit" style="background:#ea580c;">Apply</button>
             </form>
         </div>
 
-        <?php if ( empty( $pending_kitchen ) ) : ?>
+        <?php if(empty($pending_kitchen)): ?>
             <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold;">
-                ✓ Perfect compliance. No pending active Kitchen tasks found.
+                ✓ Perfect compliance. No pending Kitchen tasks found.
             </div>
-        <?php else : ?>
+        <?php else: ?>
             <div style="background:#fff7ed; padding:20px; border-radius:8px; border:1px solid #fed7aa;">
-                <h4 style="margin:0 0 15px 0; color:#c2410c; font-size:1.1em;">Attention: <?php echo count( $pending_kitchen ); ?> Incomplete Kitchen Logs</h4>
+                <h4 style="margin:0 0 15px 0; color:#c2410c; font-size:1.1em;">Attention: <?php echo count($pending_kitchen); ?> Incomplete Kitchen Logs</h4>
                 <div style="overflow-x: auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
                         <tr style="border-bottom:2px solid #fdba74; color:#9a3412;">
@@ -1030,32 +770,32 @@ function cmp_render_kitchen_audit_view() {
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Missing Step(s)</th>
                         </tr>
-                        <?php foreach ( $pending_kitchen as $k ) :
-                            $missing_badges = array();
-                            if ( ! $k->is_prepared )                $missing_badges[] = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Prep</span>';
-                            if ( ! $k->dispatch_status )            $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
-                            if ( $k->delivery_result === 'Pending' ) $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
-
-                            $display_order_id = esc_html( cmp_format_accounts_order_id( $k->wc_order_id, $k->sub_id ?? $k->subscription_id ) );
-                            $names            = cmp_resolve_accounts_names( $k );
+                        <?php foreach($pending_kitchen as $k): 
+                            $missing_badges = [];
+                            if (!$k->is_prepared) $missing_badges[] = '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Prep</span>';
+                            if (!$k->dispatch_status) $missing_badges[] = '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Dispatch</span>';
+                            if ($k->delivery_result === 'Pending') $missing_badges[] = '<span style="background:#e0e7ff; color:#3730a3; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;">Delivery Result</span>';
+                            
+                            $display_order_id = esc_html(cmp_format_accounts_order_id($k->wc_order_id, $k->sub_id ?? $k->subscription_id));
+                            $names = cmp_resolve_accounts_names($k);
                         ?>
                         <tr style="border-bottom:1px solid #fed7aa;">
                             <td style="padding:12px;">
-                                <strong><?php echo date( 'd M Y', strtotime( $k->target_date ) ); ?></strong><br>
-                                <span style="font-size:0.85em; color:#c2410c;">(<?php echo esc_html( $k->timing_label ); ?>)</span>
+                                <strong><?php echo date('d M Y', strtotime($k->target_date)); ?></strong><br>
+                                <span style="font-size:0.85em; color:#c2410c;">(<?php echo $k->timing_label; ?>)</span>
                             </td>
-                            <td style="padding:12px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date( 'd M Y', strtotime( $k->computed_delivery_date ) ); ?></td>
+                            <td style="padding:12px; border-right:2px solid #fed7aa; font-weight:bold; color:#c2410c;"><?php echo date('d M Y', strtotime($k->computed_delivery_date)); ?></td>
                             <td style="padding:12px;"><strong><?php echo $display_order_id; ?></strong></td>
                             <td style="padding:12px;">
-                                <strong><?php echo esc_html( $names['customer_name'] ); ?></strong>
-                                <?php if ( ! empty( $names['recipient_name'] ) ) : ?>
-                                    <br><span style="font-size:0.85em; color:#7c2d12;">Recipient: <?php echo esc_html( $names['recipient_name'] ); ?></span>
+                                <strong><?php echo esc_html($names['customer_name']); ?></strong>
+                                <?php if (!empty($names['recipient_name'])): ?>
+                                    <br><span style="font-size:0.85em; color:#7c2d12;">Recipient: <?php echo esc_html($names['recipient_name']); ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td style="padding:12px;"><?php echo esc_html( $k->plan_name ); ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($k->plan_name); ?></td>
                             <td style="padding:12px;">
                                 <div style="display:flex; gap:5px; flex-wrap:wrap;">
-                                    <?php echo implode( '', $missing_badges ); ?>
+                                    <?php echo implode('', $missing_badges); ?>
                                 </div>
                             </td>
                         </tr>
@@ -1071,48 +811,33 @@ function cmp_render_kitchen_audit_view() {
 
 // ==========================================
 // DRILL-DOWN: POS AUDIT VIEW
-// (Option 4A: Only Successful Deliveries Require POS Checks; Cancelled & Returned Exempted)
 // ==========================================
 function cmp_render_pos_audit_view() {
     global $wpdb;
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+    
+    $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
+    $pos_start = isset($_GET['pos_start']) ? sanitize_text_field($_GET['pos_start']) : date('Y-m-d', strtotime("-{$foh_days} days"));
+    $pos_end = isset($_GET['pos_end']) ? sanitize_text_field($_GET['pos_end']) : date('Y-m-d');
 
-    $foh_days  = intval( get_option( 'cmp_pos_alert_days', '7' ) );
-    $pos_start = isset( $_GET['pos_start'] ) ? sanitize_text_field( $_GET['pos_start'] ) : date( 'Y-m-d', strtotime( "-{$foh_days} days" ) );
-    $pos_end   = isset( $_GET['pos_end'] ) ? sanitize_text_field( $_GET['pos_end'] ) : date( 'Y-m-d' );
-
-    $pending_pos = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.id as sub_id, s.wc_order_id, s.user_id, s.plan_name, s.delivery_timing, u.display_name, u.user_email
-         FROM {$table_logs} l 
-         JOIN {$table_subs} s ON l.subscription_id = s.id 
+    $pending_pos = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.id as sub_id, s.wc_order_id, s.user_id, s.plan_name, u.display_name, u.user_email FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-         WHERE l.pos_updated = 0
-           AND l.is_locked = 1
-           AND s.status IN ('active', 'completed')
-           AND l.delivery_result = 'Successful'
-           AND l.target_date >= %s AND l.target_date <= %s
-         ORDER BY l.target_date DESC",
-        $pos_start,
-        $pos_end
-    ) );
-    $completed_pos = $wpdb->get_results( $wpdb->prepare(
-        "SELECT l.*, s.id as sub_id, s.wc_order_id, s.user_id, s.plan_name, s.delivery_timing, u.display_name, u.user_email
-         FROM {$table_logs} l 
-         JOIN {$table_subs} s ON l.subscription_id = s.id 
+         WHERE l.pos_updated = 0 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $pos_start, $pos_end
+    ));
+    $completed_pos = $wpdb->get_results($wpdb->prepare(
+        "SELECT l.*, s.id as sub_id, s.wc_order_id, s.user_id, s.plan_name, u.display_name, u.user_email FROM $table_logs l 
+         JOIN $table_subs s ON l.subscription_id = s.id 
          JOIN {$wpdb->prefix}users u ON s.user_id = u.ID
-         WHERE l.pos_updated = 1
-           AND l.is_locked = 1
-           AND s.status IN ('active', 'completed')
-           AND l.delivery_result = 'Successful'
-           AND l.target_date >= %s AND l.target_date <= %s
-         ORDER BY l.target_date DESC",
-        $pos_start,
-        $pos_end
-    ) );
+         WHERE l.pos_updated = 1 AND l.delivery_result != 'Pending' AND l.is_locked = 1 AND l.target_date >= %s AND l.target_date <= %s ORDER BY l.target_date DESC",
+        $pos_start, $pos_end
+    ));
 
-    $pending_pos   = cmp_process_timing_data( $pending_pos );
-    $completed_pos = cmp_process_timing_data( $completed_pos );
+    $pending_pos = cmp_process_timing_data($pending_pos);
+    $completed_pos = cmp_process_timing_data($completed_pos);
 
     ob_start();
     ?>
@@ -1129,23 +854,23 @@ function cmp_render_pos_audit_view() {
         </div>
 
         <div class="acc-section-title cmp-no-print">
-            <span style="color:#231F20;">Audit: POS Reconciliations (Successful Deliveries Only &mdash; Cancelled &amp; Returned Exempted)</span>
+            <span style="color:#231F20;">Audit: POS Reconciliations</span>
             <form method="GET" class="acc-filter">
                 <input type="hidden" name="view" value="pos_audit">
                 <span>Period:</span>
-                <input type="date" name="pos_start" value="<?php echo esc_attr( $pos_start ); ?>"> <span>to</span>
-                <input type="date" name="pos_end" value="<?php echo esc_attr( $pos_end ); ?>">
+                <input type="date" name="pos_start" value="<?php echo esc_attr($pos_start); ?>"> <span>to</span>
+                <input type="date" name="pos_end" value="<?php echo esc_attr($pos_end); ?>">
                 <button type="submit" style="background:#f59e0b;">Apply</button>
             </form>
         </div>
 
-        <?php if ( empty( $pending_pos ) ) : ?>
+        <?php if(empty($pending_pos)): ?>
             <div style="background:#f0fdf4; color:#166534; padding:20px; border-radius:8px; border:1px solid #bbf7d0; font-weight:bold; margin-bottom:20px;">
-                ✓ Perfect compliance. No pending POS checks found for Successful deliveries.
+                ✓ Perfect compliance. No pending POS checks found.
             </div>
-        <?php else : ?>
+        <?php else: ?>
             <div style="background:#fffbeb; padding:20px; border-radius:8px; border:1px solid #fde68a; margin-bottom:20px;">
-                <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count( $pending_pos ); ?> Missing Reconciliations</h4>
+                <h4 style="margin:0 0 15px 0; color:#b45309; font-size:1.1em;">Attention: <?php echo count($pending_pos); ?> Missing Reconciliations</h4>
                 <div style="overflow-x: auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
                         <tr style="border-bottom:2px solid #fcd34d; color:#92400e;">
@@ -1156,26 +881,26 @@ function cmp_render_pos_audit_view() {
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Delivery Logged As</th>
                         </tr>
-                        <?php foreach ( $pending_pos as $p ) :
-                            $display_order_id = esc_html( cmp_format_accounts_order_id( $p->wc_order_id, $p->sub_id ?? $p->subscription_id ) );
-                            $names            = cmp_resolve_accounts_names( $p );
+                        <?php foreach($pending_pos as $p): 
+                            $display_order_id = esc_html(cmp_format_accounts_order_id($p->wc_order_id, $p->sub_id ?? $p->subscription_id));
+                            $names = cmp_resolve_accounts_names($p);
                         ?>
                         <tr style="border-bottom:1px solid #fde68a;">
                             <td style="padding:12px;">
-                                <strong><?php echo date( 'd M Y', strtotime( $p->target_date ) ); ?></strong><br>
-                                <span style="font-size:0.85em; color:#b45309;">(<?php echo esc_html( $p->timing_label ); ?>)</span>
+                                <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
+                                <span style="font-size:0.85em; color:#b45309;">(<?php echo $p->timing_label; ?>)</span>
                             </td>
-                            <td style="padding:12px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date( 'd M Y', strtotime( $p->computed_delivery_date ) ); ?></td>
+                            <td style="padding:12px; border-right:2px solid #fde68a; font-weight:bold; color:#b45309;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
                             <td style="padding:12px;"><strong><?php echo $display_order_id; ?></strong></td>
                             <td style="padding:12px;">
-                                <strong><?php echo esc_html( $names['customer_name'] ); ?></strong>
-                                <?php if ( ! empty( $names['recipient_name'] ) ) : ?>
-                                    <br><span style="font-size:0.85em; color:#92400e;">Recipient: <?php echo esc_html( $names['recipient_name'] ); ?></span>
+                                <strong><?php echo esc_html($names['customer_name']); ?></strong>
+                                <?php if (!empty($names['recipient_name'])): ?>
+                                    <br><span style="font-size:0.85em; color:#92400e;">Recipient: <?php echo esc_html($names['recipient_name']); ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td style="padding:12px;"><?php echo esc_html( $p->plan_name ); ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
                             <td style="padding:12px;">
-                                <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html( $p->delivery_result ); ?></span>
+                                <span style="background:#fecdd3; color:#9f1239; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -1184,9 +909,9 @@ function cmp_render_pos_audit_view() {
             </div>
         <?php endif; ?>
 
-        <?php if ( ! empty( $completed_pos ) ) : ?>
+        <?php if(!empty($completed_pos)): ?>
             <div style="background:#f0fdf4; padding:20px; border-radius:8px; border:1px solid #bbf7d0;">
-                <h4 style="margin:0 0 15px 0; color:#166534; font-size:1.1em;">✓ <?php echo count( $completed_pos ); ?> Completed Reconciliations</h4>
+                <h4 style="margin:0 0 15px 0; color:#166534; font-size:1.1em;">✓ <?php echo count($completed_pos); ?> Completed Reconciliations</h4>
                 <div style="overflow-x: auto;">
                     <table style="width:100%; border-collapse:collapse; font-size:0.9em; text-align:left;">
                         <tr style="border-bottom:2px solid #86efac; color:#14532d;">
@@ -1197,26 +922,26 @@ function cmp_render_pos_audit_view() {
                             <th style="padding:12px;">Plan</th>
                             <th style="padding:12px;">Delivery Logged As</th>
                         </tr>
-                        <?php foreach ( $completed_pos as $p ) :
-                            $display_order_id = esc_html( cmp_format_accounts_order_id( $p->wc_order_id, $p->sub_id ?? $p->subscription_id ) );
-                            $names            = cmp_resolve_accounts_names( $p );
+                        <?php foreach($completed_pos as $p): 
+                            $display_order_id = esc_html(cmp_format_accounts_order_id($p->wc_order_id, $p->sub_id ?? $p->subscription_id));
+                            $names = cmp_resolve_accounts_names($p);
                         ?>
                         <tr style="border-bottom:1px solid #bbf7d0;">
                             <td style="padding:12px;">
-                                <strong><?php echo date( 'd M Y', strtotime( $p->target_date ) ); ?></strong><br>
-                                <span style="font-size:0.85em; color:#166534;">(<?php echo esc_html( $p->timing_label ); ?>)</span>
+                                <strong><?php echo date('d M Y', strtotime($p->target_date)); ?></strong><br>
+                                <span style="font-size:0.85em; color:#166534;">(<?php echo $p->timing_label; ?>)</span>
                             </td>
-                            <td style="padding:12px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date( 'd M Y', strtotime( $p->computed_delivery_date ) ); ?></td>
+                            <td style="padding:12px; border-right:2px solid #bbf7d0; font-weight:bold; color:#166534;"><?php echo date('d M Y', strtotime($p->computed_delivery_date)); ?></td>
                             <td style="padding:12px;"><strong><?php echo $display_order_id; ?></strong></td>
                             <td style="padding:12px;">
-                                <strong><?php echo esc_html( $names['customer_name'] ); ?></strong>
-                                <?php if ( ! empty( $names['recipient_name'] ) ) : ?>
-                                    <br><span style="font-size:0.85em; color:#166534;">Recipient: <?php echo esc_html( $names['recipient_name'] ); ?></span>
+                                <strong><?php echo esc_html($names['customer_name']); ?></strong>
+                                <?php if (!empty($names['recipient_name'])): ?>
+                                    <br><span style="font-size:0.85em; color:#166534;">Recipient: <?php echo esc_html($names['recipient_name']); ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td style="padding:12px;"><?php echo esc_html( $p->plan_name ); ?></td>
+                            <td style="padding:12px;"><?php echo esc_html($p->plan_name); ?></td>
                             <td style="padding:12px;">
-                                <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html( $p->delivery_result ); ?></span>
+                                <span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:0.85em;"><?php echo esc_html($p->delivery_result); ?></span>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -1232,92 +957,56 @@ function cmp_render_pos_audit_view() {
 
 // ==========================================
 // 4. INDIVIDUAL CUSTOMER RECORD VIEW (READ ONLY)
-//    (Option 2B Attribution + Option 4A POS Exemptions + Carryover Redemption Support)
 // ==========================================
-function cmp_render_accounts_sub_view( $sub_id ) {
+function cmp_render_accounts_sub_view($sub_id) {
     global $wpdb;
-    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
-        cmp_ensure_meal_skip_carryover_columns();
-    }
-
-    $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_foods = $wpdb->prefix . 'cmp_foods';
+    
+    $sub = $wpdb->get_row($wpdb->prepare("SELECT s.*, u.user_email, u.display_name FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.id = %d", $sub_id));
+    
+    if (!$sub) { return "<div style='padding:40px; text-align:center;'>Subscription Not Found. <a href='?'>Go Back</a></div>"; }
 
-    $sub = $wpdb->get_row( $wpdb->prepare( "SELECT s.*, u.user_email, u.display_name FROM $table_subs s JOIN {$wpdb->prefix}users u ON s.user_id = u.ID WHERE s.id = %d", $sub_id ) );
-
-    if ( ! $sub ) {
-        return "<div style='padding:40px; text-align:center;'>Subscription Not Found. <a href='?'>Go Back</a></div>";
-    }
-
-    $order = ( intval( $sub->wc_order_id ) > 0 && function_exists( 'wc_get_order' ) ) ? wc_get_order( $sub->wc_order_id ) : false;
-    $phone = $order ? $order->get_billing_phone() : get_user_meta( $sub->user_id, 'billing_phone', true );
-
-    $names          = cmp_resolve_accounts_names( $sub, $order );
-    $name           = $names['customer_name'];
+    $order = (intval($sub->wc_order_id) > 0 && function_exists('wc_get_order')) ? wc_get_order($sub->wc_order_id) : false;
+    $phone = $order ? $order->get_billing_phone() : get_user_meta($sub->user_id, 'billing_phone', true);
+    
+    $names = cmp_resolve_accounts_names($sub, $order);
+    $name = $names['customer_name'];
     $recipient_name = $names['recipient_name'];
-    $timing_label   = cmp_resolve_accounts_timing( $sub, $order );
+    $timing_label = cmp_resolve_accounts_timing($sub, $order);
 
-    $logs = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY is_carryover ASC, target_date ASC, id ASC", $sub_id ) );
-    foreach ( $logs as $l ) {
-        $l->wc_order_id     = $sub->wc_order_id;
-        $l->user_id         = $sub->user_id;
-        $l->delivery_timing = $sub->delivery_timing ?? '';
+    $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id));
+    foreach ($logs as $l) {
+        $l->wc_order_id = $sub->wc_order_id;
+        $l->user_id     = $sub->user_id;
     }
-    $logs = cmp_process_timing_data( $logs );
+    $logs = cmp_process_timing_data($logs);
 
-    $foods = $wpdb->get_results( "SELECT id, food_name FROM $table_foods" );
-    $fmap  = array();
-    foreach ( $foods as $f ) {
-        $fmap[ $f->id ] = $f->food_name;
+    $foods = $wpdb->get_results("SELECT id, food_name FROM $table_foods");
+    $fmap = array(); foreach($foods as $f) $fmap[$f->id] = $f->food_name;
+
+    $used = 0; $cancelled = 0; $returned = 0;
+    foreach($logs as $l) {
+        if ($l->delivery_result === 'Successful') $used++;
+        if ($l->delivery_result === 'Cancelled') $cancelled++;
+        if ($l->delivery_result === 'Returned') $returned++;
     }
+    $balance = $sub->total_days - $used;
 
-    $used      = 0;
-    $cancelled = 0;
-    $returned  = 0;
-    foreach ( $logs as $l ) {
-        if ( $l->delivery_result === 'Successful' ) $used++;
-        if ( $l->delivery_result === 'Cancelled' )  $cancelled++;
-        if ( $l->delivery_result === 'Returned' )   $returned++;
-    }
-
-    $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
-        ? cmp_get_subscription_tracking_metrics( $sub )
-        : null;
-
-    if ( $metrics ) {
-        $eff_total_days = intval( $metrics['effective_total_days'] );
-        $balance        = intval( $metrics['balance_days'] );
-        $balance_meals  = intval( $metrics['balance_meals'] );
-    } else {
-        $eff_total_days = intval( $sub->total_days ) + intval( $sub->carryover_days ?? 0 );
-        $balance        = max( 0, $eff_total_days - $used );
-        $balance_meals  = $balance;
-    }
-
-    $is_completed   = ( $sub->status === 'completed' || $used >= $eff_total_days || $sub->expiry_date < current_time( 'mysql' ) );
+    $is_completed = ($used >= $sub->total_days || $sub->expiry_date < current_time('mysql'));
     $derived_status = $is_completed ? 'Completed' : $sub->status;
 
-    $display_order_id = cmp_format_accounts_order_id( $sub->wc_order_id, $sub->id );
+    $display_order_id = cmp_format_accounts_order_id($sub->wc_order_id, $sub->id);
 
-    $deposit_held = get_user_meta( $sub->user_id, '_cmp_deposit_held', true );
-    if ( $deposit_held === '' ) {
-        $past_plans   = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id ) );
-        $deposit_held = ( intval( $past_plans ) > 0 ) ? 'yes' : 'no';
+    $deposit_held = get_user_meta($sub->user_id, '_cmp_deposit_held', true);
+    if ($deposit_held === '') {
+        $past_plans = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}cmp_subscriptions WHERE user_id = %d", $sub->user_id));
+        $deposit_held = (intval($past_plans) > 0) ? 'yes' : 'no';
     }
-    $b_color = '#dc2626';
-    $b_bg    = '#fee2e2';
-    $b_text  = 'Refunded / No Deposit';
-    if ( $deposit_held === 'yes' ) {
-        $b_color = '#379237';
-        $b_bg    = '#dcfce7';
-        $b_text  = 'Bag Deposit Held';
-    }
-    if ( $deposit_held === 'own_bag' ) {
-        $b_color = '#8b5cf6';
-        $b_bg    = '#ede9fe';
-        $b_text  = "Customer's Own Bag";
-    }
+    $b_color = '#dc2626'; $b_bg = '#fee2e2'; $b_text = 'Refunded / No Deposit';
+    if ($deposit_held === 'yes') { $b_color = '#379237'; $b_bg = '#dcfce7'; $b_text = 'Bag Deposit Held'; }
+    if ($deposit_held === 'own_bag') { $b_color = '#8b5cf6'; $b_bg = '#ede9fe'; $b_text = "Customer's Own Bag"; }
 
     ob_start();
     ?>
@@ -1350,35 +1039,35 @@ function cmp_render_accounts_sub_view( $sub_id ) {
             <div>
                 <h1 style="margin:0 0 12px 0; color:#231F20; font-size:1.8em;">Customer Record</h1>
                 <div style="font-size:1.05em; color:#334155; margin-bottom:4px;">
-                    <span style="color:#64748b; font-weight:600;">Customer Name:</span> <strong style="color:#379237;"><?php echo esc_html( $name ); ?></strong>
+                    <span style="color:#64748b; font-weight:600;">Customer Name:</span> <strong style="color:#379237;"><?php echo esc_html($name); ?></strong>
                 </div>
-                <?php if ( ! empty( $recipient_name ) ) : ?>
+                <?php if (!empty($recipient_name)): ?>
                 <div style="font-size:1.05em; color:#334155; margin-bottom:6px;">
-                    <span style="color:#64748b; font-weight:600;">Recipient Name:</span> <strong style="color:#231F20;"><?php echo esc_html( $recipient_name ); ?></strong>
+                    <span style="color:#64748b; font-weight:600;">Recipient Name:</span> <strong style="color:#231F20;"><?php echo esc_html($recipient_name); ?></strong>
                 </div>
                 <?php endif; ?>
-                <div style="color:#64748b; margin-top:6px;"><?php echo esc_html( $sub->user_email ); ?> | <?php echo esc_html( $phone ?: 'No Phone' ); ?></div>
+                <div style="color:#64748b; margin-top:6px;"><?php echo esc_html($sub->user_email); ?> | <?php echo esc_html($phone ?: 'No Phone'); ?></div>
             </div>
             <div style="text-align:right;">
-                <div style="font-size:1.2em; font-weight:bold; color:#231F20; margin-bottom:6px;"><?php echo esc_html( $sub->plan_name ); ?></div>
+                <div style="font-size:1.2em; font-weight:bold; color:#231F20; margin-bottom:6px;"><?php echo esc_html($sub->plan_name); ?></div>
                 <div style="margin-bottom:8px;">
                     <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #b7e1a1; padding:3px 10px; border-radius:6px; font-size:0.85em; font-weight:800; display:inline-block;">
-                        Delivery: <?php echo esc_html( $timing_label ); ?>
+                        Delivery: <?php echo esc_html($timing_label); ?>
                     </span>
                 </div>
-                <div style="color:#64748b;">Order: <strong style="color:#231F20;"><?php echo esc_html( $display_order_id ); ?></strong></div>
-                <div style="color:#64748b; margin-top:5px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status === 'active' ? '#379237' : ( $derived_status === 'Completed' ? '#ef4444' : '#f59e0b' ); ?>;"><?php echo esc_html( $derived_status ); ?></strong></div>
+                <div style="color:#64748b;">Order: <strong style="color:#231F20;"><?php echo esc_html($display_order_id); ?></strong></div>
+                <div style="color:#64748b; margin-top:5px;">Status: <strong style="text-transform:uppercase; color:<?php echo $derived_status == 'active' ? '#379237' : ($derived_status == 'Completed' ? '#ef4444' : '#f59e0b'); ?>;"><?php echo esc_html($derived_status); ?></strong></div>
                 
                 <div style="color:#64748b; margin-top:8px; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
                     <span>Bag Status:</span>
-                    <div class="deposit-pill-wrapper" data-user-id="<?php echo esc_attr( $sub->user_id ); ?>" style="display:inline-block;">
-                        <span class="deposit-status-pill cmp-no-print" style="color: <?php echo esc_attr( $b_color ); ?>; font-weight: bold; background: <?php echo esc_attr( $b_bg ); ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; cursor: pointer; border: 1px solid <?php echo esc_attr( $b_color ); ?>; transition: 0.2s;" title="Click to Change Status">
-                            <?php echo esc_html( $b_text ); ?> &#9662;
+                    <div class="deposit-pill-wrapper" data-user-id="<?php echo $sub->user_id; ?>" style="display:inline-block;">
+                        <span class="deposit-status-pill cmp-no-print" style="color: <?php echo $b_color; ?>; font-weight: bold; background: <?php echo $b_bg; ?>; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; cursor: pointer; border: 1px solid <?php echo $b_color; ?>; transition: 0.2s;" title="Click to Change Status">
+                            <?php echo $b_text; ?> &#9662;
                         </span>
                         <select class="deposit-status-select cmp-no-print" style="display:none; padding: 4px; font-size: 0.85em; border-radius: 4px; border: 1px solid #cbd5e1;">
-                            <option value="yes" <?php selected( $deposit_held, 'yes' ); ?>>Held</option>
-                            <option value="own_bag" <?php selected( $deposit_held, 'own_bag' ); ?>>Own Bag</option>
-                            <option value="no" <?php selected( $deposit_held, 'no' ); ?>>Refunded</option>
+                            <option value="yes" <?php selected($deposit_held, 'yes'); ?>>Held</option>
+                            <option value="own_bag" <?php selected($deposit_held, 'own_bag'); ?>>Own Bag</option>
+                            <option value="no" <?php selected($deposit_held, 'no'); ?>>Refunded</option>
                         </select>
                     </div>
                 </div>
@@ -1387,31 +1076,31 @@ function cmp_render_accounts_sub_view( $sub_id ) {
 
         <div class="acc-summary-grid">
             <div class="acc-sum-box">
-                <div class="acc-sum-val"><?php echo intval( $eff_total_days ); ?></div>
-                <div class="acc-sum-label">Total Days<?php if ( $eff_total_days > intval( $sub->total_days ) ) echo ' (Incl. Carryover)'; ?></div>
+                <div class="acc-sum-val"><?php echo $sub->total_days; ?></div>
+                <div class="acc-sum-label">Total Days</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #379237;">
-                <div class="acc-sum-val" style="color:#379237;"><?php echo intval( $used ); ?></div>
+                <div class="acc-sum-val" style="color:#379237;"><?php echo $used; ?></div>
                 <div class="acc-sum-label">Consumed (Success)</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #3b82f6;">
-                <div class="acc-sum-val" style="color:#3b82f6;"><?php echo intval( $balance ); ?> <span style="font-size:0.52em; color:#64748b;">(<?php echo intval( $balance_meals ); ?> Meals)</span></div>
+                <div class="acc-sum-val" style="color:#3b82f6;"><?php echo $balance; ?></div>
                 <div class="acc-sum-label">Remaining Balance</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #f59e0b;">
-                <div class="acc-sum-val" style="color:#f59e0b;"><?php echo intval( $returned ); ?></div>
+                <div class="acc-sum-val" style="color:#f59e0b;"><?php echo $returned; ?></div>
                 <div class="acc-sum-label">Returned</div>
             </div>
             <div class="acc-sum-box" style="border-bottom: 4px solid #ef4444;">
-                <div class="acc-sum-val" style="color:#ef4444;"><?php echo intval( $cancelled ); ?></div>
+                <div class="acc-sum-val" style="color:#ef4444;"><?php echo $cancelled; ?></div>
                 <div class="acc-sum-label">Cancelled</div>
             </div>
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:15px;">
-            <h2 style="margin:0; font-size:1.3em; color:#231F20;">Daily Selections &amp; Logistics</h2>
+            <h2 style="margin:0; font-size:1.3em; color:#231F20;">Daily Selections & Logistics</h2>
             <div class="cmp-no-print" style="display:flex; gap:10px;">
-                <a href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_accounts_sub&sub_id=' . $sub_id ) ); ?>" style="background:#379237; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;">Export CSV</a>
+                <a href="<?php echo esc_url(admin_url('admin-ajax.php?action=cmp_export_accounts_sub&sub_id='.$sub_id)); ?>" style="background:#379237; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold; font-size:0.9em;">Export CSV</a>
                 <button onclick="window.print()" style="background:#475569; color:white; border:none; padding:8px 15px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.9em;">Print PDF</button>
             </div>
         </div>
@@ -1423,108 +1112,53 @@ function cmp_render_accounts_sub_view( $sub_id ) {
                         <th style="width:5%;">Day</th>
                         <th style="width:14%;">Delivery Date</th>
                         <th style="width:14%;">Eating Date</th>
-                        <th style="width:37%;">Meal Assignments</th>
-                        <th style="width:18%; text-align:center;">Delivery Log &amp; Attribution</th>
-                        <th style="width:12%; text-align:center;">POS Check</th>
+                        <th style="width:42%;">Meal Assignments</th>
+                        <th style="width:15%; text-align:center;">Delivery Log</th>
+                        <th style="width:10%; text-align:center;">POS Check</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php
-                    $day_counter           = 1;
-                    $carryover_divider_put = false;
-                    if ( empty( $logs ) ) : ?>
+                    <?php 
+                    $day_counter = 1;
+                    if(empty($logs)): ?>
                         <tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;">No schedule created yet.</td></tr>
-                    <?php else : foreach ( $logs as $l ) :
-                        $is_carryover_log = ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1;
-                        if ( $is_carryover_log && ! $carryover_divider_put ) :
-                            $carryover_divider_put = true;
-                    ?>
-                        <tr>
-                            <td colspan="6" style="background:#f8fafc; padding:8px 14px; text-align:center; border-top:2px solid #cbd5e1; border-bottom:2px solid #cbd5e1;">
-                                <span style="background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; padding:3px 12px; border-radius:999px; font-size:0.78em; font-weight:800; text-transform:uppercase; letter-spacing:0.04em;">
-                                    Carryover / Redemption Days (Skipped Meals)
-                                </span>
-                            </td>
-                        </tr>
-                    <?php
-                        endif;
-
-                        $meals       = array();
-                        $is_assigned = ( $l->breakfast_id || $l->lunch_id || $l->dinner_id || $l->juice_1_id || ! empty( $l->custom_breakfast ) || ! empty( $l->custom_lunch ) || ! empty( $l->custom_dinner ) || ! empty( $l->custom_juice_1 ) );
-
-                        if ( $l->is_chefs_choice && ! $is_assigned ) {
+                    <?php else: foreach($logs as $l): 
+                        $meals = [];
+                        if ($l->is_chefs_choice && !$l->breakfast_id && !$l->lunch_id && !$l->dinner_id && !$l->juice_1_id) {
                             $meals[] = "<span style='color:#b45309; font-weight:bold;'>Chef's Choice (Pending)</span>";
                         } else {
-                            if ( ! empty( $l->custom_breakfast ) )     $meals[] = '<strong>BF:</strong> ' . esc_html( $l->custom_breakfast ) . ' <em>(Custom)</em>';
-                            elseif ( $l->breakfast_id )                $meals[] = '<strong>BF:</strong> ' . esc_html( $fmap[ $l->breakfast_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_lunch ) )         $meals[] = '<strong>L:</strong> ' . esc_html( $l->custom_lunch ) . ' <em>(Custom)</em>';
-                            elseif ( $l->lunch_id )                    $meals[] = '<strong>L:</strong> ' . esc_html( $fmap[ $l->lunch_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_dinner ) )        $meals[] = '<strong>D:</strong> ' . esc_html( $l->custom_dinner ) . ' <em>(Custom)</em>';
-                            elseif ( $l->dinner_id )                   $meals[] = '<strong>D:</strong> ' . esc_html( $fmap[ $l->dinner_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_snack_1 ) )       $meals[] = '<strong>S1:</strong> ' . esc_html( $l->custom_snack_1 ) . ' <em>(Custom)</em>';
-                            elseif ( $l->snack_1_id )                  $meals[] = '<strong>S1:</strong> ' . esc_html( $fmap[ $l->snack_1_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_snack_2 ) )       $meals[] = '<strong>S2:</strong> ' . esc_html( $l->custom_snack_2 ) . ' <em>(Custom)</em>';
-                            elseif ( $l->snack_2_id )                  $meals[] = '<strong>S2:</strong> ' . esc_html( $fmap[ $l->snack_2_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_juice_1 ) )       $meals[] = '<strong>J1:</strong> ' . esc_html( $l->custom_juice_1 ) . ' <em>(Custom)</em>';
-                            elseif ( $l->juice_1_id )                  $meals[] = '<strong>J1:</strong> ' . esc_html( $fmap[ $l->juice_1_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_juice_2 ) )       $meals[] = '<strong>J2:</strong> ' . esc_html( $l->custom_juice_2 ) . ' <em>(Custom)</em>';
-                            elseif ( $l->juice_2_id )                  $meals[] = '<strong>J2:</strong> ' . esc_html( $fmap[ $l->juice_2_id ] ?? 'Unknown' );
-
-                            if ( ! empty( $l->custom_juice_3 ) )       $meals[] = '<strong>J3:</strong> ' . esc_html( $l->custom_juice_3 ) . ' <em>(Custom)</em>';
-                            elseif ( $l->juice_3_id )                  $meals[] = '<strong>J3:</strong> ' . esc_html( $fmap[ $l->juice_3_id ] ?? 'Unknown' );
+                            if ($l->breakfast_id) $meals[] = "<strong>BF:</strong> " . esc_html($fmap[$l->breakfast_id] ?? 'Unknown');
+                            if ($l->lunch_id) $meals[] = "<strong>L:</strong> " . esc_html($fmap[$l->lunch_id] ?? 'Unknown');
+                            if ($l->dinner_id) $meals[] = "<strong>D:</strong> " . esc_html($fmap[$l->dinner_id] ?? 'Unknown');
+                            if ($l->snack_1_id) $meals[] = "<strong>S1:</strong> " . esc_html($fmap[$l->snack_1_id] ?? 'Unknown');
+                            if ($l->snack_2_id) $meals[] = "<strong>S2:</strong> " . esc_html($fmap[$l->snack_2_id] ?? 'Unknown');
+                            if ($l->juice_1_id) $meals[] = "<strong>J1:</strong> " . esc_html($fmap[$l->juice_1_id] ?? 'Unknown');
+                            if ($l->juice_2_id) $meals[] = "<strong>J2:</strong> " . esc_html($fmap[$l->juice_2_id] ?? 'Unknown');
+                            if ($l->juice_3_id) $meals[] = "<strong>J3:</strong> " . esc_html($fmap[$l->juice_3_id] ?? 'Unknown');
                         }
 
-                        $del_res        = ! empty( $l->delivery_result ) ? $l->delivery_result : 'Pending';
-                        $is_canc_or_ret = in_array( $del_res, array( 'Cancelled', 'Returned' ), true );
-                        $attrib         = cmp_accounts_format_log_attribution( $l );
+                        $del_color = '#64748b'; // pending
+                        if ($l->delivery_result === 'Successful') $del_color = '#379237';
+                        if ($l->delivery_result === 'Cancelled') $del_color = '#ef4444';
+                        if ($l->delivery_result === 'Returned') $del_color = '#f59e0b';
 
-                        $del_color = '#64748b';
-                        if ( $del_res === 'Successful' ) $del_color = '#379237';
-                        if ( $del_res === 'Cancelled' )  $del_color = '#ef4444';
-                        if ( $del_res === 'Returned' )   $del_color = '#f59e0b';
-
-                        $delivery_date_str = ! empty( $l->computed_delivery_date ) ? $l->computed_delivery_date : $l->target_date;
+                        $delivery_date_str = !empty($l->computed_delivery_date) ? $l->computed_delivery_date : $l->target_date;
                     ?>
-                    <tr style="<?php echo $is_carryover_log ? 'border-left: 4px solid #0284c7;' : ''; ?>">
+                    <tr>
+                        <td><strong><?php echo $day_counter++; ?></strong></td>
                         <td>
-                            <strong><?php echo $day_counter++; ?></strong>
-                            <?php if ( $is_carryover_log ) : ?>
-                                <br><span style="background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; padding:1px 6px; border-radius:999px; font-size:0.72em; font-weight:800; white-space:nowrap;">Skipped Meal</span>
-                            <?php endif; ?>
+                            <strong style="color:#1B5E20;"><?php echo date('d M Y', strtotime($delivery_date_str)); ?></strong><br>
+                            <span style="font-size:0.8em; color:#64748b;">(<?php echo esc_html($l->timing_label ?? $timing_label); ?>)</span>
                         </td>
-                        <td>
-                            <strong style="color:#1B5E20;"><?php echo date( 'd M Y', strtotime( $delivery_date_str ) ); ?></strong><br>
-                            <span style="font-size:0.8em; color:#64748b;">(<?php echo esc_html( $l->timing_label ?? $timing_label ); ?>)</span>
-                        </td>
-                        <td><?php echo date( 'd M Y', strtotime( $l->target_date ) ); ?></td>
+                        <td><?php echo date('d M Y', strtotime($l->target_date)); ?></td>
                         <td style="line-height:1.5;">
-                            <?php echo empty( $meals ) ? '<em style="color:#94a3b8;">No meals selected</em>' : implode( '<br>', $meals ); ?>
+                            <?php echo empty($meals) ? '<em style="color:#94a3b8;">No meals selected</em>' : implode('<br>', $meals); ?>
                         </td>
                         <td style="text-align:center;">
-                            <strong style="color:<?php echo esc_attr( $del_color ); ?>;"><?php echo esc_html( $del_res ); ?></strong>
-                            <?php if ( ! empty( $attrib['header'] ) ) : ?>
-                                <!-- Option 2B: Compact Two-Line Attribution Status Block -->
-                                <div style="margin-top:4px; font-size:0.78em; line-height:1.3;">
-                                    <strong style="color:#9f1239; display:block;"><?php echo esc_html( $attrib['header'] ); ?></strong>
-                                    <span style="color:#64748b; font-weight:600;"><?php echo esc_html( $attrib['byline'] ); ?></span>
-                                </div>
-                            <?php endif; ?>
+                            <strong style="color:<?php echo $del_color; ?>;"><?php echo esc_html($l->delivery_result); ?></strong>
                         </td>
                         <td style="text-align:center;">
-                            <?php if ( $is_canc_or_ret ) : ?>
-                                <!-- Option 4A: Clean Status Pill for Cancelled / Returned Days -->
-                                <span style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:3px 9px; border-radius:999px; font-size:0.78em; font-weight:800; display:inline-block; white-space:nowrap;">No POS Required</span>
-                            <?php elseif ( $l->pos_updated ) : ?>
-                                <span style="background:#dcfce7; color:#166534; border:1px solid #bbf7d0; padding:3px 10px; border-radius:999px; font-size:0.8em; font-weight:800; display:inline-block;">Yes &#10003;</span>
-                            <?php else : ?>
-                                <span style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; padding:3px 10px; border-radius:999px; font-size:0.8em; font-weight:800; display:inline-block;">Pending</span>
-                            <?php endif; ?>
+                            <?php echo $l->pos_updated ? '<span style="color:#379237; font-weight:bold;">Yes</span>' : '<span style="color:#ef4444; font-weight:bold;">No</span>'; ?>
                         </td>
                     </tr>
                     <?php endforeach; endif; ?>
@@ -1543,39 +1177,8 @@ function cmp_render_accounts_sub_view( $sub_id ) {
 function cmp_render_acc_bag_script() {
     ?>
     <script>
-    const accAjaxUrl = '<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>';
-    const accNonce   = '<?php echo esc_js( wp_create_nonce( "cmp_acc_nonce" ) ); ?>';
-
-    function accShowNotice(message, type) {
-        document.querySelectorAll('.acc-toast-notice').forEach(el => el.remove());
-        const toast = document.createElement('div');
-        toast.className = 'acc-toast-notice';
-        const isSuccess = (type === 'success');
-        Object.assign(toast.style, {
-            position: 'fixed',
-            top: '22px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: isSuccess ? '#1B5E20' : '#dc2626',
-            color: '#ffffff',
-            border: '1.5px solid ' + (isSuccess ? '#68B946' : '#fca5a5'),
-            borderRadius: '10px',
-            padding: '11px 20px',
-            fontSize: '0.88rem',
-            fontWeight: '800',
-            boxShadow: '0 10px 25px rgba(15, 23, 42, 0.25)',
-            zIndex: '100099',
-            maxWidth: '92vw',
-            textAlign: 'center'
-        });
-        toast.textContent = message;
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.style.transition = 'opacity 0.25s ease';
-            toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 260);
-        }, 3500);
-    }
+    const accAjaxUrl = '<?php echo admin_url("admin-ajax.php"); ?>';
+    const accNonce   = '<?php echo wp_create_nonce("cmp_acc_nonce"); ?>';
 
     document.addEventListener("DOMContentLoaded", function() {
         document.querySelectorAll('.deposit-status-pill').forEach(pill => {
@@ -1629,13 +1232,13 @@ function cmp_render_acc_bag_script() {
                             otherPill.style.color = pill.style.color;
                             otherPill.style.borderColor = pill.style.borderColor;
                         });
-                        accShowNotice('Deposit wallet status updated and logged.', 'success');
+
                     } else {
-                        accShowNotice('Error updating deposit status.', 'error');
+                        alert('Error updating status.');
                         pill.innerHTML = 'Error &#9662;';
                     }
                 }).catch(() => {
-                    accShowNotice('Connection error.', 'error');
+                    alert('Connection error.');
                 }).finally(() => {
                     this.disabled = false;
                 });
