@@ -3,7 +3,13 @@
  * Customer Portal - Frontend Styles (CSS) & Interactive Scripts (JS)
  * Part 2 of the 3-file Customer Portal modular architecture.
  *
- * Phase 3 & Same-Day Prep (Option PREP-C) Upgrades:
+ * Upgrades Included:
+ *  - Allow Meal Skipping & Automatic Carryover (Redemption) Days:
+ *      * Thin visual divider line separating regular plan days from Carryover / Redemption Days
+ *      * "Skipped Meal" badge with hover & mobile tap "?" Help Tooltip showing source day/date & allocated meals/snacks
+ *      * Row-level dynamic quota locking (Standard Menu shows all 3 Breakfast/Lunch/Dinner options and locks remaining slots once the carryover quota is selected)
+ *      * Enforces mandatory snack selection when selecting full main meal quota or redeeming final carryover meal
+ *      * Staff-only "Allow Meal Skipping" checkbox state sync in Account Details edit drawer
  *  - Option PREP-C: Submits staff-only `prep_timing` in `.save-logistics-btn` and live-updates `#prep-schedule-val-{sub_id}`
  *  - Option 2B: Staff-Only Micro-Footer Audit Strip
  *  - Option 3A: Admin Cancellation Reset
@@ -804,6 +810,179 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 box-shadow: 0 0 0 4px rgba(104, 185, 70, 0.22), 0 10px 25px rgba(27, 94, 32, 0.10) !important;
             }
 
+            /* =========================================================
+               CARRYOVER / REDEMPTION DAYS DIVIDER LINE, "SKIPPED MEAL ?"
+               TOOLTIP & ALLOCATION BADGES
+               ========================================================= */
+            .cmp-table tr.cmp-carryover-divider-row {
+                display: block !important;
+                width: 100% !important;
+                margin: 22px 0 16px 0 !important;
+                padding: 0 !important;
+                background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+            }
+            .cmp-table td.cmp-carryover-divider-cell {
+                display: block !important;
+                width: 100% !important;
+                padding: 0 !important;
+                border: none !important;
+            }
+            .cmp-carryover-divider-line {
+                position: relative;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                text-align: center;
+            }
+            .cmp-carryover-divider-line::before {
+                content: '';
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 50%;
+                border-top: 1.5px solid #cbd5e1;
+                z-index: 1;
+            }
+            .cmp-carryover-divider-badge {
+                position: relative;
+                z-index: 2;
+                background: #f8fafc;
+                color: #475569;
+                border: 1px solid #cbd5e1;
+                border-radius: 999px;
+                padding: 4px 14px;
+                font-size: 0.74rem;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+            }
+
+            .cmp-table tr.cmp-day-row.is-carryover-row:not(.status-void):not(.is-unsaved) {
+                border-left: 5px solid #0284c7 !important;
+            }
+            .cmp-carryover-meta-wrap {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 5px;
+                margin-top: 4px;
+                width: 100%;
+            }
+            .cmp-skipped-meal-tag {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                background: #e0f2fe;
+                color: #0369a1;
+                border: 1px solid #7dd3fc;
+                border-radius: 999px;
+                padding: 1px 7px;
+                font-size: 0.68rem;
+                font-weight: 800;
+                line-height: 1.25;
+                white-space: nowrap;
+            }
+            .cmp-carryover-quota-pill {
+                display: inline-flex;
+                align-items: center;
+                background: #ffffff;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
+                border-radius: 999px;
+                padding: 1px 7px;
+                font-size: 0.66rem;
+                font-weight: 800;
+                line-height: 1.25;
+                white-space: nowrap;
+            }
+            .cmp-partial-day-pill {
+                display: inline-flex;
+                align-items: center;
+                background: #fef3c7;
+                color: #92400e;
+                border: 1px solid #fde68a;
+                border-radius: 999px;
+                padding: 1px 7px;
+                font-size: 0.66rem;
+                font-weight: 800;
+                line-height: 1.25;
+                white-space: nowrap;
+            }
+            .cmp-carryover-help-tip {
+                position: relative;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 15px;
+                height: 15px;
+                border-radius: 50%;
+                background: #0284c7;
+                color: #ffffff;
+                font-size: 10px;
+                font-weight: 900;
+                cursor: help;
+                flex-shrink: 0;
+                outline: none;
+            }
+            .cmp-carryover-tooltip-bubble {
+                visibility: hidden;
+                opacity: 0;
+                position: absolute;
+                bottom: calc(100% + 8px);
+                left: 50%;
+                transform: translateX(-50%) translateY(4px);
+                width: 245px;
+                background: #0f172a;
+                color: #ffffff;
+                font-size: 0.74rem;
+                font-weight: 600;
+                line-height: 1.4;
+                padding: 8px 11px;
+                border-radius: 8px;
+                box-shadow: 0 10px 25px rgba(15, 23, 42, 0.28);
+                z-index: 9999;
+                pointer-events: none;
+                transition: opacity 0.16s ease, transform 0.16s ease;
+                text-align: left;
+                white-space: normal;
+            }
+            .cmp-carryover-tooltip-bubble::after {
+                content: '';
+                position: absolute;
+                top: 100%;
+                left: 50%;
+                margin-left: -5px;
+                border-width: 5px;
+                border-style: solid;
+                border-color: #0f172a transparent transparent transparent;
+            }
+            .cmp-carryover-help-tip:hover .cmp-carryover-tooltip-bubble,
+            .cmp-carryover-help-tip:focus .cmp-carryover-tooltip-bubble,
+            .cmp-carryover-help-tip.is-tip-open .cmp-carryover-tooltip-bubble {
+                visibility: visible;
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+
+            .cmp-unallocated-slot-placeholder {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 48px;
+                padding: 8px 12px;
+                background: #f8fafc;
+                border: 1.5px dashed #cbd5e1;
+                border-radius: 10px;
+                color: #94a3b8;
+                font-size: 0.8rem;
+                font-weight: 700;
+                text-align: center;
+            }
+
             /* OPTION 2B: Full-Width Micro-Footer Strip on the Row (Staff Only) */
             .cmp-table td.cmp-audit-footer-cell {
                 display: none !important;
@@ -1221,24 +1400,30 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     grid-row: 1 !important;
                     align-self: stretch !important;
                     display: flex !important;
-                    align-items: center !important;
-                    justify-content: space-between !important;
+                    flex-direction: column !important;
+                    align-items: flex-start !important;
+                    justify-content: center !important;
                     background: #EEF7E3 !important;
                     color: #1B5E20 !important;
                     border: 1.5px solid #DCECC9 !important;
                     border-radius: 12px !important;
-                    font-size: 1.08rem !important;
+                    font-size: 1.04rem !important;
                     font-weight: 800 !important;
-                    padding: 10px 14px !important;
+                    padding: 9px 28px 9px 12px !important;
                     cursor: pointer !important;
                     user-select: none;
                     transition: filter 0.15s ease;
+                    position: relative !important;
                 }
                 .cmp-table td.cmp-cell-day:hover { filter: brightness(0.97); }
                 .cmp-table td.cmp-cell-day::after {
                     content: '\25B2';
                     font-size: 0.72rem;
                     opacity: 0.7;
+                    position: absolute;
+                    right: 11px;
+                    top: 50%;
+                    transform: translateY(-50%);
                 }
                 .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-day::after {
                     content: '\25BC';
@@ -1610,7 +1795,24 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-table tr.cmp-day-row.is-open td.cmp-cell-chef { grid-column: 8 / span 5 !important; }
                 .cmp-table tr.cmp-day-row.is-open td.cmp-cell-meal,
                 .cmp-table tr.cmp-day-row.is-open td.cmp-cell-juice { grid-column: 1 / span 12 !important; }
+                .cmp-table tr.cmp-day-row.is-open td.cmp-cell-meal.cmp-slot-outside-allocation {
+                    display: none !important;
+                }
                 .cmp-table tr.cmp-day-row.is-open td.cmp-cell-snack { grid-column: 1 / span 12 !important; }
+                .cmp-unallocated-slot-placeholder {
+                    min-height: 35px !important;
+                    padding: 5px 10px !important;
+                    font-size: 0.75rem !important;
+                }
+                .cmp-carryover-tooltip-bubble {
+                    left: 0 !important;
+                    transform: translateX(0) translateY(0) !important;
+                    width: 225px !important;
+                }
+                .cmp-carryover-tooltip-bubble::after {
+                    left: 14px !important;
+                    margin-left: 0 !important;
+                }
 
                 .cmp-snacks-grid,
                 .cmp-snacks-grid.single-snack {
@@ -2236,6 +2438,32 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
                                ('ontouchstart' in window && $(window).width() <= 1024);
 
+            var iconResetSvg  = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+            var iconCancelSvg = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+
+            function ensureRowSecondaryActionButtons(rowElement, subId, logId) {
+                if (!rowElement || !rowElement.length || !logId || parseInt(logId) <= 0) return;
+                var $actionBox = rowElement.find('.cmp-action-box');
+                if (!$actionBox.length) return;
+
+                var $sec = $actionBox.find('.cmp-secondary-actions');
+                if ($sec.length) {
+                    $sec.find('.cmp-clear-row, .cmp-cancel-day-row')
+                        .attr('data-log-id', logId)
+                        .data('log-id', logId)
+                        .attr('data-sub-id', subId)
+                        .data('sub-id', subId);
+                } else {
+                    var secHtml = '<div class="cmp-secondary-actions">' +
+                        '<button type="button" class="cmp-clear-row" data-sub-id="' + subId + '" data-log-id="' + logId + '" title="Reset Selection">' + iconResetSvg + '</button>';
+                    if (!isChefOverride) {
+                        secHtml += '<button type="button" class="cmp-cancel-day-row" data-sub-id="' + subId + '" data-log-id="' + logId + '" title="Cancel Day">' + iconCancelSvg + '</button>';
+                    }
+                    secHtml += '</div>';
+                    $actionBox.append(secHtml);
+                }
+            }
+
             var shortDays   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
             var shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
             function formatShortMobileDate(dateStr) {
@@ -2302,17 +2530,19 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     mealsMap[slot] = ($(this).val() || '').toString().trim();
                 });
 
-                var saveBtn = rowElement.find('.cmp-save-row');
-                var logId   = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
+                var saveBtn  = rowElement.find('.cmp-save-row');
+                var logId    = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
+                var savedDt  = (rowElement.find('.cmp-date-picker').val() || '').toString().trim();
+                var hasSaved = (logId > 0 && savedDt !== '' && savedDt !== '0000-00-00');
                 var currentBadgeHtml = rowElement.find('.cmp-desktop-status-holder').html();
 
                 rowElement.data('cmp-snapshot', {
-                    date: (rowElement.find('.cmp-date-picker').val() || '').toString().trim(),
+                    date: savedDt,
                     chefsChoice: rowElement.find('.cmp-chefs-choice').is(':checked'),
                     meals: mealsMap,
                     logId: logId,
-                    btnText: logId > 0 ? 'Update' : 'Save',
-                    btnBg: logId > 0 ? '#1B5E20' : '#379237',
+                    btnText: hasSaved ? 'Update' : 'Save',
+                    btnBg: hasSaved ? '#1B5E20' : '#379237',
                     statusBadgeHtml: currentBadgeHtml
                 });
             }
@@ -2543,11 +2773,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             function applyValidDateToRow(rowInput, selectedDate) {
                 var container = rowInput.closest('.cmp-portal-container');
                 var rowNumber = parseInt(rowInput.data('row'));
-                var totalDays = parseInt(container.data('total-days'));
+                var totalDays = Math.max(
+                    parseInt(container.data('total-days')) || 0,
+                    container.find('tr.cmp-day-row').length
+                );
 
                 if (selectedDate) {
                     var nextDateString = getNextValidDeliveryDate(selectedDate);
-                    for (var i = rowNumber + 1; i <= (totalDays + 10); i++) {
+                    for (var i = rowNumber + 1; i <= (totalDays + 15); i++) {
                         var targetInput = container.find('.cmp-date-picker[data-row="' + i + '"]');
                         if (targetInput.length) {
                             if (!canBypassDateLock && nextDateString) {
@@ -2579,6 +2812,9 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var mobileDateBadge = rowElement.find('.cmp-mobile-date-badge');
                 var mobilePreviewEl = rowElement.find('.cmp-mobile-meal-preview');
                 var dateVal         = (rowElement.find('.cmp-date-picker').val() || '').toString().trim();
+                var isCarryoverRow  = parseInt(rowElement.attr('data-is-carryover')) === 1;
+                var rowMealsQuota   = parseInt(rowElement.attr('data-row-meals-quota')) || 0;
+                var rowSnacksQuota  = parseInt(rowElement.attr('data-row-snacks-quota')) || 0;
 
                 var shortDateStr = formatShortMobileDate(dateVal);
                 if (mobileDateBadge.length) {
@@ -2628,16 +2864,21 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     rowElement.removeClass('is-chefs-choice-compact');
                 }
 
+                var carryoverHint = '';
+                if (isCarryoverRow && rowMealsQuota > 0) {
+                    carryoverHint = ' <span style="color:#0369a1; font-weight:800;">(Redeem ' + rowMealsQuota + ' Meal' + (rowMealsQuota > 1 ? 's' : '') + (rowSnacksQuota > 0 ? ' &amp; ' + rowSnacksQuota + ' Snack' + (rowSnacksQuota > 1 ? 's' : '') : '') + ')</span>';
+                }
+
                 if (summaryTextEl.length) {
                     var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
                     if (isChefsChoice && !hasValues) {
-                        summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong> &mdash; Click to expand');
+                        summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong>' + carryoverHint + ' &mdash; Click to expand');
                     } else if (pickedNames.length > 0) {
-                        summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  '));
+                        summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  ') + carryoverHint);
                     } else if (logId > 0 && !isUnsaved) {
-                        summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong> &mdash; Click to expand and select meals');
+                        summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong>' + carryoverHint + ' &mdash; Click to expand and select meals');
                     } else {
-                        summaryTextEl.html(unsavedPrefix + 'Pending selection — Click to expand and choose meals');
+                        summaryTextEl.html(unsavedPrefix + 'Pending selection' + carryoverHint + ' &mdash; Click to expand and choose meals');
                     }
                 }
 
@@ -2654,6 +2895,28 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     }
                 }
             }
+
+            // Interactive "?" Lineage Tooltip on Carryover Days (Hover on Desktop + Tap on Tablet/Mobile)
+            var carryoverTipTimer = null;
+            $(document).on('click', '.cmp-carryover-help-tip', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var $tip = $(this);
+                $('.cmp-carryover-help-tip').not($tip).removeClass('is-tip-open');
+                var willOpen = !$tip.hasClass('is-tip-open');
+                $tip.toggleClass('is-tip-open', willOpen);
+                if (carryoverTipTimer) clearTimeout(carryoverTipTimer);
+                if (willOpen) {
+                    carryoverTipTimer = setTimeout(function() {
+                        $tip.removeClass('is-tip-open');
+                    }, 4200);
+                }
+            });
+            $(document).on('click', function(e) {
+                if (!$(e.target).closest('.cmp-carryover-help-tip').length) {
+                    $('.cmp-carryover-help-tip').removeClass('is-tip-open');
+                }
+            });
 
             // =========================================================
             // NON-BLOCKING TOAST & INLINE CONFIRMATION MODAL HELPERS
@@ -2786,7 +3049,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             // FOH / STAFF INLINE LOGISTICS EDIT + HYBRID CUSTOM TIMING
             // & OPTION PREP-C KITCHEN PREP SCHEDULE OVERRIDE
             // =========================================================
-            $('.toggle-logistics-edit').on('click', function(e) {
+            $(document).on('click', '.toggle-logistics-edit', function(e) {
                 e.preventDefault();
                 var subId = $(this).data('sub-id');
                 var viewDiv = $('#logistics-view-' + subId);
@@ -2870,7 +3133,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.save-logistics-btn').on('click', function(e) {
+            $(document).on('click', '.save-logistics-btn', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var subId = btn.data('sub-id');
@@ -2995,53 +3258,61 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         }
 
                         btn.text('✓ Saved').css('background', '#1B5E20');
-                        cmpShowNotice('Logistics & prep schedule saved specifically for this meal plan.', 'success');
+                        cmpShowNotice('Logistics & allergy preferences saved for this plan.', 'success');
 
                         setTimeout(function() {
                             $('#logistics-edit-' + subId).hide();
                             $('#logistics-view-' + subId).show();
                             $('.toggle-logistics-edit[data-sub-id="' + subId + '"]').text('Edit');
                             btn.text(origText).css('background', '#379237').prop('disabled', false);
-                        }, 900);
+                        }, 1000);
                     } else {
                         cmpShowNotice('Error: ' + res.data, 'error');
                         btn.text(origText).prop('disabled', false);
                     }
+                }).fail(function() {
+                    cmpShowNotice('Connection error. Please try again.', 'error');
+                    btn.text(origText).prop('disabled', false);
                 });
             });
 
-            // ADMIN ACCOUNT DETAILS EDIT LOGIC
-            $('.toggle-account-edit').on('click', function(e) {
+            // STAFF ACCOUNT DETAILS & "ALLOW MEAL SKIPPING" EDIT LOGIC
+            $(document).on('click', '.toggle-account-edit', function(e) {
                 e.preventDefault();
-                var subId = $(this).data('sub-id');
+                var subId   = $(this).data('sub-id');
                 var viewDiv = $('#account-view-' + subId);
                 var editDiv = $('#account-edit-' + subId);
+                var $txtSpan = $(this).find('.toggle-account-edit-txt');
 
                 if (editDiv.is(':visible')) {
                     editDiv.hide();
                     viewDiv.show();
-                    $(this).text('Edit');
+                    if ($txtSpan.length) $txtSpan.text('Edit');
+                    else $(this).text('Edit');
                 } else {
                     viewDiv.hide();
                     editDiv.show();
-                    $(this).text('Cancel');
+                    if ($txtSpan.length) $txtSpan.text('Cancel');
+                    else $(this).text('Cancel');
                 }
             });
 
-            $('.save-account-btn').on('click', function(e) {
+            $(document).on('click', '.save-account-btn', function(e) {
                 e.preventDefault();
-                var btn = $(this);
-                var subId = btn.data('sub-id');
-                var userId = btn.data('user-id');
-                var orderId = btn.data('order-id');
-                var fName = $('#edit-fname-' + subId).val();
-                var lName = $('#edit-lname-' + subId).val();
-                var recipient = $('#edit-recipient-' + subId).val();
-                var addr = $('#edit-address-' + subId).val();
-                var origText = btn.text();
+                var btn       = $(this);
+                var subId     = btn.data('sub-id');
+                var userId    = btn.data('user-id');
+                var orderId   = btn.data('order-id');
+                var fName     = ($('#edit-fname-' + subId).val() || '').trim();
+                var lName     = ($('#edit-lname-' + subId).val() || '').trim();
+                var recipient = ($('#edit-recipient-' + subId).val() || '').trim();
+                var addr      = ($('#edit-address-' + subId).val() || '').trim();
+                var $skipChk  = $('#edit-allow-skip-' + subId);
+                var allowSkip = ($skipChk.length && $skipChk.is(':checked')) ? 1 : 0;
+                var origText  = btn.text();
 
-                if (!fName || !addr) {
-                    cmpShowNotice('First Name and Address are required.', 'error');
+                if (!fName) {
+                    cmpShowNotice('First Name is required.', 'error');
                     return;
                 }
 
@@ -3058,6 +3329,9 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     recipient_name: recipient,
                     address: addr
                 };
+                if ($skipChk.length) {
+                    data.allow_meal_skip = allowSkip;
+                }
 
                 $.post(ajaxUrl, data, function(res) {
                     if (res.success) {
@@ -3075,24 +3349,47 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                             $('#tab-title-' + subId).text(res.data.plan_name);
                         }
 
+                        if (res.data.allow_meal_skip !== undefined) {
+                            var isSkipEnabled = parseInt(res.data.allow_meal_skip) === 1;
+                            var $tabContainer = $('#plan-tab-' + subId);
+                            $tabContainer.attr('data-allow-skip', isSkipEnabled ? '1' : '0').data('allow-skip', isSkipEnabled ? 1 : 0);
+
+                            var $skipPill = $('#skip-status-pill-' + subId);
+                            if ($skipPill.length) {
+                                if (isSkipEnabled) {
+                                    $skipPill.css('display', 'inline-flex');
+                                } else {
+                                    $skipPill.hide();
+                                }
+                            }
+                        }
+
                         btn.text('✓ Saved').css('background', '#1B5E20');
-                        cmpShowNotice('Account details saved.', 'success');
+                        cmpShowNotice('Account details & meal skipping settings saved.', 'success');
 
                         setTimeout(function() {
                             $('#account-edit-' + subId).hide();
                             $('#account-view-' + subId).show();
-                            $('.toggle-account-edit[data-sub-id="' + subId + '"]').text('Edit');
+                            var $editToggle = $('.toggle-account-edit[data-sub-id="' + subId + '"]');
+                            if ($editToggle.find('.toggle-account-edit-txt').length) {
+                                $editToggle.find('.toggle-account-edit-txt').text('Edit');
+                            } else {
+                                $editToggle.text('Edit');
+                            }
                             btn.text(origText).css('background', '#379237').prop('disabled', false);
                         }, 1000);
                     } else {
                         cmpShowNotice('Error: ' + res.data, 'error');
                         btn.text(origText).prop('disabled', false);
                     }
+                }).fail(function() {
+                    cmpShowNotice('Connection error. Please try again.', 'error');
+                    btn.text(origText).prop('disabled', false);
                 });
             });
 
             // PLAN DAYS CONTROLS: ADD / REMOVE DAYS LOGIC
-            $('.admin-adjust-days-btn').on('click', function(e) {
+            $(document).on('click', '.admin-adjust-days-btn', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var subId = btn.data('sub-id');
@@ -3249,7 +3546,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }, 150);
             });
 
-            $('.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary').on('click', function() {
+            $(document).on('click', '.cmp-day-row td.cmp-cell-day, .cmp-day-row td.cmp-collapsed-summary', function(e) {
+                if ($(e.target).closest('.cmp-carryover-help-tip').length) {
+                    return;
+                }
                 var $row = $(this).closest('tr.cmp-day-row');
                 if ($row.hasClass('status-void')) {
                     return;
@@ -3273,12 +3573,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.cmp-collapse-all-btn').on('click', function() {
+            $(document).on('click', '.cmp-collapse-all-btn', function(e) {
+                e.preventDefault();
                 var $container = $(this).closest('.cmp-portal-container');
                 $container.find('tr.cmp-day-row').addClass('is-collapsed-desktop').removeClass('is-open');
             });
 
-            $('.cmp-expand-all-btn').on('click', function() {
+            $(document).on('click', '.cmp-expand-all-btn', function(e) {
+                e.preventDefault();
                 var $container = $(this).closest('.cmp-portal-container');
                 $container.find('tr.cmp-day-row:not(.status-void)').removeClass('is-collapsed-desktop');
             });
@@ -3352,9 +3654,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             }
 
             function enforceMealQuota(rowElement) {
-                var container = rowElement.closest('.cmp-portal-container');
-                var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
-                var isJuice = container.data('is-juice') === 1;
+                var container    = rowElement.closest('.cmp-portal-container');
+                var rowQuotaAttr = parseInt(rowElement.attr('data-row-meals-quota')) || 0;
+                var allowedMeals = rowQuotaAttr > 0 ? rowQuotaAttr : (parseInt(container.data('allowed-meals')) || 0);
+                var isJuice      = container.data('is-juice') === 1;
 
                 if (isJuice || allowedMeals <= 0) return;
 
@@ -3362,18 +3665,19 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 if (isChefsChoice && !isChefOverride) return;
 
                 var mainSelects = rowElement.find('.cmp-main-meal');
+                if (!mainSelects.length) return;
                 if (mainSelects.first().is(':disabled') && !mainSelects.first().hasClass('quota-locked') && !canBypassDateLock) {
                     return;
                 }
 
                 var selectedCount = 0;
                 mainSelects.each(function() {
-                    if ($(this).val().trim() !== "") selectedCount++;
+                    if (($(this).val() || '').toString().trim() !== "") selectedCount++;
                 });
 
                 if (selectedCount >= allowedMeals) {
                     mainSelects.each(function() {
-                        if ($(this).val().trim() === "") {
+                        if (($(this).val() || '').toString().trim() === "") {
                             $(this).prop('disabled', true).addClass('quota-locked');
                         } else {
                             $(this).prop('disabled', false).removeClass('quota-locked');
@@ -3388,16 +3692,22 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
             $('.cmp-day-row').each(function() {
                 var $row = $(this);
-                var hasFood = populateDynamicDropdowns($row);
-                if (hasFood) {
-                    calculateMacros($row);
-                    enforceMealQuota($row);
-                } else {
-                    syncRowCompactAndSummary($row);
+                try {
+                    var hasFood = populateDynamicDropdowns($row);
+                    if (hasFood) {
+                        calculateMacros($row);
+                        enforceMealQuota($row);
+                    } else {
+                        syncRowCompactAndSummary($row);
+                    }
+                    $row.removeClass('is-unsaved');
+                    captureRowSnapshot($row);
+                } catch (initErr) {
+                    console.error('CMP Row Init Error:', initErr);
                 }
-                captureRowSnapshot($row);
             });
             updatePendingCounts();
+            updateGlobalUnsavedState();
 
             $(document).on('change input', '.cmp-meal-select, .cmp-meal-custom, select[class^="cmp-juice-"]', function() {
                 var rowElement = $(this).closest('tr');
@@ -3430,7 +3740,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 });
             });
 
-            $('.cmp-chefs-choice').on('change', function() {
+            $(document).on('change', '.cmp-chefs-choice', function() {
                 var rowElement = $(this).closest('tr');
                 var inputs = rowElement.find('select, input.cmp-meal-custom');
                 if ($(this).is(':checked')) {
@@ -3514,11 +3824,11 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 applyValidDateToRow(rowInput, selectedDate);
             }
 
-            $('.cmp-date-picker').on('change', function() {
+            $(document).on('change', '.cmp-date-picker', function() {
                 handleDatePickerValidation($(this), false);
             });
 
-            $('.cmp-date-picker').on('blur', function() {
+            $(document).on('blur', '.cmp-date-picker', function() {
                 handleDatePickerValidation($(this), true);
             });
 
@@ -3618,21 +3928,26 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
             });
 
-            $('.cmp-save-row').on('click', function(e) {
+            $(document).on('click', '.cmp-save-row', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var shouldKeyboardAdvance = (btn.data('kbd-advance') == 1);
                 btn.data('kbd-advance', 0);
 
-                var rowElement = btn.closest('tr');
-                var container = btn.closest('.cmp-portal-container');
+                var rowElement      = btn.closest('tr');
+                var container       = btn.closest('.cmp-portal-container');
 
-                var dateVal = rowElement.find('.cmp-date-picker').val();
-                var isChefsChoice = rowElement.find('.cmp-chefs-choice').is(':checked') ? 1 : 0;
-                var allowedMeals = parseInt(container.data('allowed-meals')) || 0;
-                var snackQuota = parseInt(container.data('snack-quota')) || 0;
-                var isJuice = container.data('is-juice') === 1;
-                var isCustom = rowElement.data('allow-custom') == 1;
+                var dateVal         = rowElement.find('.cmp-date-picker').val();
+                var isChefsChoice   = rowElement.find('.cmp-chefs-choice').is(':checked') ? 1 : 0;
+                var baseMeals       = parseInt(container.data('allowed-meals')) || 0;
+                var baseSnacks      = parseInt(container.data('snack-quota')) || 0;
+                var isCarryoverRow  = parseInt(rowElement.attr('data-is-carryover')) === 1 ? 1 : 0;
+                var carryoverFromId = parseInt(rowElement.attr('data-carryover-from')) || 0;
+                var rowMealsQuota   = parseInt(rowElement.attr('data-row-meals-quota')) || baseMeals;
+                var rowSnacksQuota  = (rowElement.attr('data-row-snacks-quota') !== undefined) ? parseInt(rowElement.attr('data-row-snacks-quota')) : baseSnacks;
+                var allowSkipSub    = parseInt(container.attr('data-allow-skip')) === 1;
+                var isJuice         = container.data('is-juice') === 1;
+                var isCustom        = rowElement.data('allow-custom') == 1;
 
                 if(!dateVal) {
                     rowElement.removeClass('is-collapsed-desktop');
@@ -3647,6 +3962,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                 var isMenuPending = rowElement.find('.boundary-overlay').length > 0;
 
+                // Check how many main meals were previously saved in this row's snapshot
+                var snap = rowElement.data('cmp-snapshot');
+                var snapMainCount = 0;
+                if (snap && snap.meals) {
+                    ['breakfast', 'lunch', 'dinner'].forEach(function(slotKey) {
+                        if (snap.meals[slotKey] && snap.meals[slotKey] !== '') snapMainCount++;
+                    });
+                }
+
                 if (!canBypassQuota && !isMenuPending && !isChefsChoice && !isCustom) {
                     if (isJuice) {
                         var juiceSelects = rowElement.find('select[class^="cmp-juice-"]');
@@ -3660,24 +3984,47 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     } else {
                         var selectedMainCount = 0;
                         rowElement.find('.cmp-main-meal').each(function() {
-                            if ($(this).val() !== "") selectedMainCount++;
+                            if (($(this).val() || '') !== "") selectedMainCount++;
                         });
-
-                        if (selectedMainCount !== allowedMeals) {
-                            rowElement.removeClass('is-collapsed-desktop');
-                            cmpShowNotice('Quota Requirement: Please select exactly ' + allowedMeals + ' main meal(s) as allocated in this subscription before saving.', 'error');
-                            return;
-                        }
 
                         var selectedSnackCount = 0;
                         rowElement.find('select[data-cat="Snacks"]').each(function() {
-                            if ($(this).val() !== "") selectedSnackCount++;
+                            if (($(this).val() || '') !== "") selectedSnackCount++;
                         });
 
-                        if (selectedSnackCount !== snackQuota) {
+                        if (selectedMainCount < 1) {
                             rowElement.removeClass('is-collapsed-desktop');
-                            cmpShowNotice('Quota Requirement: Please select exactly ' + snackQuota + ' snack(s) as allocated in this subscription before saving.', 'error');
+                            cmpShowNotice('Quota Requirement: Please select at least 1 main meal before saving.', 'error');
                             return;
+                        }
+                        if (selectedMainCount > rowMealsQuota) {
+                            rowElement.removeClass('is-collapsed-desktop');
+                            cmpShowNotice('Quota Requirement: You can select at most ' + rowMealsQuota + ' main meal(s) on this day.', 'error');
+                            return;
+                        }
+                        if (selectedSnackCount > rowSnacksQuota) {
+                            rowElement.removeClass('is-collapsed-desktop');
+                            cmpShowNotice('Quota Requirement: You can select at most ' + rowSnacksQuota + ' snack(s) on this day.', 'error');
+                            return;
+                        }
+
+                        if (selectedMainCount < rowMealsQuota) {
+                            var wasAlreadySkippedSameCount = (snap && snap.logId > 0 && snapMainCount === selectedMainCount);
+                            if (!allowSkipSub && !wasAlreadySkippedSameCount) {
+                                rowElement.removeClass('is-collapsed-desktop');
+                                cmpShowNotice('Quota Requirement: Please select exactly ' + rowMealsQuota + ' main meal(s) and ' + rowSnacksQuota + ' snack(s) as allocated in this subscription.', 'error');
+                                return;
+                            }
+                        } else {
+                            // Full main meal allocation selected -> must select all allocated snacks!
+                            if (selectedSnackCount !== rowSnacksQuota) {
+                                rowElement.removeClass('is-collapsed-desktop');
+                                var snackMsg = isCarryoverRow
+                                    ? 'Redemption Quota Requirement: Please select all ' + rowSnacksQuota + ' carried-forward snack(s) along with your meal(s) to save this Redemption Day.'
+                                    : 'Quota Requirement: When selecting your full meal quota (' + rowMealsQuota + ' meal(s)), you must also select all ' + rowSnacksQuota + ' snack(s) before saving.';
+                                cmpShowNotice(snackMsg, 'error');
+                                return;
+                            }
                         }
                     }
                 } else if (!canBypassQuota && !isChefsChoice && isCustom) {
@@ -3693,22 +4040,46 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     } else {
                         var selectedMainCount = 0;
                         rowElement.find('.cmp-main-meal').each(function() {
-                            if ($(this).val().trim() !== "") selectedMainCount++;
+                            if (($(this).val() || '').trim() !== "") selectedMainCount++;
                         });
-                        if (selectedMainCount !== allowedMeals) {
-                            rowElement.removeClass('is-collapsed-desktop');
-                            cmpShowNotice('Quota Requirement: Please provide exactly ' + allowedMeals + ' main meal(s) as allocated in this subscription before saving.', 'error');
-                            return;
-                        }
 
                         var selectedSnackCount = 0;
                         rowElement.find('.cmp-snack-1, .cmp-snack-2').each(function() {
-                            if ($(this).val().trim() !== "") selectedSnackCount++;
+                            if (($(this).val() || '').trim() !== "") selectedSnackCount++;
                         });
-                        if (selectedSnackCount !== snackQuota) {
+
+                        if (selectedMainCount < 1) {
                             rowElement.removeClass('is-collapsed-desktop');
-                            cmpShowNotice('Quota Requirement: Please provide exactly ' + snackQuota + ' snack(s) as allocated in this subscription before saving.', 'error');
+                            cmpShowNotice('Quota Requirement: Please provide at least 1 main meal before saving.', 'error');
                             return;
+                        }
+                        if (selectedMainCount > rowMealsQuota) {
+                            rowElement.removeClass('is-collapsed-desktop');
+                            cmpShowNotice('Quota Requirement: You can provide at most ' + rowMealsQuota + ' main meal(s) on this day.', 'error');
+                            return;
+                        }
+                        if (selectedSnackCount > rowSnacksQuota) {
+                            rowElement.removeClass('is-collapsed-desktop');
+                            cmpShowNotice('Quota Requirement: You can provide at most ' + rowSnacksQuota + ' snack(s) on this day.', 'error');
+                            return;
+                        }
+
+                        if (selectedMainCount < rowMealsQuota) {
+                            var wasAlreadySkippedSameCount = (snap && snap.logId > 0 && snapMainCount === selectedMainCount);
+                            if (!allowSkipSub && !wasAlreadySkippedSameCount) {
+                                rowElement.removeClass('is-collapsed-desktop');
+                                cmpShowNotice('Quota Requirement: Please provide exactly ' + rowMealsQuota + ' main meal(s) and ' + rowSnacksQuota + ' snack(s) as allocated in this subscription.', 'error');
+                                return;
+                            }
+                        } else {
+                            if (selectedSnackCount !== rowSnacksQuota) {
+                                rowElement.removeClass('is-collapsed-desktop');
+                                var snackMsgCustom = isCarryoverRow
+                                    ? 'Redemption Quota Requirement: Please provide all ' + rowSnacksQuota + ' carried-forward snack(s) along with your meal(s) to save this Redemption Day.'
+                                    : 'Quota Requirement: When providing your full meal quota (' + rowMealsQuota + ' meal(s)), you must also provide all ' + rowSnacksQuota + ' snack(s) before saving.';
+                                cmpShowNotice(snackMsgCustom, 'error');
+                                return;
+                            }
                         }
                     }
                 } else if (isMenuPending && !isChefsChoice && !canBypassQuota && !isCustom) {
@@ -3726,7 +4097,11 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     sub_id: btn.data('sub-id'),
                     date: dateVal,
                     chefs_choice: isChefsChoice,
-                    is_override_mode: canBypassDateLock ? 1 : 0
+                    is_override_mode: canBypassDateLock ? 1 : 0,
+                    is_carryover: isCarryoverRow,
+                    carryover_from_log_id: carryoverFromId,
+                    alloc_meals: rowMealsQuota,
+                    alloc_snacks: rowSnacksQuota
                 };
 
                 if (isCustom) {
@@ -3751,9 +4126,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                 $.post(ajaxUrl, data, function(response) {
                     if(response.success) {
+                        var activeLogId = parseInt(btn.data('log-id')) || 0;
                         if(response.data && response.data.new_log_id) {
-                            btn.data('log-id', response.data.new_log_id);
+                            activeLogId = parseInt(response.data.new_log_id);
+                            btn.attr('data-log-id', activeLogId).data('log-id', activeLogId);
                         }
+
+                        // Ensure Reset & Cancel buttons are immediately present on this saved row
+                        ensureRowSecondaryActionButtons(rowElement, btn.data('sub-id'), activeLogId);
 
                         var hasSavedMeals = false;
                         rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"], input.cmp-meal-custom').each(function() {
@@ -3794,6 +4174,19 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         captureRowSnapshot(rowElement);
                         syncRowCompactAndSummary(rowElement);
                         updatePendingCounts(container);
+
+                        if (response.data && response.data.carryover_notice) {
+                            cmpShowNotice(response.data.carryover_notice, 'success');
+                        }
+
+                        if (response.data && parseInt(response.data.reload_required) === 1) {
+                            btn.text('✓ Saved — Updating Schedule...').css({'background':'#1B5E20'});
+                            isIntentionalReload = true;
+                            setTimeout(function() {
+                                location.reload();
+                            }, 950);
+                            return;
+                        }
 
                         if (!canBypassDateLock) {
                             var isTimeLocked = (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate));

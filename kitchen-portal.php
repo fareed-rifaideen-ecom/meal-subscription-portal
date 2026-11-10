@@ -1322,7 +1322,6 @@ function cmp_render_kitchen_portal() {
 
     $chef_disabled    = ( $is_admin || $is_chef ) ? '' : 'disabled';
     $foh_disabled     = ( $is_admin || $is_foh ) ? '' : 'disabled';
-    $can_override_prep = ( $is_admin || $is_foh ); // Strictly FOH, Menu Manager, and Admin
 
     $count_all_orders   = 0;
     $count_pending_prep = 0;
@@ -2172,18 +2171,6 @@ function cmp_render_kitchen_portal() {
                                     <span style="color: #475569;"><strong>Method:</strong> <?php echo esc_html( $c['method'] ); ?></span><br>
                                     <span style="color: #475569;"><strong>Receive By:</strong> <?php echo esc_html( $c['timing'] ); ?></span><br>
                                     <span style="color: #475569;"><strong>Time:</strong> <?php echo esc_html( $c['time_slot'] ); ?></span>
-
-                                    <?php if ( $can_override_prep ) : ?>
-                                    <!-- Staff-Only Prep Schedule Override (FOH, Menu Manager & Admin Only — Never visible to Customers) -->
-                                    <div class="kp-prep-override-wrap cmp-no-print">
-                                        <label style="font-size:0.74em; font-weight:800; color:#475569; text-transform:uppercase;">Prep:</label>
-                                        <select class="kp-prep-override-select" data-sub-id="<?php echo esc_attr( $c['sub_id'] ); ?>" title="FOH / Menu Manager / Admin Override: Change Kitchen Prep Schedule for this Plan">
-                                            <option value="auto" <?php selected( $prep_timing_mode, 'auto' ); ?>>Auto (4PM+ Rule)</option>
-                                            <option value="same_day" <?php selected( $prep_timing_mode, 'same_day' ); ?>>Same-Day Prep</option>
-                                            <option value="day_before" <?php selected( $prep_timing_mode, 'day_before' ); ?>>Day-Before Prep</option>
-                                        </select>
-                                    </div>
-                                    <?php endif; ?>
                                 </div>
                                 <div style="text-align: left;">
                                     <div class="kp-delivery-date-badge" style="background: <?php echo $is_paused_cust ? '#d97706' : ( $is_unscheduled ? '#64748b' : ( $is_cancelled ? '#e11d48' : '#379237' ) ); ?>;">
@@ -2495,32 +2482,6 @@ function cmp_render_kitchen_portal() {
 
         syncKitchenStickyOffsets();
         $(window).on('resize orientationchange scroll', syncKitchenStickyOffsets);
-
-        // Staff-Only Prep Schedule Override Handler (FOH, Menu Manager & Admin)
-        $('.kp-prep-override-select').on('change', function() {
-            var $sel       = $(this);
-            var subId      = $sel.data('sub-id');
-            var prepTiming = $sel.val();
-            $sel.prop('disabled', true);
-
-            $.post("<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>", {
-                action: 'cmp_update_prep_timing',
-                nonce: "<?php echo esc_js( wp_create_nonce( 'cmp_kitchen_nonce' ) ); ?>",
-                sub_id: subId,
-                prep_timing: prepTiming
-            }, function(res) {
-                if (res && res.success) {
-                    kpShowNotice('Kitchen Prep Schedule updated! Reloading list...', 'success');
-                    setTimeout(function() { location.reload(); }, 650);
-                } else {
-                    kpShowNotice((res && res.data) ? res.data : 'Error updating prep schedule.', 'error');
-                    $sel.prop('disabled', false);
-                }
-            }).fail(function() {
-                kpShowNotice('Network error while updating prep schedule.', 'error');
-                $sel.prop('disabled', false);
-            });
-        });
 
         function populateDynamicDropdowns(container) {
             var isCustom = container.data('allow-custom') == 1;

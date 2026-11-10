@@ -330,10 +330,13 @@ function cmp_ajax_foh_update_financials() {
         ) );
     }
 
-    wp_send_json_success( array( 'price' => $price, 'discount' => $discount ) );
+    wp_send_json_success( array(
+        'price'    => $price,
+        'discount' => $discount,
+    ) );
 }
 
-// 5. AJAX HANDLER: Update Account Details, Recipient, Plan Mode & Kitchen Prep Schedule
+// 5. AJAX HANDLER: Update Account Details, Recipient, Plan Mode, Kitchen Prep Schedule & Allow Meal Skipping
 add_action( 'wp_ajax_cmp_foh_update_account_details', 'cmp_ajax_foh_update_account_details' );
 function cmp_ajax_foh_update_account_details() {
     check_ajax_referer( 'cmp_foh_nonce', 'nonce' );
@@ -344,6 +347,9 @@ function cmp_ajax_foh_update_account_details() {
 
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
         cmp_ensure_subscription_logistics_columns();
+    }
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
     }
     cmp_ensure_prep_timing_column();
 
@@ -361,6 +367,10 @@ function cmp_ajax_foh_update_account_details() {
     $plan_mode    = sanitize_text_field( wp_unslash( $_POST['plan_mode'] ?? 'standard' ) );
     $is_flexible  = ( $plan_mode === 'flexible' ) ? 1 : 0;
     $allow_custom = ( $plan_mode === 'custom' ) ? 1 : 0;
+
+    // Staff-only Allow Meal Skipping toggle
+    $has_skip_payload = isset( $_POST['allow_meal_skip'] );
+    $allow_meal_skip  = ( ! empty( $_POST['allow_meal_skip'] ) && intval( $_POST['allow_meal_skip'] ) === 1 ) ? 1 : 0;
 
     // Option PREP-C: Staff-only Kitchen Prep Schedule override ('auto', 'same_day', 'day_before')
     $has_prep_payload = isset( $_POST['prep_timing'] );
@@ -424,6 +434,7 @@ function cmp_ajax_foh_update_account_details() {
             if ( ! empty( $sub->is_flexible ) )  $old_mode = 'Flexible';
             if ( ! empty( $sub->allow_custom ) ) $old_mode = 'Custom';
 
+            $old_skip      = ! empty( $sub->allow_meal_skip ) ? 1 : 0;
             $old_prep_mode = ! empty( $sub->prep_timing ) ? $sub->prep_timing : 'auto';
             $prep_labels   = array(
                 'auto'       => 'Auto (4PM+ Rule)',
@@ -451,6 +462,10 @@ function cmp_ajax_foh_update_account_details() {
                 'allow_custom' => $allow_custom,
             );
 
+            if ( $has_skip_payload ) {
+                $update_data['allow_meal_skip'] = $allow_meal_skip;
+            }
+
             if ( $has_prep_payload ) {
                 $update_data['prep_timing'] = $prep_timing;
             }
@@ -471,18 +486,24 @@ function cmp_ajax_foh_update_account_details() {
             $resolved         = cmp_get_subscription_logistics( $updated_sub );
             $is_same_day_prep = cmp_is_same_day_prep_subscription( $updated_sub, $resolved );
 
-            // Option 1A: Log any change to Customer Name, Recipient/Plan Name, Plan Mode, or Kitchen Prep Schedule
+            // Option 1A: Log any change to Customer Name, Recipient/Plan Name, Plan Mode, Meal Skipping, or Kitchen Prep Schedule
             if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
                 $old_prep_lbl = $prep_labels[ $old_prep_mode ] ?? $old_prep_mode;
                 $new_prep_lbl = $prep_labels[ $has_prep_payload ? $prep_timing : $old_prep_mode ] ?? $prep_timing;
+                $old_skip_lbl = $old_skip ? 'Allowed' : 'Disabled';
+                $new_skip_lbl = ( $has_skip_payload ? $allow_meal_skip : $old_skip ) ? 'Allowed' : 'Disabled';
+                $skip_changed = ( $has_skip_payload && $old_skip !== $allow_meal_skip );
 
-                $old_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s | Prep: %s', $old_full_name ?: 'Customer', $sub->plan_name, $old_mode, $old_prep_lbl );
-                $new_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s | Prep: %s', $new_full_name ?: 'Customer', $new_plan_name, ucfirst( $plan_mode ), $new_prep_lbl );
+                $old_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s | Prep: %s | Meal Skipping: %s', $old_full_name ?: 'Customer', $sub->plan_name, $old_mode, $old_prep_lbl, $old_skip_lbl );
+                $new_summary = sprintf( 'Name: %s | Plan: %s | Mode: %s | Prep: %s | Meal Skipping: %s', $new_full_name ?: 'Customer', $new_plan_name, ucfirst( $plan_mode ), $new_prep_lbl, $new_skip_lbl );
 
                 if ( $old_summary !== $new_summary || $has_logistics_payload ) {
+                    $action_label = $skip_changed
+                        ? ( $allow_meal_skip ? 'Meal Skipping Enabled' : 'Meal Skipping Disabled' )
+                        : 'Account & Plan Updated';
                     cmp_record_customer_activity_log( array(
                         'subscription_id' => $sub_id,
-                        'action_type'     => 'Account & Plan Updated',
+                        'action_type'     => $action_label,
                         'target_date'     => date( 'Y-m-d' ),
                         'old_status'      => $old_summary,
                         'new_status'      => $new_summary,
@@ -532,6 +553,7 @@ function cmp_ajax_foh_update_account_details() {
         'plan_mode'        => $plan_mode,
         'prep_timing'      => $prep_timing,
         'is_same_day_prep' => $is_same_day_prep ? 1 : 0,
+        'allow_meal_skip'  => $allow_meal_skip,
     ) );
 }
 
@@ -564,7 +586,7 @@ function cmp_ajax_foh_delete_subscription() {
             'action_type'     => 'Plan Deleted',
             'target_date'     => date( 'Y-m-d' ),
             'old_status'      => sprintf( 'Plan Status: %s (%d Total Days)', ucfirst( $sub_row->status ), intval( $sub_row->total_days ) ),
-            'new_status'      => 'Subscription & Daily Logs Permanently Deleted from FOH Portal',
+            'new_status'      => 'Subscription & Daily Logs Permanently Deleted by Super Admin',
         ) );
     }
 
@@ -574,11 +596,11 @@ function cmp_ajax_foh_delete_subscription() {
     if ( $deleted ) {
         wp_send_json_success();
     } else {
-        wp_send_json_error( 'Failed to delete subscription from database.' );
+        wp_send_json_error( 'Database error: Could not delete subscription.' );
     }
 }
 
-// 7. AJAX HANDLER: Export CSV (Synchronized with Per-Plan Logistics, Allergies & Kitchen Prep Schedule)
+// 7. AJAX HANDLER: Export CSV (Synchronized with Per-Plan Logistics, Allergies, Kitchen Prep Schedule & Balance Total Meals)
 add_action( 'wp_ajax_cmp_foh_export_csv', 'cmp_foh_export_csv' );
 function cmp_foh_export_csv() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'menu_manager' ) ) {
@@ -586,6 +608,9 @@ function cmp_foh_export_csv() {
     }
 
     cmp_ensure_prep_timing_column();
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
 
     date_default_timezone_set( 'Asia/Dubai' );
     global $wpdb;
@@ -624,7 +649,8 @@ function cmp_foh_export_csv() {
         'Pending to Fill',
         'Used Days',
         'Balance Days',
-        'Last Scheduled Date',
+        'Balance Total Meals',
+        'Last Filled Date',
         'Start Date',
         'Expiry Date',
         'FOH Remarks',
@@ -646,13 +672,27 @@ function cmp_foh_export_csv() {
         $is_same_day_prep = cmp_is_same_day_prep_subscription( $sub, $resolved );
         $prep_schedule    = $is_same_day_prep ? 'Same-Day Prep' : 'Day-Before Prep';
 
-        $filled_days         = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
-        $usage_days          = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
-        $last_scheduled_date = $wpdb->get_var( $wpdb->prepare( "SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
+        $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
+            ? cmp_get_subscription_tracking_metrics( $sub )
+            : null;
 
-        $total_days_int = intval( $sub->total_days );
-        $balance        = max( 0, $total_days_int - $usage_days );
-        $pending_fill   = max( 0, $total_days_int - $filled_days );
+        if ( $metrics ) {
+            $filled_days         = intval( $metrics['filled_days'] );
+            $usage_days          = intval( $metrics['used_days'] );
+            $total_days_int      = intval( $metrics['effective_total_days'] );
+            $balance             = intval( $metrics['balance_days'] );
+            $balance_meals       = intval( $metrics['balance_meals'] );
+            $pending_fill        = intval( $metrics['pending_fill_days'] );
+            $last_scheduled_date = $metrics['last_filled_date'];
+        } else {
+            $filled_days         = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
+            $usage_days          = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
+            $last_scheduled_date = $wpdb->get_var( $wpdb->prepare( "SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
+            $total_days_int      = intval( $sub->total_days );
+            $balance             = max( 0, $total_days_int - $usage_days );
+            $balance_meals       = $balance;
+            $pending_fill        = max( 0, $total_days_int - $filled_days );
+        }
 
         $status_label = 'Active';
         if ( $sub->status === 'paused' ) {
@@ -729,6 +769,7 @@ function cmp_foh_export_csv() {
             $pending_fill,
             $usage_days,
             $balance,
+            $balance_meals,
             ! empty( $last_scheduled_date ) ? $last_scheduled_date : 'None',
             date( 'Y-m-d', strtotime( $sub->start_date ) ),
             date( 'Y-m-d', strtotime( $sub->expiry_date ) ),
@@ -930,6 +971,9 @@ function cmp_render_foh_portal() {
     if ( function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
         cmp_ensure_subscription_logistics_columns();
     }
+    if ( function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+        cmp_ensure_meal_skip_carryover_columns();
+    }
     cmp_ensure_prep_timing_column();
 
     global $wpdb;
@@ -948,16 +992,43 @@ function cmp_render_foh_portal() {
     $today_date = date( 'Y-m-d' );
 
     foreach ( $all_subs as $sub ) {
-        $filled_days         = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
-        $usage_days          = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
-        $last_scheduled_date = $wpdb->get_var( $wpdb->prepare( "SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
+        $metrics = function_exists( 'cmp_get_subscription_tracking_metrics' )
+            ? cmp_get_subscription_tracking_metrics( $sub )
+            : null;
 
-        $total_days_int           = intval( $sub->total_days );
-        $sub->filled              = $filled_days;
-        $sub->usage               = $usage_days;
-        $sub->balance             = max( 0, $total_days_int - $usage_days );
-        $sub->pending_fill        = max( 0, $total_days_int - $filled_days );
-        $sub->last_scheduled_date = $last_scheduled_date;
+        if ( $metrics ) {
+            $filled_days              = intval( $metrics['filled_days'] );
+            $usage_days               = intval( $metrics['used_days'] );
+            $total_days_int           = intval( $metrics['effective_total_days'] );
+            $sub->effective_total     = $total_days_int;
+            $sub->carryover_days_cnt  = intval( $metrics['carryover_days'] );
+            $sub->pending_carry_days  = intval( $metrics['pending_carryover_days'] );
+            $sub->pending_carry_meals = intval( $metrics['pending_carryover_meals'] );
+            $sub->filled              = $filled_days;
+            $sub->usage               = $usage_days;
+            $sub->balance             = intval( $metrics['balance_days'] );
+            $sub->balance_meals       = intval( $metrics['balance_meals'] );
+            $sub->pending_fill        = intval( $metrics['pending_fill_days'] );
+            $sub->last_scheduled_date = $metrics['last_filled_date'];
+            $sub->popover_text        = $metrics['popover_text'];
+            $last_scheduled_date      = $metrics['last_filled_date'];
+        } else {
+            $filled_days              = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
+            $usage_days               = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table_logs WHERE subscription_id = %d AND delivery_result = 'Successful'", $sub->id ) );
+            $last_scheduled_date      = $wpdb->get_var( $wpdb->prepare( "SELECT MAX(target_date) FROM $table_logs WHERE subscription_id = %d AND (delivery_result IS NULL OR delivery_result NOT IN ('Cancelled', 'Returned'))", $sub->id ) );
+            $total_days_int           = intval( $sub->total_days );
+            $sub->effective_total     = $total_days_int;
+            $sub->carryover_days_cnt  = 0;
+            $sub->pending_carry_days  = 0;
+            $sub->pending_carry_meals = 0;
+            $sub->filled              = $filled_days;
+            $sub->usage               = $usage_days;
+            $sub->balance             = max( 0, $total_days_int - $usage_days );
+            $sub->balance_meals       = $sub->balance;
+            $sub->pending_fill        = max( 0, $total_days_int - $filled_days );
+            $sub->last_scheduled_date = $last_scheduled_date;
+            $sub->popover_text        = '';
+        }
 
         if ( ! empty( $last_scheduled_date ) ) {
             $sub->days_until_end = (int) round( ( strtotime( $last_scheduled_date ) - strtotime( $today_date ) ) / 86400 );
@@ -1258,12 +1329,14 @@ function cmp_render_foh_portal() {
             z-index: 10050;
             background: #1B5E20;
             color: #ffffff;
-            padding: 9px 14px;
-            border-radius: 8px;
-            font-size: 0.85em;
+            padding: 10px 14px;
+            border-radius: 9px;
+            font-size: 0.82em;
             font-weight: 600;
-            line-height: 1.35;
-            white-space: nowrap;
+            line-height: 1.45;
+            white-space: normal;
+            max-width: 340px;
+            text-align: center;
             box-shadow: 0 10px 25px rgba(15, 23, 42, 0.25);
             border: 1px solid #68B946;
             pointer-events: none;
@@ -1753,27 +1826,35 @@ function cmp_render_foh_portal() {
                             }
 
                             // Mutually Exclusive Modes
-                            $is_flexible  = isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0;
-                            $allow_custom = isset( $sub->allow_custom ) ? intval( $sub->allow_custom ) : 0;
-                            $current_mode = 'standard';
+                            $is_flexible     = isset( $sub->is_flexible ) ? intval( $sub->is_flexible ) : 0;
+                            $allow_custom    = isset( $sub->allow_custom ) ? intval( $sub->allow_custom ) : 0;
+                            $allow_meal_skip = ! empty( $sub->allow_meal_skip ) && intval( $sub->allow_meal_skip ) === 1 ? 1 : 0;
+                            $current_mode    = 'standard';
                             if ( $is_flexible )  $current_mode = 'flexible';
                             if ( $allow_custom ) $current_mode = 'custom';
 
                             $can_edit_details = current_user_can( 'manage_options' ) || current_user_can( 'foh_manager' ) || current_user_can( 'menu_manager' );
 
+                            $effective_total_disp = isset( $sub->effective_total ) ? intval( $sub->effective_total ) : intval( $sub->total_days );
+                            $usage_percent        = ( $effective_total_disp > 0 ) ? min( 100, round( ( $sub->usage / $effective_total_disp ) * 100 ) ) : 0;
+
                             $last_sched_formatted = ! empty( $sub->last_scheduled_date ) ? date( 'M j, Y', strtotime( $sub->last_scheduled_date ) ) : 'No Dates Scheduled';
                             $metric_border_style  = 'border: 1px solid #e2e8f0;';
-                            if ( $sub->pending_fill > 0 ) {
-                                $metric_popover = 'Pending to Fill: ' . $sub->pending_fill . ' Days · Ends: ' . $last_sched_formatted;
-                                if ( $tab_key === 'active' ) {
-                                    if ( empty( $sub->last_scheduled_date ) || $sub->days_until_end <= 1 ) {
-                                        $metric_border_style = 'border: 1px solid #fca5a5; border-left: 4px solid #dc2626;';
-                                    } elseif ( $sub->days_until_end <= 3 ) {
-                                        $metric_border_style = 'border: 1px solid #fcd34d; border-left: 4px solid #f59e0b;';
-                                    }
-                                }
+
+                            if ( ! empty( $sub->popover_text ) ) {
+                                $metric_popover = $sub->popover_text;
                             } else {
-                                $metric_popover = 'All Days Filled · Ends: ' . $last_sched_formatted;
+                                $fill_part      = ( $sub->pending_fill > 0 ) ? 'Pending to Fill: ' . $sub->pending_fill . ' Days' : 'All Days Filled';
+                                $meals_part     = 'Balance Meals: ' . intval( $sub->balance_meals ?? $sub->balance ) . ' Meals';
+                                $metric_popover = $fill_part . ' · ' . $meals_part . ' · Last Filled Date: ' . $last_sched_formatted;
+                            }
+
+                            if ( $sub->pending_fill > 0 && $tab_key === 'active' ) {
+                                if ( empty( $sub->last_scheduled_date ) || $sub->days_until_end <= 1 ) {
+                                    $metric_border_style = 'border: 1px solid #fca5a5; border-left: 4px solid #dc2626;';
+                                } elseif ( $sub->days_until_end <= 3 ) {
+                                    $metric_border_style = 'border: 1px solid #fcd34d; border-left: 4px solid #f59e0b;';
+                                }
                             }
                         ?>
                         <tr class="foh-row" 
@@ -1847,6 +1928,16 @@ function cmp_render_foh_portal() {
                                         </select>
                                     </div>
 
+                                    <div style="margin-bottom:8px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+                                        <label style="display:flex; align-items:flex-start; gap:7px; cursor:pointer; background:#EEF7E3; border:1px solid #68B946; border-radius:5px; padding:7px 8px; margin:0;">
+                                            <input type="checkbox" id="edit-allow-skip-<?php echo esc_attr( $sub->id ); ?>" value="1" <?php checked( $allow_meal_skip, 1 ); ?> style="width:16px; height:16px; margin-top:2px; accent-color:#379237; cursor:pointer; flex-shrink:0;">
+                                            <span style="font-size:0.78em; line-height:1.3; color:#1B5E20;">
+                                                <strong style="display:block;">Allow Meal Skipping</strong>
+                                                <span style="color:#334155; font-weight:normal;">Enable to skip a meal &amp; carry it forward to a Redemption Day. Untick after saving.</span>
+                                            </span>
+                                        </label>
+                                    </div>
+
                                     <button class="save-account-btn" data-sub-id="<?php echo esc_attr( $sub->id ); ?>" data-user-id="<?php echo esc_attr( $sub->user_id ); ?>" data-order-id="<?php echo esc_attr( $sub->wc_order_id ); ?>" style="background:#379237; color:#fff; border:none; padding:6px 10px; border-radius:4px; font-size:0.85em; font-weight:bold; cursor:pointer; width:100%;">Save Details</button>
                                 </div>
                                 <?php endif; ?>
@@ -1858,6 +1949,9 @@ function cmp_render_foh_portal() {
                                     <strong class="foh-plan-title" style="color: #231F20;" id="tab-title-<?php echo esc_attr( $sub->id ); ?>"><?php echo esc_html( $core_plan_name ); ?></strong>
                                     <span id="prep-badge-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo $is_same_day_prep ? 'inline-flex' : 'none'; ?>;">
                                         <span class="foh-sameday-prep-pill">&#9889; Same-Day Prep</span>
+                                    </span>
+                                    <span id="skip-badge-<?php echo esc_attr( $sub->id ); ?>" style="display:<?php echo $allow_meal_skip ? 'inline-flex' : 'none'; ?>;">
+                                        <span style="background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc; padding:2px 7px; border-radius:999px; font-size:0.72em; font-weight:800; line-height:1.2; white-space:nowrap;">Skip Enabled</span>
                                     </span>
                                 </div>
                                 
@@ -1896,7 +1990,7 @@ function cmp_render_foh_portal() {
                                 <span class="foh-mobile-label">Tracking Metrics</span>
                                 <div class="foh-metric-card" data-popover="<?php echo esc_attr( $metric_popover ); ?>" style="<?php echo $metric_border_style; ?>">
                                     <div class="foh-metric-top-row">
-                                        <span style="color: #64748b;">Filled: <strong><?php echo esc_html( $sub->filled ); ?>/<?php echo esc_html( $sub->total_days ); ?></strong></span>
+                                        <span style="color: #64748b;">Filled: <strong><?php echo esc_html( $sub->filled ); ?>/<?php echo esc_html( $effective_total_disp ); ?></strong></span>
                                         <span style="color: #379237;">Used: <strong><?php echo esc_html( $sub->usage ); ?></strong></span>
                                     </div>
                                     <div class="metric-progress-bar">
@@ -1905,6 +1999,11 @@ function cmp_render_foh_portal() {
                                     <div class="foh-metric-balance-row">
                                         Balance: <?php echo esc_html( $sub->balance ); ?> Days <span class="foh-metric-info-dot">i</span>
                                     </div>
+                                    <?php if ( ! empty( $sub->pending_carry_days ) ) : ?>
+                                        <div style="font-size:0.72em; color:#0369a1; font-weight:800; margin-top:3px; text-align:center;">
+                                            &#8618; <?php echo intval( $sub->pending_carry_days ); ?> Carryover Day<?php echo intval( $sub->pending_carry_days ) > 1 ? 's' : ''; ?> (<?php echo intval( $sub->pending_carry_meals ); ?> Meal<?php echo intval( $sub->pending_carry_meals ) > 1 ? 's' : ''; ?>)
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                             <td>
@@ -2541,7 +2640,7 @@ function cmp_render_foh_portal() {
                 
                 if (editDiv.style.display === 'none') {
                     editDiv.style.display = 'block';
-                    this.innerHTML = '<span style="font-size:0.85em; text-decoration:underline;">Close</span>';
+                    this.innerHTML = '<span style="font-size:0.85em; font-weight:bold; text-decoration:underline; color:#dc2626;">Cancel</span>';
                 } else {
                     editDiv.style.display = 'none';
                     this.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
@@ -2549,7 +2648,7 @@ function cmp_render_foh_portal() {
             });
         });
 
-        // Save Account Details, Recipient, Plan Mode & Kitchen Prep Schedule
+        // Save Account Details, Recipient, Plan Mode, Kitchen Prep Schedule & Allow Meal Skipping
         document.querySelectorAll('.save-account-btn').forEach(btn => {
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -2563,6 +2662,8 @@ function cmp_render_foh_portal() {
                 const planMode   = document.getElementById('edit-plan-mode-' + subId).value;
                 const prepSelect = document.getElementById('edit-prep-timing-' + subId);
                 const prepTiming = prepSelect ? prepSelect.value : 'auto';
+                const skipChk    = document.getElementById('edit-allow-skip-' + subId);
+                const allowSkip  = (skipChk && skipChk.checked) ? '1' : '0';
 
                 const originalText = this.innerText;
 
@@ -2585,6 +2686,7 @@ function cmp_render_foh_portal() {
                 formData.append('recipient_name', recipient);
                 formData.append('plan_mode', planMode);
                 formData.append('prep_timing', prepTiming);
+                formData.append('allow_meal_skip', allowSkip);
 
                 fetch(fohAjaxUrl, { method: 'POST', body: formData })
                 .then(res => res.json())
@@ -2613,10 +2715,15 @@ function cmp_render_foh_portal() {
                         if (prepBadge) {
                             prepBadge.style.display = (response.data.is_same_day_prep == 1) ? 'inline-flex' : 'none';
                         }
+
+                        let skipBadge = document.getElementById('skip-badge-' + subId);
+                        if (skipBadge) {
+                            skipBadge.style.display = (response.data.allow_meal_skip == 1) ? 'inline-flex' : 'none';
+                        }
                         
                         this.innerText = '✓ Saved';
                         this.style.background = '#1B5E20';
-                        fohShowNotice('Customer details, plan mode & prep schedule updated.', 'success');
+                        fohShowNotice('Customer details, plan mode & meal skipping settings updated.', 'success');
                         
                         setTimeout(() => {
                             document.getElementById('account-edit-' + subId).style.display = 'none';
