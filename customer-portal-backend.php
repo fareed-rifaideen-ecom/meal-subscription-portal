@@ -10,9 +10,10 @@
  *  - Strict Terminal Delivery Status Lock (`Successful`, `Returned`, `Cancelled`):
  *      * Non-admins (Customer, FOH, Menu Manager, Kitchen) are blocked from modifying, saving, or cancelling any meal row
  *        once its `delivery_result` is `Successful`, `Returned`, or `Cancelled`. Only Super Admins can override.
- *  - Configurable 3-Mode Dish Details Toggle in WP Admin > Meal Portal > Menu Manager (`cmp_dish_details_display_mode`):
- *      * Allows switching live between Option DISH-1 (Dish Info Card), Option DISH-2 (Interactive Badge & Popover),
- *        Option DISH-3 (1-Line Macro Bar + Expandable Ingredients), or Off.
+ *  - Configurable 6-Mode Dish Details Toggle in WP Admin > Meal Portal > Menu Manager (`cmp_dish_details_display_mode`):
+ *      * Allows switching live between Option DISH-1 (Micro-Card), Option DISH-2 (Badge & Popover),
+ *        Option DISH-3 (Macro Bar + Drawer), Option DISH-4 / 4A (Card-Stack Picker + Card Preview),
+ *        Option DISH-5 / 4B (App-Style Slide-Up / Modal Menu Drawer + Card), or Off.
  *  - Allow Meal Skipping & Automatic Carryover (Redemption) Days Engine
  *  - Option PREP-C: Central `prep_timing` schema column, 4:00 PM+ Same-Day Prep auto-detection, and Staff-Only Prep Schedule override
  *  - Option 2B: Row-Level Staff Audit Stamps (`cmp_format_row_audit_stamp`)
@@ -40,16 +41,18 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 // ==========================================
 
 /**
- * Returns the active Customer Portal Dish Details (Ingredients & Macros) Display Mode:
+ * Returns the active Customer Portal Dish Details (Description & Macros) Display Mode:
  * - 'dish_1' : Option DISH-1 (Live Dish Info Card Below Dropdown — Default)
  * - 'dish_2' : Option DISH-2 (Interactive Header Pill + Floating Popover)
- * - 'dish_3' : Option DISH-3 (Hybrid 1-Line Macro Strip + Tap-to-Expand Ingredients Drawer)
+ * - 'dish_3' : Option DISH-3 (Hybrid 1-Line Macro Strip + Tap-to-Expand Description Drawer)
+ * - 'dish_4' : Option DISH-4 / 4A (Inline Visual Card-Stack Picker + Selected Dish Card Preview)
+ * - 'dish_5' : Option DISH-5 / 4B (App-Style Slide-Up / Modal Menu Card Drawer + Selected Dish Card)
  * - 'off'    : Dropdown Menu Name Only
  */
 if ( ! function_exists( 'cmp_get_dish_details_display_mode' ) ) {
     function cmp_get_dish_details_display_mode() {
         $mode = get_option( 'cmp_dish_details_display_mode', 'dish_1' );
-        if ( ! in_array( $mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+        if ( ! in_array( $mode, array( 'dish_1', 'dish_2', 'dish_3', 'dish_4', 'dish_5', 'off' ), true ) ) {
             $mode = 'dish_1';
         }
         return $mode;
@@ -73,7 +76,7 @@ if ( ! function_exists( 'cmp_handle_menu_manager_dish_display_mode_save' ) ) {
         }
 
         $new_mode = isset( $_POST['cmp_dish_details_display_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['cmp_dish_details_display_mode'] ) ) : 'dish_1';
-        if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+        if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'dish_4', 'dish_5', 'off' ), true ) ) {
             $new_mode = 'dish_1';
         }
 
@@ -138,7 +141,7 @@ if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
             }
             .cmp-mm-dish-mode-grid {
                 display: grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
+                grid-template-columns: repeat(3, minmax(0, 1fr));
                 gap: 10px;
                 align-items: stretch;
             }
@@ -206,7 +209,7 @@ if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
 
         <?php if ( $saved_notice ) : ?>
             <div class="notice notice-success is-dismissible" style="max-width:1280px; margin-left:0;">
-                <p><strong>Customer Portal Dish Details Display Mode updated successfully!</strong></p>
+                <p><strong>Customer Portal Dish Display Mode updated successfully!</strong></p>
             </div>
         <?php endif; ?>
 
@@ -216,10 +219,10 @@ if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
                 <div class="cmp-mm-dish-mode-top">
                     <div>
                         <h3>
-                            <span>&#127860; Customer Portal: Dish Ingredients &amp; Macros Display Mode</span>
+                            <span>&#127860; Customer Portal: Dish Description &amp; Macros Display Mode</span>
                             <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #68B946; padding:2px 8px; border-radius:999px; font-size:0.72rem; font-weight:800;">Live Toggle</span>
                         </h3>
-                        <p>Choose how each selected meal's <strong>Ingredients (Description)</strong> and <strong>Macros</strong> are displayed in the Customer Portal across Desktop, Tablet, and Mobile.</p>
+                        <p>Choose how each meal's description and macros are displayed in the Customer Portal across Desktop, Tablet, and Mobile (both before and after saving).</p>
                     </div>
                     <button type="submit" name="cmp_save_dish_display_mode" value="1" class="cmp-mm-dish-save-btn">
                         Save Display Mode
@@ -230,8 +233,8 @@ if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
                     <label class="cmp-mm-dish-option <?php echo $current_mode === 'dish_1' ? 'is-active' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_mode, 'dish_1' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
                         <span>
-                            <span class="cmp-mm-dish-opt-title">Option DISH-1: Dish Info Card</span>
-                            <span class="cmp-mm-dish-opt-desc">Shows a clean card below each selected meal with Ingredients + 4 Macro Pills (kcal, P, C, F).</span>
+                            <span class="cmp-mm-dish-opt-title">Option DISH-1: Micro-Card</span>
+                            <span class="cmp-mm-dish-opt-desc">Shows a clean card below each selected meal with dish description + 4 pastel Macro Pills.</span>
                         </span>
                     </label>
 
@@ -239,7 +242,7 @@ if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_mode, 'dish_2' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
                         <span>
                             <span class="cmp-mm-dish-opt-title">Option DISH-2: Badge &amp; Popover</span>
-                            <span class="cmp-mm-dish-opt-desc">Shows a compact <code>[440 kcal &bull; &#8505; Ingredients]</code> pill next to the label that opens a floating popover on hover/tap.</span>
+                            <span class="cmp-mm-dish-opt-desc">Shows a compact <code>[420 kcal &bull; &#8505; Details]</code> pill next to the label that opens a floating popover.</span>
                         </span>
                     </label>
 
@@ -247,7 +250,23 @@ if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_mode, 'dish_3' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
                         <span>
                             <span class="cmp-mm-dish-opt-title">Option DISH-3: Macro Bar + Drawer</span>
-                            <span class="cmp-mm-dish-opt-desc">Shows a 1-line macro summary bar below the dropdown with a tap-to-expand <code>[Ingredients &#9660;]</code> drawer.</span>
+                            <span class="cmp-mm-dish-opt-desc">Shows a 1-line macro summary bar below the dropdown with a tap-to-expand description drawer.</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-mm-dish-option <?php echo $current_mode === 'dish_4' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_4" <?php checked( $current_mode, 'dish_4' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
+                        <span>
+                            <span class="cmp-mm-dish-opt-title">Option DISH-4 (4A): Card-Stack Picker + Card Preview</span>
+                            <span class="cmp-mm-dish-opt-desc">Replaces dropdowns with an inline visual Card-Stack picker (and mobile sheet) + full Dish Card preview in the slot.</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-mm-dish-option <?php echo $current_mode === 'dish_5' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_5" <?php checked( $current_mode, 'dish_5' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
+                        <span>
+                            <span class="cmp-mm-dish-opt-title">Option DISH-5 (4B): App-Style Menu Drawer + Card</span>
+                            <span class="cmp-mm-dish-opt-desc">Opens a full app-style slide-up / modal Card-Stack Menu Drawer with instant search &amp; category filter tabs.</span>
                         </span>
                     </label>
 
