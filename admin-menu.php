@@ -8,6 +8,21 @@ if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
 }
 
+// Tell customer-portal-backend.php that admin-menu.php handles the Dish Display Mode UI natively
+if ( ! defined( 'CMP_DISH_MODE_BANNER_RENDERED' ) ) {
+    define( 'CMP_DISH_MODE_BANNER_RENDERED', true );
+}
+
+// Remove the fallback admin_notices banner from customer-portal-backend.php if registered
+add_action( 'admin_init', function() {
+    if ( function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
+        remove_action( 'admin_notices', 'cmp_render_menu_manager_dish_display_mode_banner', 5 );
+    }
+    if ( function_exists( 'cmp_handle_menu_manager_dish_display_mode_save' ) ) {
+        remove_action( 'admin_init', 'cmp_handle_menu_manager_dish_display_mode_save' );
+    }
+}, 1 );
+
 // 1. Add the menu item to the WordPress dashboard
 add_action( 'admin_menu', 'cmp_add_admin_menu' );
 function cmp_add_admin_menu() {
@@ -22,67 +37,69 @@ function cmp_add_admin_menu() {
     );
 }
 
-// 2. Render the admin page and handle the CSV upload
+// 2. Render the admin page, Dish Display Mode toggle, and CSV upload
 function cmp_render_admin_page() {
     // STRICT SECURITY: Only allow Admins or Menu Managers
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) { 
-        wp_die('Access Denied. You do not have permission to view the Meal Portal Manager.'); 
+        wp_die( 'Access Denied. You do not have permission to view the Meal Portal Manager.' ); 
     }
 
     global $wpdb;
     $table_foods = $wpdb->prefix . 'cmp_foods';
-    $message = '';
+    $message     = '';
 
-    // --- PHASE 0: HANDLE DISH DETAILS DISPLAY MODE SAVE ---
-    if ( isset( $_POST['cmp_save_dish_display_mode'] ) && check_admin_referer( 'cmp_save_dish_mode_action', 'cmp_dish_mode_nonce' ) ) {
-        if ( current_user_can( 'manage_options' ) || current_user_can( 'menu_manager' ) ) {
-            $new_mode = isset( $_POST['cmp_dish_details_display_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['cmp_dish_details_display_mode'] ) ) : 'dish_1';
-            if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
-                $new_mode = 'dish_1';
-            }
-            update_option( 'cmp_dish_details_display_mode', $new_mode );
-            $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Customer Portal Dish Details Display Mode updated successfully.</p></div>';
+    // --- PHASE 0: SAVE CUSTOMER PORTAL DISH DISPLAY MODE TOGGLE ---
+    if ( isset( $_POST['cmp_save_dish_display_mode'] ) ) {
+        check_admin_referer( 'cmp_save_dish_display_mode_nonce' );
+        $new_mode = sanitize_text_field( wp_unslash( $_POST['cmp_dish_details_display_mode'] ?? 'dish_1' ) );
+        if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+            $new_mode = 'dish_1';
         }
+        update_option( 'cmp_dish_details_display_mode', $new_mode );
+        $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Customer Portal Dish Details Display Mode updated successfully.</p></div>';
     }
 
     $current_dish_mode = get_option( 'cmp_dish_details_display_mode', 'dish_1' );
+    if ( ! in_array( $current_dish_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+        $current_dish_mode = 'dish_1';
+    }
 
     // --- PHASE 1: DATABASE UPGRADE (Safe & Non-Destructive) ---
     // Check if the date columns exist. If not, add them and migrate current data to Q2 2026.
     $columns_check = $wpdb->get_results( "SHOW COLUMNS FROM $table_foods LIKE 'valid_from'" );
-    if (empty($columns_check)) {
-        $wpdb->query("ALTER TABLE $table_foods ADD valid_from DATE NULL AFTER protein, ADD valid_until DATE NULL AFTER valid_from");
-        $wpdb->query("UPDATE $table_foods SET valid_from = '2026-04-01', valid_until = '2026-06-30' WHERE is_active = 1");
+    if ( empty( $columns_check ) ) {
+        $wpdb->query( "ALTER TABLE $table_foods ADD valid_from DATE NULL AFTER protein, ADD valid_until DATE NULL AFTER valid_from" );
+        $wpdb->query( "UPDATE $table_foods SET valid_from = '2026-04-01', valid_until = '2026-06-30' WHERE is_active = 1" );
     }
 
     // --- PHASE 2: SAFE DELETION (Targeted Date Range) ---
-    if ( isset($_POST['delete_menu_range']) ) {
-        $del_from  = sanitize_text_field($_POST['del_from']);
-        $del_until = sanitize_text_field($_POST['del_until']);
-        if (!empty($del_from) && !empty($del_until)) {
-            $deleted = $wpdb->query($wpdb->prepare("DELETE FROM $table_foods WHERE valid_from = %s AND valid_until = %s", $del_from, $del_until));
-            $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Completely deleted ' . intval($deleted) . ' items from the specific date range.</p></div>';
+    if ( isset( $_POST['delete_menu_range'] ) ) {
+        $del_from  = sanitize_text_field( $_POST['del_from'] );
+        $del_until = sanitize_text_field( $_POST['del_until'] );
+        if ( ! empty( $del_from ) && ! empty( $del_until ) ) {
+            $deleted  = $wpdb->query( $wpdb->prepare( "DELETE FROM $table_foods WHERE valid_from = %s AND valid_until = %s", $del_from, $del_until ) );
+            $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Completely deleted ' . intval( $deleted ) . ' items from the specific date range.</p></div>';
         }
     }
 
     // --- PHASE 3: PROCESS CSV UPLOAD ---
-    if ( isset( $_POST['cmp_upload_csv'] ) && !empty( $_FILES['csv_file']['tmp_name'] ) ) {
+    if ( isset( $_POST['cmp_upload_csv'] ) && ! empty( $_FILES['csv_file']['tmp_name'] ) ) {
         
-        $valid_from  = sanitize_text_field($_POST['valid_from']);
-        $valid_until = sanitize_text_field($_POST['valid_until']);
+        $valid_from  = sanitize_text_field( $_POST['valid_from'] );
+        $valid_until = sanitize_text_field( $_POST['valid_until'] );
 
-        if (empty($valid_from) || empty($valid_until)) {
+        if ( empty( $valid_from ) || empty( $valid_until ) ) {
             $message .= '<div class="notice notice-error is-dismissible"><p><strong>Error:</strong> You must select a Start and End date for the new menu.</p></div>';
         } else {
             // Open and read the CSV
             $file = $_FILES['csv_file']['tmp_name'];
-            if ( ( $handle = fopen( $file, "r" ) ) !== FALSE ) {
+            if ( ( $handle = fopen( $file, 'r' ) ) !== false ) {
                 fgetcsv( $handle ); // Skip the first row (headers)
                 
                 $added_count = 0;
-                while ( ( $data = fgetcsv( $handle, 1000, "," ) ) !== FALSE ) {
+                while ( ( $data = fgetcsv( $handle, 1000, ',' ) ) !== false ) {
                     // Ensure the row has data before inserting
-                    if ( !empty($data[0]) && !empty($data[1]) ) {
+                    if ( ! empty( $data[0] ) && ! empty( $data[1] ) ) {
                         $wpdb->insert(
                             $table_foods,
                             array(
@@ -95,83 +112,186 @@ function cmp_render_admin_page() {
                                 'protein'       => floatval( $data[6] ),
                                 'valid_from'    => $valid_from,
                                 'valid_until'   => $valid_until,
-                                'is_active'     => 1
+                                'is_active'     => 1,
                             )
                         );
                         $added_count++;
                     }
                 }
                 fclose( $handle );
-                $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> ' . $added_count . ' new items uploaded for the period of ' . date('d M Y', strtotime($valid_from)) . ' to ' . date('d M Y', strtotime($valid_until)) . '.</p></div>';
+                $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> ' . $added_count . ' new items uploaded for the period of ' . date( 'd M Y', strtotime( $valid_from ) ) . ' to ' . date( 'd M Y', strtotime( $valid_until ) ) . '.</p></div>';
             }
         }
     }
 
     // Get unique date ranges for the delete dropdown
-    $menu_ranges = $wpdb->get_results("SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE valid_from IS NOT NULL ORDER BY valid_from DESC");
-
-    if ( ! defined( 'CMP_DISH_MODE_BANNER_RENDERED' ) ) {
-        define( 'CMP_DISH_MODE_BANNER_RENDERED', true );
-    }
+    $menu_ranges = $wpdb->get_results( "SELECT DISTINCT valid_from, valid_until FROM $table_foods WHERE valid_from IS NOT NULL ORDER BY valid_from DESC" );
 
     // --- PHASE 4: HTML FOR ADMIN PAGE ---
     ?>
+    <style>
+        .cmp-dish-mode-card {
+            background: #ffffff;
+            border: 1.5px solid #DCECC9;
+            border-left: 5px solid #379237;
+            border-radius: 12px;
+            padding: 18px 22px;
+            margin: 18px 0 22px 0;
+            max-width: 1020px;
+            box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05);
+            box-sizing: border-box;
+        }
+        .cmp-dish-mode-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .cmp-dish-mode-title {
+            margin: 0;
+            font-size: 1.1rem;
+            color: #1B5E20;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .cmp-dish-mode-live-pill {
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #68B946;
+            border-radius: 999px;
+            padding: 2px 10px;
+            font-size: 0.72rem;
+            font-weight: 800;
+        }
+        .cmp-dish-mode-sub {
+            margin: 4px 0 0 0;
+            color: #475569;
+            font-size: 0.86rem;
+        }
+        .cmp-dish-mode-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+            gap: 12px;
+        }
+        .cmp-dish-mode-option {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1.5px solid #cbd5e1;
+            background: #f8fafc;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .cmp-dish-mode-option.is-active {
+            border: 2px solid #379237;
+            background: #EEF7E3;
+        }
+        .cmp-dish-mode-option input[type="radio"] {
+            margin-top: 3px;
+            accent-color: #379237;
+        }
+        .cmp-dish-mode-opt-title {
+            display: block;
+            color: #1e293b;
+            font-size: 0.88rem;
+            font-weight: 800;
+            margin-bottom: 3px;
+        }
+        .cmp-dish-mode-opt-desc {
+            display: block;
+            color: #475569;
+            font-size: 0.77rem;
+            line-height: 1.38;
+        }
+        .cmp-dish-mode-save-btn {
+            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%);
+            color: #ffffff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 800;
+            font-size: 0.86rem;
+            cursor: pointer;
+            box-shadow: 0 3px 10px rgba(27, 94, 32, 0.2);
+        }
+        .cmp-dish-mode-save-btn:hover {
+            filter: brightness(1.06);
+        }
+    </style>
+
     <div class="wrap">
         <h1>Meal Portal - Menu Manager</h1>
         <?php echo $message; ?>
 
-        <!-- DISH DETAILS DISPLAY MODE TOGGLE CARD (OPTIONS DISH-1, DISH-2, DISH-3, OFF) -->
-        <div style="background: #fff; border: 1.5px solid #DCECC9; border-left: 5px solid #379237; border-radius: 12px; padding: 18px 22px; margin-top: 20px; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05); max-width: 1280px;">
-            <form method="POST" action="">
-                <?php wp_nonce_field( 'cmp_save_dish_mode_action', 'cmp_dish_mode_nonce' ); ?>
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+        <!-- CUSTOMER PORTAL DISH INGREDIENTS & MACROS DISPLAY MODE TOGGLE -->
+        <div class="cmp-dish-mode-card">
+            <form method="post">
+                <?php wp_nonce_field( 'cmp_save_dish_display_mode_nonce' ); ?>
+                <div class="cmp-dish-mode-header">
                     <div>
-                        <h2 style="margin:0 0 4px 0; color:#1B5E20; font-size:1.15em;">
-                            🍽️ Customer Portal: Dish Ingredients &amp; Macros Display Mode
-                            <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #68B946; padding:2px 8px; border-radius:999px; font-size:0.72em; font-weight:800;">Live Toggle</span>
+                        <h2 class="cmp-dish-mode-title">
+                            <span>🍽️ Customer Portal: Dish Ingredients &amp; Macros Display Mode</span>
+                            <span class="cmp-dish-mode-live-pill">Live Toggle</span>
                         </h2>
-                        <p style="margin:0; color:#64748b; font-size:0.9em;">Choose how each selected meal's Ingredients and Macros are displayed in the Customer Portal across Desktop, Tablet, and Mobile.</p>
+                        <p class="cmp-dish-mode-sub">Choose how each selected meal's <strong>Ingredients (Description)</strong> and <strong>Macros</strong> are displayed in the Customer Portal across Desktop, Tablet, and Mobile.</p>
                     </div>
-                    <button type="submit" name="cmp_save_dish_display_mode" value="1" class="button button-primary" style="background:#379237; border-color:#1B5E20; font-weight:800; padding:6px 18px; height:auto; border-radius:8px;">
-                        Save Display Mode
-                    </button>
+                    <button type="submit" name="cmp_save_dish_display_mode" value="1" class="cmp-dish-mode-save-btn">Save Display Mode</button>
                 </div>
 
-                <div style="display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch;">
-                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'dish_1' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'dish_1' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
-                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_dish_mode, 'dish_1' ); ?> style="margin-top:2px; accent-color:#379237;">
+                <div class="cmp-dish-mode-grid" id="cmp-dish-mode-options-grid">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_1' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_dish_mode, 'dish_1' ); ?>>
                         <span>
-                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Option DISH-1: Micro-Card</strong>
-                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Shows a clean card below each selected meal with Ingredients + 4 Macro Pills.</span>
+                            <span class="cmp-dish-mode-opt-title">Option DISH-1: Micro-Card</span>
+                            <span class="cmp-dish-mode-opt-desc">Shows a clean card below each selected meal with Ingredients + 4 Macro Pills (kcal, P, C, F).</span>
                         </span>
                     </label>
 
-                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'dish_2' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'dish_2' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
-                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_dish_mode, 'dish_2' ); ?> style="margin-top:2px; accent-color:#379237;">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_2' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_dish_mode, 'dish_2' ); ?>>
                         <span>
-                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Option DISH-2: Badge &amp; Popover</strong>
-                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Shows a compact <code>[440 kcal • ℹ️ Ingredients]</code> pill next to the slot label with floating popover.</span>
+                            <span class="cmp-dish-mode-opt-title">Option DISH-2: Badge &amp; Popover</span>
+                            <span class="cmp-dish-mode-opt-desc">Shows a compact <code>[440 kcal • ℹ️ Ingredients]</code> pill next to the slot label with floating popover.</span>
                         </span>
                     </label>
 
-                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'dish_3' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'dish_3' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
-                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_dish_mode, 'dish_3' ); ?> style="margin-top:2px; accent-color:#379237;">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_3' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_dish_mode, 'dish_3' ); ?>>
                         <span>
-                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Option DISH-3: Macro Bar + Drawer</strong>
-                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Shows a 1-line macro summary bar below dropdown with tap-to-expand ingredients drawer.</span>
+                            <span class="cmp-dish-mode-opt-title">Option DISH-3: Macro Bar + Drawer</span>
+                            <span class="cmp-dish-mode-opt-desc">Shows a 1-line macro summary bar below dropdown with tap-to-expand ingredients drawer.</span>
                         </span>
                     </label>
 
-                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'off' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'off' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
-                        <input type="radio" name="cmp_dish_details_display_mode" value="off" <?php checked( $current_dish_mode, 'off' ); ?> style="margin-top:2px; accent-color:#379237;">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'off' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="off" <?php checked( $current_dish_mode, 'off' ); ?>>
                         <span>
-                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Off (Menu Name Only)</strong>
-                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Displays only the dish name inside dropdowns and daily macro totals at the bottom.</span>
+                            <span class="cmp-dish-mode-opt-title">Off (Menu Name Only)</span>
+                            <span class="cmp-dish-mode-opt-desc">Displays only the dish name inside dropdowns and daily macro totals at the bottom.</span>
                         </span>
                     </label>
                 </div>
             </form>
         </div>
+
+        <script>
+        document.querySelectorAll('#cmp-dish-mode-options-grid input[type="radio"]').forEach(function(radio) {
+            radio.addEventListener('change', function() {
+                document.querySelectorAll('#cmp-dish-mode-options-grid .cmp-dish-mode-option').forEach(function(lbl) {
+                    lbl.classList.remove('is-active');
+                });
+                if (this.closest('.cmp-dish-mode-option')) {
+                    this.closest('.cmp-dish-mode-option').classList.add('is-active');
+                }
+            });
+        });
+        </script>
 
         <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
             <!-- CSV UPLOAD SECTION -->
@@ -209,9 +329,9 @@ function cmp_render_admin_page() {
                         document.getElementById('del_until').value = spl[1];
                     " required>
                         <option value="">- Select Menu Period to Delete -</option>
-                        <?php foreach($menu_ranges as $r): ?>
-                            <option value="<?php echo esc_attr($r->valid_from.'|'.$r->valid_until); ?>">
-                                <?php echo date('d M Y', strtotime($r->valid_from)) . ' to ' . date('d M Y', strtotime($r->valid_until)); ?>
+                        <?php foreach ( $menu_ranges as $r ) : ?>
+                            <option value="<?php echo esc_attr( $r->valid_from . '|' . $r->valid_until ); ?>">
+                                <?php echo date( 'd M Y', strtotime( $r->valid_from ) ) . ' to ' . date( 'd M Y', strtotime( $r->valid_until ) ); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
