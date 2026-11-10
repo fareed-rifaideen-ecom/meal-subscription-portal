@@ -54,6 +54,17 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             .cmp-dashboard-wrap *::before,
             .cmp-dashboard-wrap *::after {
                 box-sizing: border-box;
+                letter-spacing: normal;
+            }
+            .cmp-dashboard-wrap button,
+            .cmp-dashboard-wrap a,
+            .cmp-dashboard-wrap input,
+            .cmp-dashboard-wrap select,
+            .cmp-dashboard-wrap textarea {
+                letter-spacing: normal !important;
+                word-spacing: normal !important;
+                text-transform: none !important;
+                font-family: inherit;
             }
 
             /* Ironclad WordPress Twemoji / Inline Icon Size Lock */
@@ -1363,12 +1374,13 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                padding: 3px 10px;
+                padding: 3px 8px;
                 border-radius: 999px;
-                font-size: 0.72rem;
+                font-size: 0.7rem;
                 font-weight: 800;
                 line-height: 1.2;
                 white-space: nowrap;
+                flex-shrink: 0;
             }
             .cmp-d-pill.p-cal  { background: #ffedd5; color: #c2410c; border: 1px solid #fed7aa; }
             .cmp-d-pill.p-pro  { background: #d1fae5; color: #047857; border: 1px solid #a7f3d0; }
@@ -1673,7 +1685,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: flex;
                 align-items: center;
                 flex-wrap: wrap;
-                gap: 6px;
+                gap: 5px;
                 margin-top: 2px;
             }
 
@@ -1880,37 +1892,81 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             }
 
             /* Collapsed Row Rich Dish Summary Cards (Visible Even When Day Row is Collapsed After Saving) */
+            .cmp-collapsed-summary-top-bar {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                width: 100%;
+                gap: 10px;
+                margin-bottom: 8px;
+            }
             .cmp-collapsed-cards-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                gap: 8px;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 10px;
                 width: 100%;
-                margin-top: 6px;
+                margin-top: 4px;
             }
             .cmp-collapsed-mini-card {
                 background: #ffffff;
-                border: 1px solid #cbd5e1;
-                border-left: 3.5px solid #379237;
-                border-radius: 8px;
-                padding: 7px 10px;
+                border: 1.5px solid #cbd5e1;
+                border-left: 4px solid #379237;
+                border-radius: 10px;
+                padding: 10px 12px;
                 display: flex;
                 flex-direction: column;
-                gap: 4px;
+                justify-content: space-between;
+                gap: 5px;
+                min-width: 0;
+                box-shadow: 0 2px 5px rgba(15, 23, 42, 0.03);
             }
             .cmp-collapsed-mini-title {
-                font-size: 0.82rem;
+                font-size: 0.86rem;
                 font-weight: 800;
                 color: #0f172a;
                 line-height: 1.25;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
             .cmp-collapsed-mini-desc {
-                font-size: 0.73rem;
+                font-size: 0.75rem;
                 color: #475569;
-                line-height: 1.32;
+                line-height: 1.35;
                 display: -webkit-box;
                 -webkit-line-clamp: 1;
                 -webkit-box-orient: vertical;
                 overflow: hidden;
+            }
+            .cmp-collapsed-mini-card .cmp-ref-dish-pills {
+                flex-wrap: nowrap;
+                gap: 4px;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+            .cmp-collapsed-mini-card .cmp-ref-dish-pills::-webkit-scrollbar {
+                display: none;
+            }
+
+            /* Tablet Grid Optimization for Expanded & Collapsed Cards (769px - 1024px) */
+            @media (min-width: 769px) and (max-width: 1024px) {
+                .cmp-collapsed-cards-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    gap: 8px;
+                }
+                .cmp-card-picker-trigger {
+                    padding: 9px 10px;
+                }
+                .cmp-ref-dish-title {
+                    font-size: 0.88rem;
+                }
+                .cmp-ref-dish-desc {
+                    font-size: 0.75rem;
+                }
+                .cmp-d-pill {
+                    padding: 2px 6px;
+                    font-size: 0.65rem;
+                }
             }
 
             /* Tablet & Mobile Refinements for Dish Details & Card Stack */
@@ -1995,20 +2051,33 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: none !important;
                 grid-column: 1 / span 12 !important;
                 background: #f8fafc !important;
-                border: 1px dashed #cbd5e1 !important;
-                border-radius: 10px !important;
-                padding: 9px 14px !important;
+                border: 1.5px dashed #cbd5e1 !important;
+                border-radius: 12px !important;
+                padding: 12px 16px !important;
                 margin-top: 4px !important;
-                font-size: 0.85rem !important;
+                font-size: 0.86rem !important;
                 color: #334155 !important;
                 font-weight: 600 !important;
                 cursor: pointer !important;
                 align-items: center !important;
                 justify-content: space-between !important;
-                gap: 10px !important;
+                gap: 12px !important;
+                width: 100% !important;
+            }
+            .cmp-table td.cmp-collapsed-summary .cmp-summary-text {
+                flex: 1 1 auto !important;
+                min-width: 0 !important;
+                width: 100% !important;
+            }
+            .cmp-table td.cmp-collapsed-summary.has-rich-cards {
+                flex-direction: column !important;
+                align-items: stretch !important;
+            }
+            .cmp-table td.cmp-collapsed-summary.has-rich-cards > .cmp-expand-hint {
+                display: none !important;
             }
             .cmp-table td.cmp-collapsed-summary:hover {
-                background: #EEF7E3 !important;
+                background: #f4fbf0 !important;
                 border-color: #68B946 !important;
                 color: #1B5E20 !important;
             }
@@ -2020,6 +2089,74 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-mobile-pos-holder,
                 .cmp-mobile-meal-preview {
                     display: none !important;
+                }
+                .cmp-day-header-top {
+                    display: contents !important;
+                }
+
+                .cmp-table tr.cmp-day-row {
+                    display: grid !important;
+                    grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+                    gap: 12px 14px !important;
+                    align-items: end !important;
+                }
+                .cmp-table td:not(.cmp-collapsed-summary):not(.cmp-audit-footer-cell) {
+                    display: block !important;
+                    padding: 0 !important;
+                    border: none !important;
+                    width: 100% !important;
+                }
+
+                .cmp-table td.cmp-cell-day {
+                    grid-column: 1 / span 2 !important;
+                    grid-row: 1 !important;
+                    align-self: end !important;
+                    min-height: 48px !important;
+                    display: flex !important;
+                    flex-direction: column !important;
+                    align-items: flex-start !important;
+                    justify-content: center !important;
+                    background: #EEF7E3 !important;
+                    color: #1B5E20 !important;
+                    border: 1.5px solid #DCECC9 !important;
+                    border-radius: 12px !important;
+                    font-size: 1.04rem !important;
+                    font-weight: 800 !important;
+                    padding: 9px 28px 9px 14px !important;
+                    cursor: pointer !important;
+                    user-select: none;
+                    transition: filter 0.15s ease;
+                    position: relative !important;
+                }
+                .cmp-table td.cmp-cell-day:hover { filter: brightness(0.97); }
+                .cmp-table td.cmp-cell-day::after {
+                    content: '\25B2';
+                    font-size: 0.72rem;
+                    opacity: 0.7;
+                    position: absolute;
+                    right: 11px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                }
+                .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-day::after {
+                    content: '\25BC';
+                }
+
+                .cmp-table tr.status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border-color: #fde68a !important; }
+                .cmp-table tr.status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border-color: #fecdd3 !important; }
+
+                .cmp-table td.cmp-cell-date { grid-column: 3 / span 3 !important; grid-row: 1 !important; }
+                .cmp-table td.cmp-cell-chef { grid-column: 6 / span 2 !important; grid-row: 1 !important; }
+                .cmp-table td.cmp-cell-status { grid-column: 8 / span 2 !important; grid-row: 1 !important; }
+                .cmp-table td.cmp-cell-action { grid-column: 10 / span 3 !important; grid-row: 1 !important; }
+
+                .cmp-table td.cmp-cell-meal,
+                .cmp-table td.cmp-cell-snack,
+                .cmp-table td.cmp-cell-macros,
+                .cmp-table td.cmp-cell-juice {
+                    padding-top: 10px !important;
+                    border-top: 1px dashed #e2e8f0 !important;
+                    align-self: stretch !important;
                 }
                 .cmp-day-header-top {
                     display: contents !important;
@@ -4069,6 +4206,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             }
 
             function syncRowCompactAndSummary(rowElement) {
+                var summaryCellEl   = rowElement.find('td.cmp-collapsed-summary');
                 var summaryTextEl   = rowElement.find('.cmp-summary-text');
                 var mobileDateBadge = rowElement.find('.cmp-mobile-date-badge');
                 var mobilePreviewEl = rowElement.find('.cmp-mobile-meal-preview');
@@ -4087,6 +4225,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 }
 
                 if (rowElement.hasClass('status-void')) {
+                    summaryCellEl.removeClass('has-rich-cards');
                     if (summaryTextEl.length) {
                         summaryTextEl.html('<span>This delivery was cancelled &mdash; a replacement day has been added to your schedule</span>');
                     }
@@ -4141,9 +4280,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 if (summaryTextEl.length) {
                     var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
                     if (isChefsChoice && !hasValues) {
+                        summaryCellEl.removeClass('has-rich-cards');
                         summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong>' + carryoverHint + ' &mdash; Click to expand');
                     } else if (pickedNames.length > 0) {
                         if (dishDisplayMode && dishDisplayMode !== 'off' && pickedInfos.length > 0) {
+                            summaryCellEl.addClass('has-rich-cards');
+                            var topBarHtml = '<div class="cmp-collapsed-summary-top-bar">' +
+                                '<div>' + unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong>' + carryoverHint + '</div>' +
+                                '<span class="cmp-expand-hint" style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>' +
+                            '</div>';
                             var miniCardsHtml = '<div class="cmp-collapsed-cards-grid">';
                             pickedInfos.forEach(function(inf) {
                                 var descLine = inf.desc ? '<div class="cmp-collapsed-mini-desc">' + cmpEscapeHtml(inf.desc) + '</div>' : '';
@@ -4154,13 +4299,16 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                                 '</div>';
                             });
                             miniCardsHtml += '</div>';
-                            summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong>' + carryoverHint + miniCardsHtml);
+                            summaryTextEl.html(topBarHtml + miniCardsHtml);
                         } else {
+                            summaryCellEl.removeClass('has-rich-cards');
                             summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  ') + carryoverHint);
                         }
                     } else if (logId > 0 && !isUnsaved) {
+                        summaryCellEl.removeClass('has-rich-cards');
                         summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong>' + carryoverHint + ' &mdash; Click to expand and select meals');
                     } else {
+                        summaryCellEl.removeClass('has-rich-cards');
                         summaryTextEl.html(unsavedPrefix + 'Pending selection' + carryoverHint + ' &mdash; Click to expand and choose meals');
                     }
                 }
