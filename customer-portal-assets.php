@@ -4722,12 +4722,6 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 });
             });
 
-            // CLEAR / RESET SELECTION LOGIC (INCLUDES OPTION 3A: ADMIN CANCELLATION RESET)
-            $(document).on('click', '.cmp-clear-row, .cmp-admin-reset-cancel-btn', function(e) {
-                e.preventDefault();
-                var btn = $(this);
-                var rowElement = btn.closest('tr');
-            // CANCEL DAY LOGIC (WITH HELPFUL REMINDER FOR DISH CHANGES VS. FULL DAY CANCELLATION)
             // CLEAR / RESET SELECTION LOGIC (ADMIN ONLY — INCLUDES OPTION 3A: ADMIN CANCELLATION RESET)
             $(document).on('click', '.cmp-clear-row, .cmp-admin-reset-cancel-btn', function(e) {
                 e.preventDefault();
