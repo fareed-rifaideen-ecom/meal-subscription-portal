@@ -224,7 +224,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                     </a>
                     <a id="cmp-global-export-btn" href="<?php echo esc_url( admin_url( 'admin-ajax.php?action=cmp_export_customer_csv&sub_id=' . $subs[0]->id ) ); ?>" class="cmp-hdr-btn cmp-hdr-btn-export">Export to Excel</a>
                     <?php if ( ! $is_chef_override && ! $is_admin_override ) : ?>
-                        <a href="' . esc_url( wp_logout_url( get_permalink() ) ) . '" class="cmp-hdr-btn cmp-hdr-btn-logout">Log Out</a>
+                        <a href="<?php echo esc_url( wp_logout_url( get_permalink() ) ); ?>" class="cmp-hdr-btn cmp-hdr-btn-logout">Log Out</a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -728,6 +728,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                 }
 
                                 $is_void            = ( $log && in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) );
+                                $has_saved_date     = ( $log_id > 0 && ! empty( $log->target_date ) && $log->target_date !== '0000-00-00' );
                                 $saved_chefs_choice = ( $log && $log->is_chefs_choice ) ? true : false;
                                 $pos_updated        = ( $log && ! empty( $log->pos_updated ) ) ? 1 : 0;
 
@@ -772,7 +773,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                 $row_status_class = 'status-pending';
                                 if ( $is_void ) {
                                     $row_status_class = 'status-void row-void';
-                                } elseif ( $log_id > 0 ) {
+                                } elseif ( $has_saved_date ) {
                                     $row_status_class = 'status-saved';
                                 }
 
@@ -808,16 +809,16 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                     $status_badge = '<span class="cmp-status-pill pill-void">' . esc_html( $log->delivery_result ) . '</span>';
                                 } elseif ( $is_paused ) {
                                     $status_badge = '<span class="cmp-status-pill pill-paused">Paused</span>';
-                                } elseif ( $log_id > 0 && ! $saved_chefs_choice && ! $is_chef_assigned ) {
+                                } elseif ( $has_saved_date && ! $saved_chefs_choice && ! $is_chef_assigned ) {
                                     $status_badge = '<span class="cmp-status-pill pill-meals-pending">Meals Pending</span>';
-                                } elseif ( $log_id > 0 ) {
+                                } elseif ( $has_saved_date ) {
                                     $status_badge = '<span class="cmp-status-pill pill-confirmed">Selected</span>';
                                 }
 
                                 // Option 4A: Read-Only POS Check Badges for FOH, Menu Manager & Admin (Exempts Cancelled & Returned)
                                 $desktop_pos_badge = '';
                                 $mobile_pos_badge  = '';
-                                if ( $can_view_pos_check && $log_id > 0 ) {
+                                if ( $can_view_pos_check && $has_saved_date ) {
                                     if ( $is_void ) {
                                         $desktop_pos_badge = '<span class="cmp-pos-readonly-pill pos-is-pending" title="No POS reconciliation required for Cancelled or Returned meals">No POS Req.</span>';
                                         $mobile_pos_badge  = '<span class="cmp-pos-micro-pill pos-is-pending" title="No POS Required">No POS</span>';
@@ -1025,7 +1026,7 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                     $chef_btn_color = $is_chef_assigned ? '#1B5E20' : '#379237';
                                                     echo '<button type="button" class="cmp-save-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-row="' . esc_attr( $i ) . '" style="background:' . esc_attr( $chef_btn_color ) . ';">' . esc_html( $chef_btn_text ) . '</button>';
                                                     echo '<button type="button" class="cmp-undo-row" data-row="' . esc_attr( $i ) . '" title="Discard unsaved changes and restore previous selection (Shortcut: Esc)">' . $icon_undo . ' <span>Undo</span></button>';
-                                                    if ( $log_id > 0 ) {
+                                                    if ( $has_saved_date ) {
                                                         echo '<div class="cmp-secondary-actions">';
                                                         echo '<button type="button" class="cmp-clear-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Reset / Clear Selection">' . $icon_reset . '</button>';
                                                         echo '</div>';
@@ -1042,12 +1043,12 @@ if ( ! function_exists( 'cmp_render_customer_portal' ) ) {
                                                 }
                                             } else {
                                                 if ( ( ! $is_time_locked || $can_bypass_date_lock ) && ( ! $is_paused || $can_bypass_date_lock ) ) {
-                                                    $btn_txt   = ( $log_id > 0 ) ? 'Update' : 'Save';
-                                                    $btn_color = ( $log_id > 0 ) ? '#1B5E20' : '#379237';
+                                                    $btn_txt   = $has_saved_date ? 'Update' : 'Save';
+                                                    $btn_color = $has_saved_date ? '#1B5E20' : '#379237';
                                                     echo '<button type="button" class="cmp-save-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" data-row="' . esc_attr( $i ) . '" style="background:' . esc_attr( $btn_color ) . ';">' . esc_html( $btn_txt ) . '</button>';
                                                     echo '<button type="button" class="cmp-undo-row" data-row="' . esc_attr( $i ) . '" title="Discard unsaved changes and restore previous selection (Shortcut: Esc)">' . $icon_undo . ' <span>Undo</span></button>';
 
-                                                    if ( $log_id > 0 ) {
+                                                    if ( $has_saved_date ) {
                                                         echo '<div class="cmp-secondary-actions">';
                                                         echo '<button type="button" class="cmp-clear-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Reset Selection">' . $icon_reset . '</button>';
                                                         echo '<button type="button" class="cmp-cancel-day-row" data-sub-id="' . esc_attr( $sub->id ) . '" data-log-id="' . esc_attr( $log_id ) . '" title="Cancel Day">' . $icon_cancel . '</button>';
