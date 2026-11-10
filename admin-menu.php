@@ -8,7 +8,7 @@ if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
 }
 
-// Tell customer-portal-backend.php that admin-menu.php handles the Dish Display Mode UI natively
+// Tell customer-portal-backend.php that admin-menu.php renders the Dish Display Mode UI natively
 if ( ! defined( 'CMP_DISH_MODE_BANNER_RENDERED' ) ) {
     define( 'CMP_DISH_MODE_BANNER_RENDERED', true );
 }
@@ -52,15 +52,15 @@ function cmp_render_admin_page() {
     if ( isset( $_POST['cmp_save_dish_display_mode'] ) ) {
         check_admin_referer( 'cmp_save_dish_display_mode_nonce' );
         $new_mode = sanitize_text_field( wp_unslash( $_POST['cmp_dish_details_display_mode'] ?? 'dish_1' ) );
-        if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+        if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'dish_4', 'dish_5', 'off' ), true ) ) {
             $new_mode = 'dish_1';
         }
         update_option( 'cmp_dish_details_display_mode', $new_mode );
-        $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Customer Portal Dish Details Display Mode updated successfully.</p></div>';
+        $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Customer Portal Dish Display Mode updated successfully.</p></div>';
     }
 
     $current_dish_mode = get_option( 'cmp_dish_details_display_mode', 'dish_1' );
-    if ( ! in_array( $current_dish_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+    if ( ! in_array( $current_dish_mode, array( 'dish_1', 'dish_2', 'dish_3', 'dish_4', 'dish_5', 'off' ), true ) ) {
         $current_dish_mode = 'dish_1';
     }
 
@@ -137,7 +137,7 @@ function cmp_render_admin_page() {
             border-radius: 12px;
             padding: 18px 22px;
             margin: 18px 0 22px 0;
-            max-width: 1020px;
+            max-width: 1240px;
             box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05);
             box-sizing: border-box;
         }
@@ -174,8 +174,18 @@ function cmp_render_admin_page() {
         }
         .cmp-dish-mode-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 12px;
+        }
+        @media (max-width: 1024px) {
+            .cmp-dish-mode-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 640px) {
+            .cmp-dish-mode-grid {
+                grid-template-columns: 1fr;
+            }
         }
         .cmp-dish-mode-option {
             display: flex;
@@ -188,6 +198,10 @@ function cmp_render_admin_page() {
             cursor: pointer;
             transition: all 0.15s ease;
         }
+        .cmp-dish-mode-option:hover {
+            border-color: #68B946;
+            background: #ffffff;
+        }
         .cmp-dish-mode-option.is-active {
             border: 2px solid #379237;
             background: #EEF7E3;
@@ -195,6 +209,7 @@ function cmp_render_admin_page() {
         .cmp-dish-mode-option input[type="radio"] {
             margin-top: 3px;
             accent-color: #379237;
+            flex-shrink: 0;
         }
         .cmp-dish-mode-opt-title {
             display: block;
@@ -229,17 +244,17 @@ function cmp_render_admin_page() {
         <h1>Meal Portal - Menu Manager</h1>
         <?php echo $message; ?>
 
-        <!-- CUSTOMER PORTAL DISH INGREDIENTS & MACROS DISPLAY MODE TOGGLE -->
+        <!-- CUSTOMER PORTAL DISH DESCRIPTION & MACROS DISPLAY MODE TOGGLE (OPTIONS DISH-1 TO DISH-5 + OFF) -->
         <div class="cmp-dish-mode-card">
             <form method="post">
                 <?php wp_nonce_field( 'cmp_save_dish_display_mode_nonce' ); ?>
                 <div class="cmp-dish-mode-header">
                     <div>
                         <h2 class="cmp-dish-mode-title">
-                            <span>🍽️ Customer Portal: Dish Ingredients &amp; Macros Display Mode</span>
+                            <span>🍽️ Customer Portal: Dish Description &amp; Macros Display Mode</span>
                             <span class="cmp-dish-mode-live-pill">Live Toggle</span>
                         </h2>
-                        <p class="cmp-dish-mode-sub">Choose how each selected meal's <strong>Ingredients (Description)</strong> and <strong>Macros</strong> are displayed in the Customer Portal across Desktop, Tablet, and Mobile.</p>
+                        <p class="cmp-dish-mode-sub">Choose how each meal's description and macros are displayed in the Customer Portal across Desktop, Tablet, and Mobile (both before and after saving).</p>
                     </div>
                     <button type="submit" name="cmp_save_dish_display_mode" value="1" class="cmp-dish-mode-save-btn">Save Display Mode</button>
                 </div>
@@ -249,7 +264,7 @@ function cmp_render_admin_page() {
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_dish_mode, 'dish_1' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-1: Micro-Card</span>
-                            <span class="cmp-dish-mode-opt-desc">Shows a clean card below each selected meal with Ingredients + 4 Macro Pills (kcal, P, C, F).</span>
+                            <span class="cmp-dish-mode-opt-desc">Shows a clean card below each selected meal with dish description + 4 pastel Macro Pills (kcal, P, C, F).</span>
                         </span>
                     </label>
 
@@ -257,7 +272,7 @@ function cmp_render_admin_page() {
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_dish_mode, 'dish_2' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-2: Badge &amp; Popover</span>
-                            <span class="cmp-dish-mode-opt-desc">Shows a compact <code>[440 kcal • ℹ️ Ingredients]</code> pill next to the slot label with floating popover.</span>
+                            <span class="cmp-dish-mode-opt-desc">Shows a compact <code>[420 kcal • ℹ️ Details]</code> pill next to the slot label with floating popover.</span>
                         </span>
                     </label>
 
@@ -265,7 +280,23 @@ function cmp_render_admin_page() {
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_dish_mode, 'dish_3' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-3: Macro Bar + Drawer</span>
-                            <span class="cmp-dish-mode-opt-desc">Shows a 1-line macro summary bar below dropdown with tap-to-expand ingredients drawer.</span>
+                            <span class="cmp-dish-mode-opt-desc">Shows a 1-line macro summary bar below the dropdown with a tap-to-expand description drawer.</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_4' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_4" <?php checked( $current_dish_mode, 'dish_4' ); ?>>
+                        <span>
+                            <span class="cmp-dish-mode-opt-title">Option DISH-4 (4A): Card-Stack Picker + Card Preview</span>
+                            <span class="cmp-dish-mode-opt-desc">Replaces dropdowns with an inline visual Card-Stack picker (and mobile sheet) + full Dish Card preview in the slot.</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_5' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_5" <?php checked( $current_dish_mode, 'dish_5' ); ?>>
+                        <span>
+                            <span class="cmp-dish-mode-opt-title">Option DISH-5 (4B): App-Style Menu Drawer + Card</span>
+                            <span class="cmp-dish-mode-opt-desc">Opens a full app-style slide-up / modal Card-Stack Menu Drawer with instant search &amp; category filter tabs.</span>
                         </span>
                     </label>
 
