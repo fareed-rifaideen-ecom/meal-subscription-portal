@@ -2,7 +2,23 @@
 /**
  * Customer Portal - Backend Engine, AJAX Handlers, CSV Exporters & Feedback Admin
  * Part 1 of the 3-file Customer Portal modular architecture.
- * Phase 3: Row-Level Staff Audit Stamps (Option 2B), Admin-Only Cancellation Reset (Option 3A) & Activity Logging (Option 4B)
+ *
+ * Upgrades Included:
+ *  - Strict Admin-Only Reset Selection (`cmp_ajax_clear_daily_log`):
+ *      * Locked strictly to Super Administrators (`manage_options`) across all modes (including Chef Override Mode).
+ *      * Customers, FOH Managers, Menu Managers, and Kitchen Staff cannot reset/delete a meal row.
+ *  - Strict Terminal Delivery Status Lock (`Successful`, `Returned`, `Cancelled`):
+ *      * Non-admins (Customer, FOH, Menu Manager, Kitchen) are blocked from modifying, saving, or cancelling any meal row
+ *        once its `delivery_result` is `Successful`, `Returned`, or `Cancelled`. Only Super Admins can override.
+ *  - Configurable 3-Mode Dish Details Toggle in WP Admin > Meal Portal > Menu Manager (`cmp_dish_details_display_mode`):
+ *      * Allows switching live between Option DISH-1 (Dish Info Card), Option DISH-2 (Interactive Badge & Popover),
+ *        Option DISH-3 (1-Line Macro Bar + Expandable Ingredients), or Off.
+ *  - Allow Meal Skipping & Automatic Carryover (Redemption) Days Engine
+ *  - Option PREP-C: Central `prep_timing` schema column, 4:00 PM+ Same-Day Prep auto-detection, and Staff-Only Prep Schedule override
+ *  - Option 2B: Row-Level Staff Audit Stamps (`cmp_format_row_audit_stamp`)
+ *  - Option 3A: Admin-Only Cancellation Reset & Extra Day Reversal (`cmp_ajax_clear_daily_log`)
+ *  - Option 4A: POS Check Exemption (`No POS Required`) for Cancelled & Returned days in Staff CSV Exports
+ *  - Option 1A & 5A: Full synchronization with `Customer Logs` and `Kitchen Logs`
  */
 
 // Prevent direct file access
@@ -19,9 +35,235 @@ if ( function_exists( 'opcache_invalidate' ) ) {
 }
 
 // ==========================================
-// 0. ROLE, QUOTA, DATE LOCK, AUDIT & DB HELPER FUNCTIONS
-//    (CONNECTED TO WP ADMIN -> MEAL SETTINGS)
+// 0. ROLE, QUOTA, DATE LOCK, CARRYOVER, SAME-DAY PREP, DISH DISPLAY MODE, AUDIT & DB HELPERS
+//    (CONNECTED TO WP ADMIN -> MEAL SETTINGS & MENU MANAGER)
 // ==========================================
+
+/**
+ * Returns the active Customer Portal Dish Details (Ingredients & Macros) Display Mode:
+ * - 'dish_1' : Option DISH-1 (Live Dish Info Card Below Dropdown — Default)
+ * - 'dish_2' : Option DISH-2 (Interactive Header Pill + Floating Popover)
+ * - 'dish_3' : Option DISH-3 (Hybrid 1-Line Macro Strip + Tap-to-Expand Ingredients Drawer)
+ * - 'off'    : Dropdown Menu Name Only
+ */
+if ( ! function_exists( 'cmp_get_dish_details_display_mode' ) ) {
+    function cmp_get_dish_details_display_mode() {
+        $mode = get_option( 'cmp_dish_details_display_mode', 'dish_1' );
+        if ( ! in_array( $mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+            $mode = 'dish_1';
+        }
+        return $mode;
+    }
+}
+
+/**
+ * Injects the Dish Details UI Mode Toggle Bar into WP Admin > Meal Portal > Menu Manager (`page=cmp-menu-manager`).
+ */
+add_action( 'admin_init', 'cmp_handle_menu_manager_dish_display_mode_save' );
+if ( ! function_exists( 'cmp_handle_menu_manager_dish_display_mode_save' ) ) {
+    function cmp_handle_menu_manager_dish_display_mode_save() {
+        if ( ! is_admin() || ! isset( $_POST['cmp_save_dish_display_mode'] ) ) {
+            return;
+        }
+        if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) {
+            return;
+        }
+        if ( ! isset( $_POST['cmp_dish_mode_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['cmp_dish_mode_nonce'] ) ), 'cmp_save_dish_mode_action' ) ) {
+            return;
+        }
+
+        $new_mode = isset( $_POST['cmp_dish_details_display_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['cmp_dish_details_display_mode'] ) ) : 'dish_1';
+        if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+            $new_mode = 'dish_1';
+        }
+
+        update_option( 'cmp_dish_details_display_mode', $new_mode );
+        set_transient( 'cmp_dish_mode_saved_notice', $new_mode, 30 );
+    }
+}
+
+add_action( 'admin_notices', 'cmp_render_menu_manager_dish_display_mode_banner', 5 );
+if ( ! function_exists( 'cmp_render_menu_manager_dish_display_mode_banner' ) ) {
+    function cmp_render_menu_manager_dish_display_mode_banner() {
+        if ( ! is_admin() || ! isset( $_GET['page'] ) || $_GET['page'] !== 'cmp-menu-manager' ) {
+            return;
+        }
+        if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) ) {
+            return;
+        }
+        if ( defined( 'CMP_DISH_MODE_BANNER_RENDERED' ) ) {
+            return;
+        }
+        define( 'CMP_DISH_MODE_BANNER_RENDERED', true );
+
+        $current_mode = cmp_get_dish_details_display_mode();
+        $saved_notice = get_transient( 'cmp_dish_mode_saved_notice' );
+        if ( $saved_notice ) {
+            delete_transient( 'cmp_dish_mode_saved_notice' );
+        }
+        ?>
+        <style>
+            .cmp-mm-dish-mode-card {
+                max-width: 1280px;
+                margin: 18px 20px 14px 0;
+                background: #ffffff;
+                border: 1.5px solid #DCECC9;
+                border-left: 5px solid #379237;
+                border-radius: 12px;
+                padding: 16px 20px;
+                box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05);
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            }
+            .cmp-mm-dish-mode-top {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin-bottom: 12px;
+            }
+            .cmp-mm-dish-mode-top h3 {
+                margin: 0;
+                font-size: 1.05rem;
+                font-weight: 800;
+                color: #1B5E20;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .cmp-mm-dish-mode-top p {
+                margin: 2px 0 0 0;
+                font-size: 0.84rem;
+                color: #475569;
+            }
+            .cmp-mm-dish-mode-grid {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 10px;
+                align-items: stretch;
+            }
+            @media (max-width: 1024px) {
+                .cmp-mm-dish-mode-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            }
+            @media (max-width: 600px) {
+                .cmp-mm-dish-mode-grid { grid-template-columns: 1fr; }
+            }
+            .cmp-mm-dish-option {
+                display: flex;
+                align-items: flex-start;
+                gap: 9px;
+                padding: 11px 13px;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 10px;
+                background: #f8fafc;
+                cursor: pointer;
+                transition: all 0.18s ease;
+            }
+            .cmp-mm-dish-option:hover {
+                border-color: #68B946;
+                background: #ffffff;
+            }
+            .cmp-mm-dish-option.is-active {
+                border-color: #379237;
+                background: #EEF7E3;
+                box-shadow: 0 2px 8px rgba(55, 146, 55, 0.12);
+            }
+            .cmp-mm-dish-option input[type="radio"] {
+                margin-top: 2px;
+                accent-color: #379237;
+                flex-shrink: 0;
+            }
+            .cmp-mm-dish-opt-title {
+                display: block;
+                font-size: 0.86rem;
+                font-weight: 800;
+                color: #0f172a;
+                margin-bottom: 2px;
+            }
+            .cmp-mm-dish-opt-desc {
+                display: block;
+                font-size: 0.76rem;
+                color: #475569;
+                line-height: 1.35;
+            }
+            .cmp-mm-dish-save-btn {
+                background: linear-gradient(135deg, #379237 0%, #1B5E20 100%);
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 18px;
+                font-size: 0.85rem;
+                font-weight: 800;
+                cursor: pointer;
+                transition: all 0.18s ease;
+                white-space: nowrap;
+            }
+            .cmp-mm-dish-save-btn:hover {
+                filter: brightness(1.07);
+                transform: translateY(-1px);
+            }
+        </style>
+
+        <?php if ( $saved_notice ) : ?>
+            <div class="notice notice-success is-dismissible" style="max-width:1280px; margin-left:0;">
+                <p><strong>Customer Portal Dish Details Display Mode updated successfully!</strong></p>
+            </div>
+        <?php endif; ?>
+
+        <div class="cmp-mm-dish-mode-card">
+            <form method="POST" action="">
+                <?php wp_nonce_field( 'cmp_save_dish_mode_action', 'cmp_dish_mode_nonce' ); ?>
+                <div class="cmp-mm-dish-mode-top">
+                    <div>
+                        <h3>
+                            <span>&#127860; Customer Portal: Dish Ingredients &amp; Macros Display Mode</span>
+                            <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #68B946; padding:2px 8px; border-radius:999px; font-size:0.72rem; font-weight:800;">Live Toggle</span>
+                        </h3>
+                        <p>Choose how each selected meal's <strong>Ingredients (Description)</strong> and <strong>Macros</strong> are displayed in the Customer Portal across Desktop, Tablet, and Mobile.</p>
+                    </div>
+                    <button type="submit" name="cmp_save_dish_display_mode" value="1" class="cmp-mm-dish-save-btn">
+                        Save Display Mode
+                    </button>
+                </div>
+
+                <div class="cmp-mm-dish-mode-grid">
+                    <label class="cmp-mm-dish-option <?php echo $current_mode === 'dish_1' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_mode, 'dish_1' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
+                        <span>
+                            <span class="cmp-mm-dish-opt-title">Option DISH-1: Dish Info Card</span>
+                            <span class="cmp-mm-dish-opt-desc">Shows a clean card below each selected meal with Ingredients + 4 Macro Pills (kcal, P, C, F).</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-mm-dish-option <?php echo $current_mode === 'dish_2' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_mode, 'dish_2' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
+                        <span>
+                            <span class="cmp-mm-dish-opt-title">Option DISH-2: Badge &amp; Popover</span>
+                            <span class="cmp-mm-dish-opt-desc">Shows a compact <code>[440 kcal &bull; &#8505; Ingredients]</code> pill next to the label that opens a floating popover on hover/tap.</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-mm-dish-option <?php echo $current_mode === 'dish_3' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_mode, 'dish_3' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
+                        <span>
+                            <span class="cmp-mm-dish-opt-title">Option DISH-3: Macro Bar + Drawer</span>
+                            <span class="cmp-mm-dish-opt-desc">Shows a 1-line macro summary bar below the dropdown with a tap-to-expand <code>[Ingredients &#9660;]</code> drawer.</span>
+                        </span>
+                    </label>
+
+                    <label class="cmp-mm-dish-option <?php echo $current_mode === 'off' ? 'is-active' : ''; ?>">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="off" <?php checked( $current_mode, 'off' ); ?> onchange="this.closest('.cmp-mm-dish-mode-grid').querySelectorAll('.cmp-mm-dish-option').forEach(el=>el.classList.remove('is-active')); this.closest('.cmp-mm-dish-option').classList.add('is-active');">
+                        <span>
+                            <span class="cmp-mm-dish-opt-title">Off (Menu Name Only)</span>
+                            <span class="cmp-mm-dish-opt-desc">Displays only the dish name inside the dropdown and the daily macro totals at the bottom of the row.</span>
+                        </span>
+                    </label>
+                </div>
+            </form>
+        </div>
+        <?php
+    }
+}
 
 /**
  * Checks if the current logged-in user is staff (FOH, Kitchen, Menu Manager, or Admin)
@@ -40,6 +282,21 @@ if ( ! function_exists( 'cmp_can_view_staff_audit_log' ) ) {
 }
 
 /**
+ * Checks if the current logged-in user is FOH, Menu Manager, or Admin
+ * (Authorized to edit Account Details and toggle "Allow Meal Skipping" in Customer Portal & FOH Portal).
+ */
+if ( ! function_exists( 'cmp_can_manage_meal_skipping' ) ) {
+    function cmp_can_manage_meal_skipping() {
+        if ( ! is_user_logged_in() ) {
+            return false;
+        }
+        return current_user_can( 'manage_options' )
+            || current_user_can( 'foh_manager' )
+            || current_user_can( 'menu_manager' );
+    }
+}
+
+/**
  * Formats the Option 2B micro-footer audit stamp for a daily meal log row.
  */
 if ( ! function_exists( 'cmp_format_row_audit_stamp' ) ) {
@@ -52,6 +309,710 @@ if ( ! function_exists( 'cmp_format_row_audit_stamp' ) ) {
         $time_part    = date( 'd M Y, h:i A', strtotime( $updated_at ) );
 
         return sprintf( '%s by %s%s • %s', $action_label, $actor_name, $role_part, $time_part );
+    }
+}
+
+/**
+ * Ensures the `prep_timing` column exists on `wp_cmp_subscriptions` ('auto', 'same_day', 'day_before').
+ */
+if ( ! function_exists( 'cmp_ensure_prep_timing_column' ) ) {
+    function cmp_ensure_prep_timing_column() {
+        global $wpdb;
+        static $checked = false;
+        if ( $checked ) {
+            return;
+        }
+        $checked      = true;
+        $table_subs   = $wpdb->prefix . 'cmp_subscriptions';
+        $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) );
+        if ( $table_exists !== $table_subs ) {
+            return;
+        }
+        $col_check = $wpdb->get_results( "SHOW COLUMNS FROM {$table_subs} LIKE 'prep_timing'" );
+        if ( empty( $col_check ) ) {
+            $wpdb->query( "ALTER TABLE {$table_subs} ADD COLUMN prep_timing VARCHAR(30) DEFAULT 'auto'" );
+        }
+    }
+}
+
+/**
+ * Ensures the Meal Skipping & Carryover Redemption columns exist on `wp_cmp_subscriptions` and `wp_cmp_daily_logs`.
+ */
+add_action( 'init', 'cmp_ensure_meal_skip_carryover_columns', 6 );
+if ( ! function_exists( 'cmp_ensure_meal_skip_carryover_columns' ) ) {
+    function cmp_ensure_meal_skip_carryover_columns() {
+        global $wpdb;
+        static $checked = false;
+        if ( $checked ) {
+            return;
+        }
+        $checked = true;
+
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+        $subs_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_subs ) );
+        if ( $subs_exists === $table_subs ) {
+            $sub_cols = $wpdb->get_col( "DESC {$table_subs}", 0 );
+            if ( is_array( $sub_cols ) ) {
+                if ( ! in_array( 'allow_meal_skip', $sub_cols, true ) ) {
+                    $wpdb->query( "ALTER TABLE {$table_subs} ADD COLUMN allow_meal_skip TINYINT(1) NOT NULL DEFAULT 0" );
+                }
+                if ( ! in_array( 'carryover_days', $sub_cols, true ) ) {
+                    $wpdb->query( "ALTER TABLE {$table_subs} ADD COLUMN carryover_days INT(11) NOT NULL DEFAULT 0" );
+                }
+            }
+        }
+
+        $logs_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_logs ) );
+        if ( $logs_exists === $table_logs ) {
+            $log_cols = $wpdb->get_col( "DESC {$table_logs}", 0 );
+            if ( is_array( $log_cols ) ) {
+                if ( ! in_array( 'is_carryover', $log_cols, true ) ) {
+                    $wpdb->query( "ALTER TABLE {$table_logs} ADD COLUMN is_carryover TINYINT(1) NOT NULL DEFAULT 0" );
+                }
+                if ( ! in_array( 'carryover_from_log_id', $log_cols, true ) ) {
+                    $wpdb->query( "ALTER TABLE {$table_logs} ADD COLUMN carryover_from_log_id BIGINT(20) NOT NULL DEFAULT 0" );
+                }
+                if ( ! in_array( 'carryover_meals_quota', $log_cols, true ) ) {
+                    $wpdb->query( "ALTER TABLE {$table_logs} ADD COLUMN carryover_meals_quota TINYINT(2) NOT NULL DEFAULT 0" );
+                }
+                if ( ! in_array( 'carryover_snacks_quota', $log_cols, true ) ) {
+                    $wpdb->query( "ALTER TABLE {$table_logs} ADD COLUMN carryover_snacks_quota TINYINT(2) NOT NULL DEFAULT 0" );
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Resolves the base daily main meal quota and snack quota for a subscription.
+ */
+if ( ! function_exists( 'cmp_get_subscription_base_quotas' ) ) {
+    function cmp_get_subscription_base_quotas( $sub ) {
+        if ( ! is_object( $sub ) ) {
+            return array(
+                'is_juice'      => false,
+                'allowed_meals' => 1,
+                'snack_quota'   => 1,
+            );
+        }
+
+        $allowed_cats = isset( $sub->allowed_categories ) ? (string) $sub->allowed_categories : '';
+        $plan_name    = isset( $sub->plan_name ) ? (string) $sub->plan_name : '';
+
+        $is_juice = ( stripos( $allowed_cats, 'Juices' ) !== false || stripos( $plan_name, 'juice' ) !== false || stripos( $plan_name, 'cleanse' ) !== false );
+
+        if ( $is_juice ) {
+            return array(
+                'is_juice'      => true,
+                'allowed_meals' => 3,
+                'snack_quota'   => 0,
+            );
+        }
+
+        $allowed_quota = 0;
+        if ( preg_match( '/(\d+)\s*Meal/i', $plan_name, $m ) ) {
+            $allowed_quota = intval( $m[1] );
+        } else {
+            if ( preg_match( '/\b(one|1)\b/i', $plan_name ) )       $allowed_quota = 1;
+            elseif ( preg_match( '/\b(two|2)\b/i', $plan_name ) )   $allowed_quota = 2;
+            elseif ( preg_match( '/\b(three|3)\b/i', $plan_name ) ) $allowed_quota = 3;
+            else {
+                $cats = explode( ',', $allowed_cats );
+                foreach ( $cats as $c ) {
+                    if ( in_array( trim( $c ), array( 'Breakfast', 'Lunch', 'Dinner' ), true ) ) {
+                        $allowed_quota++;
+                    }
+                }
+            }
+        }
+
+        if ( $allowed_quota <= 0 ) {
+            $allowed_quota = 1;
+        }
+        $snack_quota = ( $allowed_quota >= 2 ) ? 2 : 1;
+
+        return array(
+            'is_juice'      => false,
+            'allowed_meals' => $allowed_quota,
+            'snack_quota'   => $snack_quota,
+        );
+    }
+}
+
+/**
+ * Counts how many main meals (or juices) and snacks are selected on a daily log row.
+ */
+if ( ! function_exists( 'cmp_count_log_selected_meals_and_snacks' ) ) {
+    function cmp_count_log_selected_meals_and_snacks( $log, $is_juice = false, $alloc_meals = 1, $alloc_snacks = 1 ) {
+        if ( ! is_object( $log ) ) {
+            return array( 'meals' => 0, 'snacks' => 0 );
+        }
+
+        if ( $is_juice ) {
+            $j_count = 0;
+            if ( ! empty( $log->juice_1_id ) || ! empty( trim( (string) ( $log->custom_juice_1 ?? '' ) ) ) ) $j_count++;
+            if ( ! empty( $log->juice_2_id ) || ! empty( trim( (string) ( $log->custom_juice_2 ?? '' ) ) ) ) $j_count++;
+            if ( ! empty( $log->juice_3_id ) || ! empty( trim( (string) ( $log->custom_juice_3 ?? '' ) ) ) ) $j_count++;
+            if ( ! empty( $log->is_chefs_choice ) && $j_count === 0 ) {
+                $j_count = $alloc_meals;
+            }
+            return array( 'meals' => $j_count, 'snacks' => 0 );
+        }
+
+        $m_count = 0;
+        if ( ! empty( $log->breakfast_id ) || ! empty( trim( (string) ( $log->custom_breakfast ?? '' ) ) ) ) $m_count++;
+        if ( ! empty( $log->lunch_id )     || ! empty( trim( (string) ( $log->custom_lunch ?? '' ) ) ) )     $m_count++;
+        if ( ! empty( $log->dinner_id )    || ! empty( trim( (string) ( $log->custom_dinner ?? '' ) ) ) )    $m_count++;
+
+        $s_count = 0;
+        if ( ! empty( $log->snack_1_id ) || ! empty( trim( (string) ( $log->custom_snack_1 ?? '' ) ) ) ) $s_count++;
+        if ( ! empty( $log->snack_2_id ) || ! empty( trim( (string) ( $log->custom_snack_2 ?? '' ) ) ) ) $s_count++;
+
+        if ( ! empty( $log->is_chefs_choice ) && $m_count === 0 ) {
+            $m_count = $alloc_meals;
+            $s_count = $alloc_snacks;
+        }
+
+        return array(
+            'meals'  => $m_count,
+            'snacks' => $s_count,
+        );
+    }
+}
+
+/**
+ * Builds the complete ordered schedule of Regular Slots and Carryover / Redemption Slots for a subscription.
+ */
+if ( ! function_exists( 'cmp_build_subscription_schedule_slots' ) ) {
+    function cmp_build_subscription_schedule_slots( $sub ) {
+        global $wpdb;
+        cmp_ensure_meal_skip_carryover_columns();
+
+        if ( is_numeric( $sub ) ) {
+            $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+            $sub        = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", intval( $sub ) ) );
+        }
+
+        if ( ! is_object( $sub ) ) {
+            return array(
+                'regular_slots'      => array(),
+                'carryover_slots'    => array(),
+                'all_slots'          => array(),
+                'regular_void_count' => 0,
+                'active_carryovers'  => 0,
+                'base_quotas'        => array( 'is_juice' => false, 'allowed_meals' => 1, 'snack_quota' => 1 ),
+            );
+        }
+
+        $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
+        $base_quotas = cmp_get_subscription_base_quotas( $sub );
+        $is_juice    = $base_quotas['is_juice'];
+        $base_meals  = $base_quotas['allowed_meals'];
+        $base_snacks = $base_quotas['snack_quota'];
+
+        $all_logs = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table_logs} WHERE subscription_id = %d ORDER BY is_carryover ASC, target_date ASC, id ASC",
+            intval( $sub->id )
+        ) );
+
+        $regular_logs             = array();
+        $carryover_logs_by_parent = array();
+        $all_carryover_logs       = array();
+
+        if ( $all_logs ) {
+            foreach ( $all_logs as $l ) {
+                if ( ! empty( $l->is_carryover ) && intval( $l->is_carryover ) === 1 ) {
+                    $p_id = intval( $l->carryover_from_log_id );
+                    if ( ! isset( $carryover_logs_by_parent[ $p_id ] ) ) {
+                        $carryover_logs_by_parent[ $p_id ] = array();
+                    }
+                    $carryover_logs_by_parent[ $p_id ][]    = $l;
+                    $all_carryover_logs[ intval( $l->id ) ] = $l;
+                } else {
+                    $regular_logs[] = $l;
+                }
+            }
+        }
+
+        $regular_void_count = 0;
+        foreach ( $regular_logs as $rlog ) {
+            if ( in_array( $rlog->delivery_result, array( 'Cancelled', 'Returned' ), true ) ) {
+                $regular_void_count++;
+            }
+        }
+
+        $regular_display_days = intval( $sub->total_days ) + $regular_void_count;
+        $regular_slots        = array();
+        $carryover_queue      = array();
+
+        for ( $i = 1; $i <= $regular_display_days; $i++ ) {
+            $rlog    = isset( $regular_logs[ $i - 1 ] ) ? $regular_logs[ $i - 1 ] : null;
+            $is_void = ( $rlog && in_array( $rlog->delivery_result, array( 'Cancelled', 'Returned' ), true ) );
+
+            $regular_slots[] = array(
+                'day_num'              => $i,
+                'is_carryover'         => false,
+                'log'                  => $rlog,
+                'alloc_meals'          => $base_meals,
+                'alloc_snacks'         => $base_snacks,
+                'parent_log_id'        => 0,
+                'source_day_num'       => 0,
+                'source_date'          => '',
+                'origin_day_num'       => 0,
+                'origin_date'          => '',
+                'tooltip_text'         => '',
+                'allocation_badge_txt' => '',
+            );
+
+            if ( $rlog && ! $is_void && ! $is_juice && $base_meals > 1 ) {
+                $counts = cmp_count_log_selected_meals_and_snacks( $rlog, false, $base_meals, $base_snacks );
+                if ( $counts['meals'] > 0 && $counts['meals'] < $base_meals ) {
+                    $skipped_meals     = $base_meals - $counts['meals'];
+                    $skipped_snacks    = max( 0, $base_snacks - $counts['snacks'] );
+                    $carryover_queue[] = array(
+                        'parent_log_id'  => intval( $rlog->id ),
+                        'alloc_meals'    => $skipped_meals,
+                        'alloc_snacks'   => $skipped_snacks,
+                        'source_day_num' => $i,
+                        'source_date'    => $rlog->target_date,
+                        'origin_day_num' => $i,
+                        'origin_date'    => $rlog->target_date,
+                        'hop'            => 1,
+                    );
+                }
+            }
+        }
+
+        $carryover_slots        = array();
+        $consumed_carryover_ids = array();
+        $active_carryover_count = 0;
+        $next_day_num           = $regular_display_days + 1;
+        $q_idx                  = 0;
+
+        while ( $q_idx < count( $carryover_queue ) ) {
+            $item      = $carryover_queue[ $q_idx++ ];
+            $parent_id = intval( $item['parent_log_id'] );
+            $children  = $carryover_logs_by_parent[ $parent_id ] ?? array();
+
+            $meal_word   = ( $item['alloc_meals'] === 1 ) ? '1 Meal' : $item['alloc_meals'] . ' Meals';
+            $snack_word  = ( $item['alloc_snacks'] > 0 )
+                ? ( $item['alloc_snacks'] === 1 ? '1 Snack' : $item['alloc_snacks'] . ' Snacks' )
+                : '0 Snacks';
+            $alloc_badge = $meal_word . ' • ' . $snack_word;
+
+            $src_date_fmt = ( ! empty( $item['source_date'] ) && $item['source_date'] !== '0000-00-00' )
+                ? date( 'D, d M Y', strtotime( $item['source_date'] ) )
+                : 'Scheduled Day';
+
+            if ( $item['hop'] > 1 ) {
+                $orig_date_fmt = ( ! empty( $item['origin_date'] ) && $item['origin_date'] !== '0000-00-00' )
+                    ? date( 'D, d M Y', strtotime( $item['origin_date'] ) )
+                    : '';
+                $tooltip_text = sprintf(
+                    'Carryover from Day %d (%s) [Originally skipped on Day %d%s] — Redeem %s & %s.',
+                    intval( $item['source_day_num'] ),
+                    $src_date_fmt,
+                    intval( $item['origin_day_num'] ),
+                    $orig_date_fmt ? ', ' . $orig_date_fmt : '',
+                    $meal_word,
+                    $snack_word
+                );
+            } else {
+                $tooltip_text = sprintf(
+                    'Carryover from Day %d (%s) — Redeem %s & %s skipped from that day.',
+                    intval( $item['source_day_num'] ),
+                    $src_date_fmt,
+                    $meal_word,
+                    $snack_word
+                );
+            }
+
+            $void_children   = array();
+            $active_children = array();
+
+            foreach ( $children as $ch ) {
+                $consumed_carryover_ids[ intval( $ch->id ) ] = true;
+                if ( in_array( $ch->delivery_result, array( 'Cancelled', 'Returned' ), true ) ) {
+                    $void_children[] = $ch;
+                } else {
+                    $active_children[] = $ch;
+                }
+            }
+
+            // 1. Render any Cancelled / Returned attempts for this Carryover slot first
+            foreach ( $void_children as $v_ch ) {
+                $carryover_slots[] = array(
+                    'day_num'              => $next_day_num++,
+                    'is_carryover'         => true,
+                    'log'                  => $v_ch,
+                    'alloc_meals'          => $item['alloc_meals'],
+                    'alloc_snacks'         => $item['alloc_snacks'],
+                    'parent_log_id'        => $parent_id,
+                    'source_day_num'       => $item['source_day_num'],
+                    'source_date'          => $item['source_date'],
+                    'origin_day_num'       => $item['origin_day_num'],
+                    'origin_date'          => $item['origin_date'],
+                    'tooltip_text'         => $tooltip_text,
+                    'allocation_badge_txt' => $alloc_badge,
+                );
+            }
+
+            // 2. Render the active Carryover Redemption slot
+            $active_child = ! empty( $active_children ) ? $active_children[0] : null;
+            $this_day_num = $next_day_num++;
+            $active_carryover_count++;
+
+            $carryover_slots[] = array(
+                'day_num'              => $this_day_num,
+                'is_carryover'         => true,
+                'log'                  => $active_child,
+                'alloc_meals'          => $item['alloc_meals'],
+                'alloc_snacks'         => $item['alloc_snacks'],
+                'parent_log_id'        => $parent_id,
+                'source_day_num'       => $item['source_day_num'],
+                'source_date'          => $item['source_date'],
+                'origin_day_num'       => $item['origin_day_num'],
+                'origin_date'          => $item['origin_date'],
+                'tooltip_text'         => $tooltip_text,
+                'allocation_badge_txt' => $alloc_badge,
+            );
+
+            // 3. Check if $active_child itself skipped a meal (Chained Skipping on a 2+ Meal Carryover Day)
+            if ( $active_child && intval( $item['alloc_meals'] ) > 1 ) {
+                $ch_counts = cmp_count_log_selected_meals_and_snacks( $active_child, false, $item['alloc_meals'], $item['alloc_snacks'] );
+                if ( $ch_counts['meals'] > 0 && $ch_counts['meals'] < intval( $item['alloc_meals'] ) ) {
+                    $rem_meals         = intval( $item['alloc_meals'] ) - $ch_counts['meals'];
+                    $rem_snacks        = max( 0, intval( $item['alloc_snacks'] ) - $ch_counts['snacks'] );
+                    $carryover_queue[] = array(
+                        'parent_log_id'  => intval( $active_child->id ),
+                        'alloc_meals'    => $rem_meals,
+                        'alloc_snacks'   => $rem_snacks,
+                        'source_day_num' => $this_day_num,
+                        'source_date'    => $active_child->target_date,
+                        'origin_day_num' => $item['origin_day_num'],
+                        'origin_date'    => $item['origin_date'],
+                        'hop'            => $item['hop'] + 1,
+                    );
+                }
+            }
+        }
+
+        // Safety Net: Include any delivered/locked carryover logs whose parent link was historical
+        foreach ( $all_carryover_logs as $cid => $clog ) {
+            if ( isset( $consumed_carryover_ids[ $cid ] ) ) {
+                continue;
+            }
+            if ( $clog->delivery_result === 'Successful' || intval( $clog->is_prepared ) === 1 || intval( $clog->dispatch_status ) === 1 ) {
+                $c_meals  = max( 1, intval( $clog->carryover_meals_quota ) );
+                $c_snacks = max( 0, intval( $clog->carryover_snacks_quota ) );
+                $m_word   = ( $c_meals === 1 ) ? '1 Meal' : $c_meals . ' Meals';
+                $s_word   = ( $c_snacks > 0 ) ? ( $c_snacks === 1 ? '1 Snack' : $c_snacks . ' Snacks' ) : '0 Snacks';
+                $active_carryover_count++;
+
+                $carryover_slots[] = array(
+                    'day_num'              => $next_day_num++,
+                    'is_carryover'         => true,
+                    'log'                  => $clog,
+                    'alloc_meals'          => $c_meals,
+                    'alloc_snacks'         => $c_snacks,
+                    'parent_log_id'        => intval( $clog->carryover_from_log_id ),
+                    'source_day_num'       => 0,
+                    'source_date'          => '',
+                    'origin_day_num'       => 0,
+                    'origin_date'          => '',
+                    'tooltip_text'         => sprintf( 'Carryover Redemption Day — Redeem %s & %s.', $m_word, $s_word ),
+                    'allocation_badge_txt' => $m_word . ' • ' . $s_word,
+                );
+            }
+        }
+
+        return array(
+            'regular_slots'      => $regular_slots,
+            'carryover_slots'    => $carryover_slots,
+            'all_slots'          => array_merge( $regular_slots, $carryover_slots ),
+            'regular_void_count' => $regular_void_count,
+            'active_carryovers'  => $active_carryover_count,
+            'base_quotas'        => $base_quotas,
+        );
+    }
+}
+
+/**
+ * Synchronizes the subscription's `carryover_days` count, cleans up unconsumed orphan carryover logs,
+ * and adjusts `expiry_date` when carryover days change.
+ */
+if ( ! function_exists( 'cmp_sync_subscription_carryover_state' ) ) {
+    function cmp_sync_subscription_carryover_state( $sub_id ) {
+        global $wpdb;
+        cmp_ensure_meal_skip_carryover_columns();
+
+        $sub_id     = intval( $sub_id );
+        $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+        $table_logs = $wpdb->prefix . 'cmp_daily_logs';
+
+        $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+        if ( ! $sub ) {
+            return array( 'active_carryovers' => 0, 'changed' => false );
+        }
+
+        $schedule      = cmp_build_subscription_schedule_slots( $sub );
+        $valid_log_ids = array();
+
+        foreach ( $schedule['carryover_slots'] as $c_slot ) {
+            if ( ! empty( $c_slot['log'] ) && ! empty( $c_slot['log']->id ) ) {
+                $lid                   = intval( $c_slot['log']->id );
+                $valid_log_ids[ $lid ] = true;
+
+                if ( intval( $c_slot['log']->carryover_meals_quota ) !== intval( $c_slot['alloc_meals'] ) ||
+                     intval( $c_slot['log']->carryover_snacks_quota ) !== intval( $c_slot['alloc_snacks'] ) ) {
+                    $wpdb->update(
+                        $table_logs,
+                        array(
+                            'carryover_meals_quota'  => intval( $c_slot['alloc_meals'] ),
+                            'carryover_snacks_quota' => intval( $c_slot['alloc_snacks'] ),
+                        ),
+                        array( 'id' => $lid )
+                    );
+                }
+            }
+        }
+
+        // Remove any unconsumed carryover log rows whose parent day was restored to full quota or cleared
+        $saved_carryovers = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table_logs} WHERE subscription_id = %d AND is_carryover = 1",
+            $sub_id
+        ) );
+
+        if ( $saved_carryovers ) {
+            foreach ( $saved_carryovers as $sc ) {
+                $sc_id = intval( $sc->id );
+                if ( ! isset( $valid_log_ids[ $sc_id ] ) ) {
+                    if ( $sc->delivery_result !== 'Successful' && intval( $sc->is_prepared ) === 0 && intval( $sc->dispatch_status ) === 0 ) {
+                        $wpdb->delete( $table_logs, array( 'id' => $sc_id ), array( '%d' ) );
+                    }
+                }
+            }
+        }
+
+        // Recalculate after cleanup
+        $sub               = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+        $schedule          = cmp_build_subscription_schedule_slots( $sub );
+        $new_carryover_cnt = intval( $schedule['active_carryovers'] );
+        $old_carryover_cnt = isset( $sub->carryover_days ) ? intval( $sub->carryover_days ) : 0;
+        $delta             = $new_carryover_cnt - $old_carryover_cnt;
+
+        if ( $delta !== 0 ) {
+            $exp_dt = new DateTime( $sub->expiry_date );
+            if ( $delta > 0 ) {
+                $exp_dt->modify( '+' . $delta . ' days' );
+            } else {
+                $exp_dt->modify( $delta . ' days' );
+            }
+
+            $wpdb->update(
+                $table_subs,
+                array(
+                    'carryover_days' => $new_carryover_cnt,
+                    'expiry_date'    => $exp_dt->format( 'Y-m-d H:i:s' ),
+                ),
+                array( 'id' => $sub_id )
+            );
+        }
+
+        return array(
+            'active_carryovers' => $new_carryover_cnt,
+            'delta'             => $delta,
+            'changed'           => ( $delta !== 0 ),
+            'schedule'          => $schedule,
+        );
+    }
+}
+
+/**
+ * Centralized Tracking Metrics & Balance Total Meals Calculator for FOH, Executive & Accounts Portals.
+ */
+if ( ! function_exists( 'cmp_get_subscription_tracking_metrics' ) ) {
+    function cmp_get_subscription_tracking_metrics( $sub ) {
+        global $wpdb;
+        cmp_ensure_meal_skip_carryover_columns();
+
+        if ( is_numeric( $sub ) ) {
+            $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+            $sub        = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", intval( $sub ) ) );
+        }
+
+        $schedule    = cmp_build_subscription_schedule_slots( $sub );
+        $base_quotas = $schedule['base_quotas'];
+        $is_juice    = $base_quotas['is_juice'];
+        $daily_meals = $is_juice ? 3 : intval( $base_quotas['allowed_meals'] );
+
+        $base_total_days      = intval( $sub->total_days );
+        $carryover_days_count = intval( $schedule['active_carryovers'] );
+        $effective_total_days = $base_total_days + $carryover_days_count;
+        $total_plan_meals     = $base_total_days * $daily_meals;
+
+        if ( isset( $sub->carryover_days ) && intval( $sub->carryover_days ) !== $carryover_days_count ) {
+            $wpdb->update(
+                $wpdb->prefix . 'cmp_subscriptions',
+                array( 'carryover_days' => $carryover_days_count ),
+                array( 'id' => intval( $sub->id ) )
+            );
+            $sub->carryover_days = $carryover_days_count;
+        }
+
+        $filled_days             = 0;
+        $used_days               = 0;
+        $pending_fill_days       = 0;
+        $used_meals              = 0;
+        $pending_carryover_days  = 0;
+        $pending_carryover_meals = 0;
+        $last_filled_date        = '';
+
+        foreach ( $schedule['all_slots'] as $slot ) {
+            $log     = $slot['log'];
+            $is_void = ( $log && in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) );
+            if ( $is_void ) {
+                continue;
+            }
+
+            if ( $log && intval( $log->id ) > 0 && ! empty( $log->target_date ) && $log->target_date !== '0000-00-00' ) {
+                $filled_days++;
+                if ( $last_filled_date === '' || $log->target_date > $last_filled_date ) {
+                    $last_filled_date = $log->target_date;
+                }
+
+                if ( $log->delivery_result === 'Successful' ) {
+                    $used_days++;
+                    $counts      = cmp_count_log_selected_meals_and_snacks( $log, $is_juice, $slot['alloc_meals'], $slot['alloc_snacks'] );
+                    $meals_on_d  = $counts['meals'] > 0 ? $counts['meals'] : intval( $slot['alloc_meals'] );
+                    $used_meals += $meals_on_d;
+                } elseif ( ! empty( $slot['is_carryover'] ) ) {
+                    $pending_carryover_days++;
+                    $pending_carryover_meals += intval( $slot['alloc_meals'] );
+                }
+            } else {
+                $pending_fill_days++;
+                if ( ! empty( $slot['is_carryover'] ) ) {
+                    $pending_carryover_days++;
+                    $pending_carryover_meals += intval( $slot['alloc_meals'] );
+                }
+            }
+        }
+
+        $balance_days  = max( 0, $effective_total_days - $used_days );
+        $balance_meals = max( 0, $total_plan_meals - $used_meals );
+
+        $last_filled_formatted = ! empty( $last_filled_date )
+            ? date( 'M j, Y', strtotime( $last_filled_date ) )
+            : 'No Dates Scheduled';
+
+        $popover_parts   = array();
+        $popover_parts[] = ( $pending_fill_days > 0 )
+            ? 'Pending to Fill: ' . $pending_fill_days . ' Day' . ( $pending_fill_days === 1 ? '' : 's' )
+            : 'All Days Filled';
+        $popover_parts[] = 'Balance Meals: ' . $balance_meals . ' Meal' . ( $balance_meals === 1 ? '' : 's' );
+
+        if ( $pending_carryover_days > 0 ) {
+            $popover_parts[] = sprintf(
+                'Carryover: %d Day%s (%d Meal%s Pending)',
+                $pending_carryover_days,
+                $pending_carryover_days === 1 ? '' : 's',
+                $pending_carryover_meals,
+                $pending_carryover_meals === 1 ? '' : 's'
+            );
+        } elseif ( $carryover_days_count > 0 ) {
+            $popover_parts[] = sprintf(
+                'Carryover: %d Day%s (Redeemed)',
+                $carryover_days_count,
+                $carryover_days_count === 1 ? '' : 's'
+            );
+        }
+
+        $popover_parts[] = 'Last Filled Date: ' . $last_filled_formatted;
+
+        return array(
+            'base_total_days'         => $base_total_days,
+            'carryover_days'          => $carryover_days_count,
+            'effective_total_days'    => $effective_total_days,
+            'filled_days'             => $filled_days,
+            'used_days'               => $used_days,
+            'balance_days'            => $balance_days,
+            'pending_fill_days'       => $pending_fill_days,
+            'daily_meal_quota'        => $daily_meals,
+            'total_plan_meals'        => $total_plan_meals,
+            'used_meals'              => $used_meals,
+            'balance_meals'           => $balance_meals,
+            'pending_carryover_days'  => $pending_carryover_days,
+            'pending_carryover_meals' => $pending_carryover_meals,
+            'last_filled_date'        => $last_filled_date,
+            'last_filled_formatted'   => $last_filled_formatted,
+            'popover_text'            => implode( ' · ', $popover_parts ),
+        );
+    }
+}
+
+/**
+ * Option PREP-C Helper: Checks whether a time slot string starts at or after 4:00 PM (16:00).
+ */
+if ( ! function_exists( 'cmp_is_time_slot_after_4pm' ) ) {
+    function cmp_is_time_slot_after_4pm( $time_slot ) {
+        $time_slot = trim( (string) $time_slot );
+        if ( $time_slot === '' ) {
+            return false;
+        }
+        if ( preg_match( '/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i', $time_slot, $m ) ) {
+            $hour = intval( $m[1] );
+            $ampm = isset( $m[3] ) ? strtoupper( trim( $m[3] ) ) : '';
+
+            if ( $ampm === 'PM' && $hour < 12 ) {
+                $hour += 12;
+            } elseif ( $ampm === 'AM' && $hour === 12 ) {
+                $hour = 0;
+            }
+            return ( $hour >= 16 );
+        }
+        return false;
+    }
+}
+
+/**
+ * Option PREP-C Resolver: Determines if a subscription is on Same-Day Preparation.
+ */
+if ( ! function_exists( 'cmp_is_same_day_prep_subscription' ) ) {
+    function cmp_is_same_day_prep_subscription( $sub, $resolved = null ) {
+        if ( ! is_array( $resolved ) ) {
+            $resolved = cmp_get_subscription_logistics( $sub );
+        }
+
+        $prep_override = isset( $sub->prep_timing ) ? strtolower( trim( (string) $sub->prep_timing ) ) : 'auto';
+        if ( $prep_override === 'same_day' ) {
+            return true;
+        }
+        if ( $prep_override === 'day_before' ) {
+            return false;
+        }
+
+        $timing       = isset( $resolved['timing'] ) ? (string) $resolved['timing'] : '';
+        $time_slot    = isset( $resolved['time_slot'] ) ? (string) $resolved['time_slot'] : '';
+        $is_same_day  = ( stripos( $timing, 'Same Day' ) !== false );
+        $is_after_4pm = cmp_is_time_slot_after_4pm( $time_slot );
+
+        return ( $is_same_day && $is_after_4pm );
+    }
+}
+
+/**
+ * Returns a human-readable staff summary for a subscription's Kitchen Prep Schedule.
+ */
+if ( ! function_exists( 'cmp_get_prep_schedule_display_label' ) ) {
+    function cmp_get_prep_schedule_display_label( $sub, $resolved = null ) {
+        $is_same_day = cmp_is_same_day_prep_subscription( $sub, $resolved );
+        $mode        = isset( $sub->prep_timing ) ? strtolower( trim( (string) $sub->prep_timing ) ) : 'auto';
+        $suffix      = ( $mode === 'same_day' || $mode === 'day_before' ) ? ' (Manual Override)' : ' (Auto 4PM+ Rule)';
+
+        return ( $is_same_day ? '⚡ Same-Day Prep' : 'Day-Before Prep' ) . $suffix;
     }
 }
 
@@ -92,12 +1053,15 @@ if ( ! function_exists( 'cmp_ensure_feedback_table_exists' ) ) {
 }
 
 /**
- * Ensures `wp_cmp_subscriptions` has dedicated per-plan logistics & allergy columns
- * and backfills existing subscriptions so multi-plan customers never overwrite each other.
+ * Ensures `wp_cmp_subscriptions` has dedicated per-plan logistics, allergy, `prep_timing`,
+ * and carryover columns and backfills existing subscriptions.
  */
 add_action( 'init', 'cmp_ensure_subscription_logistics_columns' );
 if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
     function cmp_ensure_subscription_logistics_columns() {
+        cmp_ensure_prep_timing_column();
+        cmp_ensure_meal_skip_carryover_columns();
+
         if ( get_option( 'cmp_sub_logistics_cols_v1' ) === '1' ) {
             return;
         }
@@ -122,6 +1086,7 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
             'time_slot'        => "ALTER TABLE {$table_subs} ADD COLUMN time_slot VARCHAR(100) DEFAULT ''",
             'allergies'        => "ALTER TABLE {$table_subs} ADD COLUMN allergies TEXT NULL",
             'delivery_address' => "ALTER TABLE {$table_subs} ADD COLUMN delivery_address TEXT NULL",
+            'prep_timing'      => "ALTER TABLE {$table_subs} ADD COLUMN prep_timing VARCHAR(30) DEFAULT 'auto'",
         );
 
         foreach ( $columns_to_add as $col_name => $alter_sql ) {
@@ -130,7 +1095,6 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
             }
         }
 
-        // One-time backfill for existing subscriptions from Order Meta / User Meta
         $subs = $wpdb->get_results( "SELECT * FROM {$table_subs} ORDER BY id ASC" );
         if ( $subs ) {
             foreach ( $subs as $sub ) {
@@ -184,8 +1148,7 @@ if ( ! function_exists( 'cmp_ensure_subscription_logistics_columns' ) ) {
 }
 
 /**
- * Resolves a subscription's exact logistics & allergies using the 3-tier priority hierarchy:
- * 1. Subscription Row (`wp_cmp_subscriptions`) -> 2. WooCommerce Order Meta -> 3. User Meta
+ * Resolves a subscription's exact logistics & allergies using the 3-tier priority hierarchy.
  */
 if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
     function cmp_get_subscription_logistics( $sub ) {
@@ -193,7 +1156,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
         $user_id  = intval( $sub->user_id ?? 0 );
         $sub_user = $user_id > 0 ? get_userdata( $user_id ) : false;
 
-        // 1. Delivery Timing
         $timing = ! empty( $sub->delivery_timing ) ? $sub->delivery_timing : '';
         if ( empty( $timing ) && $order ) {
             $timing = $order->get_meta( '_cmp_delivery_timing' ) ?: $order->get_meta( 'delivery_timing' );
@@ -202,7 +1164,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             $timing = get_user_meta( $user_id, 'delivery_timing', true );
         }
 
-        // 2. Time Slot
         $time_slot = ! empty( $sub->time_slot ) ? $sub->time_slot : '';
         if ( empty( $time_slot ) && $order ) {
             $time_slot = $order->get_meta( '_cmp_time_slot' ) ?: $order->get_meta( 'time_slot' );
@@ -211,7 +1172,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             $time_slot = get_user_meta( $user_id, 'time_slot', true );
         }
 
-        // 3. Delivery Method
         $method = ! empty( $sub->delivery_method ) ? $sub->delivery_method : '';
         if ( empty( $method ) && $order ) {
             $method = $order->get_meta( '_cmp_logistics_method' ) ?: $order->get_meta( 'delivery_method' );
@@ -220,7 +1180,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             $method = get_user_meta( $user_id, 'delivery_method', true );
         }
 
-        // 4. Pickup Location
         $pickup = ! empty( $sub->pickup_location ) ? $sub->pickup_location : '';
         if ( empty( $pickup ) && $order ) {
             $pickup = $order->get_meta( '_cmp_pickup_location' ) ?: $order->get_meta( 'pickup_location' );
@@ -229,7 +1188,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             $pickup = get_user_meta( $user_id, 'pickup_location', true );
         }
 
-        // 5. Allergies (Per-Plan)
         $allergies = '';
         if ( isset( $sub->allergies ) && $sub->allergies !== null && $sub->allergies !== '' ) {
             $allergies = ( $sub->allergies === '__NONE__' ) ? '' : $sub->allergies;
@@ -242,7 +1200,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             }
         }
 
-        // 6. Delivery Address (Per-Plan)
         $address = ! empty( $sub->delivery_address ) ? $sub->delivery_address : '';
         if ( empty( $address ) && $order ) {
             $addr_parts = array_filter( array( $order->get_shipping_address_1(), $order->get_shipping_address_2(), $order->get_shipping_city() ) );
@@ -267,7 +1224,6 @@ if ( ! function_exists( 'cmp_get_subscription_logistics' ) ) {
             $address = 'Address not provided';
         }
 
-        // 7. Customer Name, Email, Phone
         $fname = $user_id > 0 ? ( get_user_meta( $user_id, 'first_name', true ) ?: get_user_meta( $user_id, 'billing_first_name', true ) ) : '';
         $lname = $user_id > 0 ? ( get_user_meta( $user_id, 'last_name', true ) ?: get_user_meta( $user_id, 'billing_last_name', true ) ) : '';
         if ( $order ) {
@@ -458,15 +1414,11 @@ if ( ! function_exists( 'cmp_can_adjust_plan_days' ) ) {
 }
 
 /**
- * Dynamically checks WP Admin -> Meal Settings ('cmp_strict_quota_enabled' & 'cmp_quota_bypass_roles')
+ * Strict Quota Enforcement: Customers, FOH, Menu Managers & Admins must select according to the plan's quota.
  */
 if ( ! function_exists( 'cmp_can_bypass_meal_quota' ) ) {
     function cmp_can_bypass_meal_quota() {
-        $strict_enabled = get_option( 'cmp_strict_quota_enabled', '1' );
-        if ( (string) $strict_enabled === '0' ) {
-            return true;
-        }
-        return cmp_user_matches_configured_roles( 'cmp_quota_bypass_roles', array( 'administrator' ) );
+        return false;
     }
 }
 
@@ -530,7 +1482,7 @@ if ( ! function_exists( 'cmp_is_date_locked_for_customer' ) ) {
 // 1. AJAX HANDLERS
 // ==========================================
 
-// 1.1 SAVE OR UPDATE DAILY MEAL LOG (WITH OPTION 2B AUDIT STAMP & OPTION 4B ACTIVITY LOGGING)
+// 1.1 SAVE OR UPDATE DAILY MEAL LOG (WITH TERMINAL STATUS LOCK, ALLOW MEAL SKIPPING, CARRYOVER REDEMPTION & AUDIT LOGGING)
 add_action( 'wp_ajax_cmp_save_daily_log', 'cmp_ajax_save_daily_log' );
 if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
     function cmp_ajax_save_daily_log() {
@@ -544,18 +1496,23 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
         if ( function_exists( 'cmp_auto_patch_database' ) ) {
             cmp_auto_patch_database();
         }
+        cmp_ensure_meal_skip_carryover_columns();
 
-        $log_id           = isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : 0;
-        $sub_id           = intval( $_POST['sub_id'] );
-        $target_date      = sanitize_text_field( $_POST['date'] );
-        $is_override_mode = ! empty( $_POST['is_override_mode'] ) ? intval( $_POST['is_override_mode'] ) : 0;
+        $log_id                = isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : 0;
+        $sub_id                = intval( $_POST['sub_id'] );
+        $target_date           = sanitize_text_field( $_POST['date'] );
+        $is_override_mode      = ! empty( $_POST['is_override_mode'] ) ? intval( $_POST['is_override_mode'] ) : 0;
+        $is_carryover_row      = ! empty( $_POST['is_carryover'] ) ? 1 : 0;
+        $carryover_from_log_id = isset( $_POST['carryover_from_log_id'] ) ? intval( $_POST['carryover_from_log_id'] ) : 0;
+        $posted_alloc_meals    = isset( $_POST['alloc_meals'] ) ? intval( $_POST['alloc_meals'] ) : 0;
+        $posted_alloc_snacks   = isset( $_POST['alloc_snacks'] ) ? intval( $_POST['alloc_snacks'] ) : -1;
 
         if ( empty( $target_date ) ) {
             wp_send_json_error( 'Please select a valid date first.' );
         }
 
+        $is_super_admin   = current_user_can( 'manage_options' );
         $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can( 'kitchen_staff' ) && $is_override_mode === 1 );
-        $can_bypass_quota = cmp_can_bypass_meal_quota();
 
         // Cutoff Time & Past/Today Date Validation
         if ( ! $can_bypass_dates ) {
@@ -581,17 +1538,27 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             wp_send_json_error( 'Subscription not found.' );
         }
 
-        $is_staff_user = cmp_can_bypass_date_restrictions() || cmp_can_bypass_meal_quota() || current_user_can( 'kitchen_staff' );
+        $is_staff_user = cmp_can_bypass_date_restrictions() || cmp_can_manage_meal_skipping() || current_user_can( 'kitchen_staff' );
         if ( ! $is_staff_user && intval( $sub->user_id ) !== get_current_user_id() ) {
             wp_send_json_error( 'Unauthorized access to this subscription.' );
         }
 
-        // Fetch existing log row before update for Old Status snapshot & Plan Mode
+        // Fetch existing log row before update for Old Status snapshot, Terminal Status Lock & Plan Mode
         $existing_log = null;
         if ( $log_id > 0 ) {
             $existing_log = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM $table_logs WHERE id = %d", $log_id ) );
-            $plan_mode    = ( $existing_log && ! empty( $existing_log->plan_mode ) ) ? $existing_log->plan_mode : 'standard';
-            $pos_updated  = ( $existing_log && ! empty( $existing_log->pos_updated ) ) ? 1 : 0;
+
+            // STRICT TERMINAL STATUS LOCK: Block non-admins from modifying Successful, Returned, or Cancelled days
+            if ( $existing_log && in_array( $existing_log->delivery_result, array( 'Successful', 'Cancelled', 'Returned' ), true ) && ! $is_super_admin ) {
+                wp_send_json_error( 'Locked: Completed, Returned, or Cancelled meal days can only be modified by a Super Administrator.' );
+            }
+
+            $plan_mode   = ( $existing_log && ! empty( $existing_log->plan_mode ) ) ? $existing_log->plan_mode : 'standard';
+            $pos_updated = ( $existing_log && ! empty( $existing_log->pos_updated ) ) ? 1 : 0;
+            if ( $existing_log && ! empty( $existing_log->is_carryover ) ) {
+                $is_carryover_row      = 1;
+                $carryover_from_log_id = intval( $existing_log->carryover_from_log_id );
+            }
         } else {
             $plan_mode = 'standard';
             if ( ! empty( $sub->is_flexible ) )  $plan_mode = 'flexible';
@@ -624,40 +1591,51 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
                 wp_send_json_error( 'The menu for this date is pending release. Specific meals cannot be selected yet.' );
             }
 
-            if ( $is_menu_pending && ! $is_chefs_choice && ! $can_bypass_quota ) {
+            if ( $is_menu_pending && ! $is_chefs_choice ) {
                 wp_send_json_error( 'The specific menu is not available yet for this date. Please select "Chef\'s Choice" to secure this date.' );
             }
         }
 
-        // --- ROBUST QUOTA CALCULATION ENGINE ---
-        $is_juice = ( stripos( $sub->allowed_categories, 'Juices' ) !== false || stripos( $sub->plan_name, 'juice' ) !== false || stripos( $sub->plan_name, 'cleanse' ) !== false );
+        // --- RESOLVE ROW ALLOCATION QUOTAS (REGULAR DAY VS. CARRYOVER REDEMPTION DAY) ---
+        $base_quotas    = cmp_get_subscription_base_quotas( $sub );
+        $is_juice       = $base_quotas['is_juice'];
+        $allowed_quota  = $base_quotas['allowed_meals'];
+        $snack_quota    = $base_quotas['snack_quota'];
+        $allow_skip_sub = ! empty( $sub->allow_meal_skip ) && intval( $sub->allow_meal_skip ) === 1;
 
-        $allowed_quota = 0;
-        $snack_quota   = 0;
+        $row_meals_quota  = $allowed_quota;
+        $row_snacks_quota = $snack_quota;
 
-        if ( ! $is_juice ) {
-            preg_match( '/(\d+)\s*Meal/i', $sub->plan_name, $m );
-            if ( isset( $m[1] ) ) {
-                $allowed_quota = intval( $m[1] );
-            } else {
-                if ( preg_match( '/\b(one|1)\b/i', $sub->plan_name ) )       $allowed_quota = 1;
-                elseif ( preg_match( '/\b(two|2)\b/i', $sub->plan_name ) )   $allowed_quota = 2;
-                elseif ( preg_match( '/\b(three|3)\b/i', $sub->plan_name ) ) $allowed_quota = 3;
-                else {
-                    $cats = explode( ',', $sub->allowed_categories );
-                    foreach ( $cats as $c ) {
-                        if ( in_array( trim( $c ), array( 'Breakfast', 'Lunch', 'Dinner' ), true ) ) {
-                            $allowed_quota++;
-                        }
-                    }
+        if ( $is_carryover_row && ! $is_juice ) {
+            if ( $carryover_from_log_id > 0 ) {
+                $parent_log = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_logs} WHERE id = %d", $carryover_from_log_id ) );
+                if ( $parent_log ) {
+                    $p_alloc_meals  = ( ! empty( $parent_log->is_carryover ) && intval( $parent_log->carryover_meals_quota ) > 0 ) ? intval( $parent_log->carryover_meals_quota ) : $allowed_quota;
+                    $p_alloc_snacks = ( ! empty( $parent_log->is_carryover ) ) ? intval( $parent_log->carryover_snacks_quota ) : $snack_quota;
+                    $p_counts       = cmp_count_log_selected_meals_and_snacks( $parent_log, false, $p_alloc_meals, $p_alloc_snacks );
+                    $calc_m         = max( 1, $p_alloc_meals - $p_counts['meals'] );
+                    $calc_s         = max( 0, $p_alloc_snacks - $p_counts['snacks'] );
+
+                    $row_meals_quota  = $calc_m;
+                    $row_snacks_quota = $calc_s;
+                } elseif ( $posted_alloc_meals > 0 ) {
+                    $row_meals_quota  = $posted_alloc_meals;
+                    $row_snacks_quota = max( 0, $posted_alloc_snacks );
                 }
+            } elseif ( $existing_log && intval( $existing_log->carryover_meals_quota ) > 0 ) {
+                $row_meals_quota  = intval( $existing_log->carryover_meals_quota );
+                $row_snacks_quota = intval( $existing_log->carryover_snacks_quota );
+            } elseif ( $posted_alloc_meals > 0 ) {
+                $row_meals_quota  = $posted_alloc_meals;
+                $row_snacks_quota = max( 0, $posted_alloc_snacks );
             }
-            if ( $allowed_quota <= 0 ) $allowed_quota = 1;
-            $snack_quota = ( $allowed_quota >= 2 ) ? 2 : 1;
         }
 
-        // --- STRICT SELECTION QUOTA ENFORCEMENT ---
-        if ( ! $can_bypass_quota && ! $is_chefs_choice && ! $is_menu_pending ) {
+        // --- STRICT SELECTION QUOTA & MEAL SKIPPING ENFORCEMENT (RULE A & RULE B) ---
+        $submitted_count  = 0;
+        $submitted_snacks = 0;
+
+        if ( ! $is_chefs_choice && ! $is_menu_pending ) {
             if ( $is_juice ) {
                 if ( $row_allow_custom ) {
                     if ( empty( trim( $_POST['custom_juice_1'] ?? '' ) ) || empty( trim( $_POST['custom_juice_2'] ?? '' ) ) || empty( trim( $_POST['custom_juice_3'] ?? '' ) ) ) {
@@ -669,32 +1647,54 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
                     }
                 }
             } else {
-                $submitted_count = 0;
                 if ( $row_allow_custom ) {
                     if ( ! empty( trim( $_POST['custom_breakfast'] ?? '' ) ) ) $submitted_count++;
                     if ( ! empty( trim( $_POST['custom_lunch'] ?? '' ) ) )     $submitted_count++;
                     if ( ! empty( trim( $_POST['custom_dinner'] ?? '' ) ) )    $submitted_count++;
+
+                    if ( ! empty( trim( $_POST['custom_snack_1'] ?? '' ) ) )   $submitted_snacks++;
+                    if ( ! empty( trim( $_POST['custom_snack_2'] ?? '' ) ) )   $submitted_snacks++;
                 } else {
                     if ( ! empty( $_POST['breakfast'] ) ) $submitted_count++;
                     if ( ! empty( $_POST['lunch'] ) )     $submitted_count++;
                     if ( ! empty( $_POST['dinner'] ) )    $submitted_count++;
+
+                    if ( ! empty( $_POST['snack_1'] ) )   $submitted_snacks++;
+                    if ( ! empty( $_POST['snack_2'] ) )   $submitted_snacks++;
                 }
 
-                if ( $submitted_count !== $allowed_quota ) {
-                    wp_send_json_error( "Quota Requirement: Please select exactly {$allowed_quota} main meal(s) as allocated in this subscription." );
+                if ( $submitted_count < 1 ) {
+                    wp_send_json_error( 'Quota Requirement: Please select at least 1 main meal to save this day.' );
                 }
 
-                $submitted_snacks = 0;
-                if ( $row_allow_custom ) {
-                    if ( ! empty( trim( $_POST['custom_snack_1'] ?? '' ) ) ) $submitted_snacks++;
-                    if ( ! empty( trim( $_POST['custom_snack_2'] ?? '' ) ) ) $submitted_snacks++;
+                if ( $submitted_count > $row_meals_quota ) {
+                    wp_send_json_error( "Quota Requirement: You can select at most {$row_meals_quota} main meal(s) on this day." );
+                }
+                if ( $submitted_snacks > $row_snacks_quota ) {
+                    wp_send_json_error( "Quota Requirement: You can select at most {$row_snacks_quota} snack(s) on this day." );
+                }
+
+                if ( $submitted_count < $row_meals_quota ) {
+                    $existing_counts = $existing_log ? cmp_count_log_selected_meals_and_snacks( $existing_log, false, $row_meals_quota, $row_snacks_quota ) : array( 'meals' => 0, 'snacks' => 0 );
+                    $was_already_skipped_same_count = ( $existing_log && $existing_counts['meals'] === $submitted_count );
+
+                    if ( ! $allow_skip_sub && ! $was_already_skipped_same_count ) {
+                        wp_send_json_error(
+                            "Quota Requirement: Please select exactly {$row_meals_quota} main meal(s) and {$row_snacks_quota} snack(s) as allocated in this subscription. (To skip a meal and carry it forward, \"Allow Meal Skipping\" must be enabled by FOH)."
+                        );
+                    }
                 } else {
-                    if ( ! empty( $_POST['snack_1'] ) ) $submitted_snacks++;
-                    if ( ! empty( $_POST['snack_2'] ) ) $submitted_snacks++;
-                }
-
-                if ( $submitted_snacks !== $snack_quota ) {
-                    wp_send_json_error( "Quota Requirement: Please select exactly {$snack_quota} snack(s) as allocated in this subscription." );
+                    if ( $submitted_snacks !== $row_snacks_quota ) {
+                        if ( $is_carryover_row ) {
+                            wp_send_json_error(
+                                "Redemption Quota Requirement: Please select all {$row_snacks_quota} carried-forward snack(s) along with your meal(s) to save this Redemption Day."
+                            );
+                        } else {
+                            wp_send_json_error(
+                                "Quota Requirement: When selecting your full meal quota ({$row_meals_quota} meal(s)), you must also select all {$row_snacks_quota} snack(s) to save this day."
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -713,17 +1713,21 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
         $row_action   = ( $log_id > 0 ) ? 'Updated' : 'Selected';
 
         $data = array(
-            'user_id'          => $sub->user_id,
-            'subscription_id'  => $sub_id,
-            'target_date'      => $target_date,
-            'is_chefs_choice'  => $is_chefs_choice,
-            'is_locked'        => 1,
-            'plan_mode'        => $plan_mode,
-            'updated_by_id'    => $actor['id'],
-            'updated_by_name'  => $actor['name'],
-            'updated_by_role'  => $actor['role'],
-            'last_action_type' => $row_action,
-            'updated_at'       => $now_datetime,
+            'user_id'                => $sub->user_id,
+            'subscription_id'        => $sub_id,
+            'target_date'            => $target_date,
+            'is_chefs_choice'        => $is_chefs_choice,
+            'is_locked'              => 1,
+            'plan_mode'              => $plan_mode,
+            'is_carryover'           => $is_carryover_row,
+            'carryover_from_log_id'  => $is_carryover_row ? $carryover_from_log_id : 0,
+            'carryover_meals_quota'  => $is_carryover_row ? $row_meals_quota : 0,
+            'carryover_snacks_quota' => $is_carryover_row ? $row_snacks_quota : 0,
+            'updated_by_id'          => $actor['id'],
+            'updated_by_name'        => $actor['name'],
+            'updated_by_role'        => $actor['role'],
+            'last_action_type'       => $row_action,
+            'updated_at'             => $now_datetime,
         );
 
         if ( $row_allow_custom ) {
@@ -772,16 +1776,48 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
             $saved_log_id = intval( $wpdb->insert_id );
         }
 
-        // Build New Status Snapshot & Record in Meal Portal > Customer Logs
+        $sync_res        = cmp_sync_subscription_carryover_state( $sub_id );
+        $skipped_now     = ( ! $is_juice && ! $is_chefs_choice && ! $is_menu_pending && $submitted_count > 0 && $submitted_count < $row_meals_quota );
+        $reload_required = ( $sync_res['changed'] || $skipped_now ) ? 1 : 0;
+
         $new_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
             ? cmp_format_log_meal_snapshot( $data )
             : 'Selected (' . $target_date . ')';
 
+        if ( $is_carryover_row ) {
+            $new_snapshot .= ' [Carryover Redemption Day]';
+        } elseif ( $skipped_now ) {
+            $carried_m = $row_meals_quota - $submitted_count;
+            $carried_s = max( 0, $row_snacks_quota - $submitted_snacks );
+            $new_snapshot .= sprintf( ' [Skipped %d Meal(s) & %d Snack(s) -> Carried Forward]', $carried_m, $carried_s );
+        }
+
         if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
+            $act_label = ( $log_id > 0 ) ? 'Meal Updated' : 'Meal Selected';
+            if ( $skipped_now ) {
+                $act_label = 'Meal Skipped (Carryover Created)';
+            } elseif ( $is_carryover_row ) {
+                $act_label = 'Carryover Meal Redeemed';
+            }
             cmp_record_customer_activity_log( array(
                 'subscription_id' => $sub_id,
-                'action_type'     => ( $log_id > 0 ) ? 'Meal Updated' : 'Meal Selected',
+                'action_type'     => $act_label,
                 'target_date'     => $target_date,
+                'old_status'      => $old_snapshot,
+                'new_status'      => $new_snapshot,
+                'actor_id'        => $actor['id'],
+                'actor_name'      => $actor['name'],
+                'actor_role'      => $actor['role'],
+            ) );
+        }
+
+        if ( $actor['role'] === 'Kitchen' && function_exists( 'cmp_record_kitchen_activity_log' ) ) {
+            cmp_record_kitchen_activity_log( array(
+                'log_id'          => $saved_log_id,
+                'subscription_id' => $sub_id,
+                'user_id'         => intval( $sub->user_id ),
+                'target_date'     => $target_date,
+                'action_type'     => "Chef's Choice Assigned",
                 'old_status'      => $old_snapshot,
                 'new_status'      => $new_snapshot,
                 'actor_id'        => $actor['id'],
@@ -792,11 +1828,24 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
 
         $audit_stamp = cmp_format_row_audit_stamp( $row_action, $actor['name'], $actor['role'], $now_datetime );
 
+        $carryover_notice = '';
+        if ( $skipped_now ) {
+            $carried_m        = $row_meals_quota - $submitted_count;
+            $carried_s        = max( 0, $row_snacks_quota - $submitted_snacks );
+            $carryover_notice = sprintf(
+                'Saved! %d skipped meal(s) and %d snack(s) have been carried forward to a Redemption Day at the end of your schedule.',
+                $carried_m,
+                $carried_s
+            );
+        }
+
         $response_data = array(
-            'msg'         => ( $log_id > 0 ) ? 'Updated' : 'Saved',
-            'new_log_id'  => $saved_log_id,
-            'pos_updated' => $pos_updated,
-            'audit_stamp' => cmp_can_view_staff_audit_log() ? $audit_stamp : '',
+            'msg'              => ( $log_id > 0 ) ? 'Updated' : 'Saved',
+            'new_log_id'       => $saved_log_id,
+            'pos_updated'      => $pos_updated,
+            'audit_stamp'      => cmp_can_view_staff_audit_log() ? $audit_stamp : '',
+            'reload_required'  => $reload_required,
+            'carryover_notice' => $carryover_notice,
         );
 
         $updated_subs_queue = get_option( 'cmp_daily_updated_subs', array() );
@@ -813,7 +1862,7 @@ if ( ! function_exists( 'cmp_ajax_save_daily_log' ) ) {
     }
 }
 
-// 1.2 CUSTOMER PORTAL PER-PLAN LOGISTICS EDITING + RENEWAL HISTORY RECORDING
+// 1.2 CUSTOMER PORTAL PER-PLAN LOGISTICS & STAFF KITCHEN PREP SCHEDULE EDITING
 add_action( 'wp_ajax_cmp_cp_update_customer_logistics', 'cmp_ajax_cp_update_customer_logistics' );
 if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
     function cmp_ajax_cp_update_customer_logistics() {
@@ -824,6 +1873,8 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         }
 
         cmp_ensure_subscription_logistics_columns();
+        cmp_ensure_prep_timing_column();
+
         global $wpdb;
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
@@ -837,6 +1888,12 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         $allergies          = sanitize_textarea_field( wp_unslash( $_POST['allergies'] ?? '' ) );
         $save_custom_timing = ! empty( $_POST['save_custom_timing'] );
         $save_custom_slot   = ! empty( $_POST['save_custom_slot'] );
+
+        $has_prep_payload = isset( $_POST['prep_timing'] );
+        $prep_timing      = sanitize_text_field( wp_unslash( $_POST['prep_timing'] ?? 'auto' ) );
+        if ( ! in_array( $prep_timing, array( 'auto', 'same_day', 'day_before' ), true ) ) {
+            $prep_timing = 'auto';
+        }
 
         if ( empty( $timing ) ) {
             wp_send_json_error( 'Please provide a valid Delivery Timing (Receive By) option.' );
@@ -875,13 +1932,18 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             }
         }
 
-        $sub_row      = null;
-        $plan_name    = '';
-        $old_resolved = array();
+        $sub_row           = null;
+        $plan_name         = '';
+        $old_resolved      = array();
+        $old_prep_mode     = 'auto';
+        $prep_schedule_lbl = 'Day-Before Prep';
+        $is_same_day_prep  = false;
+
         if ( $sub_id > 0 ) {
-            $sub_row      = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
-            $plan_name    = $sub_row ? $sub_row->plan_name : '';
-            $old_resolved = $sub_row ? cmp_get_subscription_logistics( $sub_row ) : array();
+            $sub_row       = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
+            $plan_name     = $sub_row ? $sub_row->plan_name : '';
+            $old_resolved  = $sub_row ? cmp_get_subscription_logistics( $sub_row ) : array();
+            $old_prep_mode = ( $sub_row && ! empty( $sub_row->prep_timing ) ) ? $sub_row->prep_timing : 'auto';
 
             $update_cols = array(
                 'delivery_timing' => $timing,
@@ -892,6 +1954,9 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
                 $update_cols['delivery_method'] = $method;
                 $update_cols['pickup_location'] = ( $method === 'Pickup' ) ? $pickup : '';
             }
+            if ( $has_prep_payload ) {
+                $update_cols['prep_timing'] = $prep_timing;
+            }
 
             $wpdb->update(
                 $table_subs,
@@ -900,6 +1965,11 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             );
         }
 
+        $updated_sub       = $sub_id > 0 ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) ) : null;
+        $updated_resolved  = $updated_sub ? cmp_get_subscription_logistics( $updated_sub ) : array();
+        $is_same_day_prep  = $updated_sub ? cmp_is_same_day_prep_subscription( $updated_sub, $updated_resolved ) : false;
+        $prep_schedule_lbl = $updated_sub ? cmp_get_prep_schedule_display_label( $updated_sub, $updated_resolved ) : 'Day-Before Prep';
+
         $effective_method = ! empty( $method ) ? $method : ( $sub_row ? ( $sub_row->delivery_method ?? '' ) : '' );
         $effective_pickup = ( $effective_method === 'Pickup' ) ? ( ! empty( $method ) ? $pickup : ( $sub_row ? ( $sub_row->pickup_location ?? '' ) : '' ) ) : '';
         $method_display   = $effective_method ?: 'N/A';
@@ -907,26 +1977,48 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
             $method_display .= ' (' . $effective_pickup . ')';
         }
 
+        $prep_labels = array(
+            'auto'       => 'Auto (4PM+ Rule)',
+            'same_day'   => 'Same-Day Prep',
+            'day_before' => 'Day-Before Prep',
+        );
+
         if ( $sub_id > 0 && function_exists( 'cmp_record_customer_activity_log' ) ) {
             $old_log_str = sprintf(
-                'Method: %s | Receive: %s (%s) | Allergies: %s',
+                'Method: %s | Receive: %s (%s) | Prep: %s | Allergies: %s',
                 $old_resolved['method'] ?? 'N/A',
                 $old_resolved['timing'] ?? 'N/A',
                 $old_resolved['time_slot'] ?? 'N/A',
+                $prep_labels[ $old_prep_mode ] ?? $old_prep_mode,
                 ! empty( $old_resolved['allergies'] ) ? $old_resolved['allergies'] : 'None'
             );
             $new_log_str = sprintf(
-                'Method: %s | Receive: %s (%s) | Allergies: %s',
+                'Method: %s | Receive: %s (%s) | Prep: %s | Allergies: %s',
                 $method_display,
                 $timing,
                 $time_slot,
+                $prep_labels[ $has_prep_payload ? $prep_timing : $old_prep_mode ] ?? $prep_timing,
                 $allergies !== '' ? $allergies : 'None'
             );
-            cmp_record_customer_activity_log( array(
+            if ( $old_log_str !== $new_log_str ) {
+                cmp_record_customer_activity_log( array(
+                    'subscription_id' => $sub_id,
+                    'action_type'     => 'Logistics Updated',
+                    'old_status'      => $old_log_str,
+                    'new_status'      => $new_log_str,
+                ) );
+            }
+        }
+
+        if ( $sub_id > 0 && $has_prep_payload && $old_prep_mode !== $prep_timing && function_exists( 'cmp_record_kitchen_activity_log' ) ) {
+            cmp_record_kitchen_activity_log( array(
+                'log_id'          => 0,
                 'subscription_id' => $sub_id,
-                'action_type'     => 'Logistics Updated',
-                'old_status'      => $old_log_str,
-                'new_status'      => $new_log_str,
+                'user_id'         => $user_id,
+                'target_date'     => date( 'Y-m-d' ),
+                'action_type'     => 'Prep Schedule Override (Portal)',
+                'old_status'      => 'Prep Schedule: ' . ( $prep_labels[ $old_prep_mode ] ?? $old_prep_mode ),
+                'new_status'      => 'Prep Schedule: ' . ( $prep_labels[ $prep_timing ] ?? $prep_timing ),
             ) );
         }
 
@@ -973,27 +2065,32 @@ if ( ! function_exists( 'cmp_ajax_cp_update_customer_logistics' ) ) {
         }
 
         wp_send_json_success( array(
-            'sub_id'         => $sub_id,
-            'method_display' => $method_display,
-            'timing'         => $timing,
-            'time_slot'      => $time_slot,
-            'allergies'      => $allergies ?: 'No Allergies Recorded',
-            'saved_profiles' => cmp_get_user_saved_logistics_profiles( $user_id ),
+            'sub_id'              => $sub_id,
+            'method_display'      => $method_display,
+            'timing'              => $timing,
+            'time_slot'           => $time_slot,
+            'allergies'           => $allergies ?: 'No Allergies Recorded',
+            'prep_timing'         => $prep_timing,
+            'prep_schedule_label' => $prep_schedule_lbl,
+            'is_same_day_prep'    => $is_same_day_prep ? 1 : 0,
+            'saved_profiles'      => cmp_get_user_saved_logistics_profiles( $user_id ),
         ) );
     }
 }
 
-// 1.3 CUSTOMER PORTAL ADMIN ACCOUNT DETAILS EDITING (PER-PLAN RECIPIENT & ADDRESS SUPPORT)
+// 1.3 CUSTOMER PORTAL STAFF ACCOUNT DETAILS & "ALLOW MEAL SKIPPING" EDITING
 add_action( 'wp_ajax_cmp_cp_admin_update_account_details', 'cmp_ajax_cp_admin_update_account_details' );
 if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
     function cmp_ajax_cp_admin_update_account_details() {
         check_ajax_referer( 'cmp_portal_nonce', 'nonce' );
 
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission Denied. Admins only.' );
+        if ( ! cmp_can_manage_meal_skipping() ) {
+            wp_send_json_error( 'Permission Denied. Staff clearance required.' );
         }
 
         cmp_ensure_subscription_logistics_columns();
+        cmp_ensure_meal_skip_carryover_columns();
+
         global $wpdb;
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
@@ -1001,10 +2098,12 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
         $order_id = intval( $_POST['order_id'] ?? 0 );
         $sub_id   = isset( $_POST['sub_id'] ) ? intval( $_POST['sub_id'] ) : 0;
 
-        $first_name     = sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) );
-        $last_name      = sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) );
-        $address        = sanitize_text_field( wp_unslash( $_POST['address'] ?? '' ) );
-        $recipient_name = sanitize_text_field( wp_unslash( $_POST['recipient_name'] ?? '' ) );
+        $first_name      = sanitize_text_field( wp_unslash( $_POST['first_name'] ?? '' ) );
+        $last_name       = sanitize_text_field( wp_unslash( $_POST['last_name'] ?? '' ) );
+        $address         = sanitize_text_field( wp_unslash( $_POST['address'] ?? '' ) );
+        $recipient_name  = sanitize_text_field( wp_unslash( $_POST['recipient_name'] ?? '' ) );
+        $has_skip_param  = isset( $_POST['allow_meal_skip'] );
+        $allow_meal_skip = ( ! empty( $_POST['allow_meal_skip'] ) && intval( $_POST['allow_meal_skip'] ) === 1 ) ? 1 : 0;
 
         if ( $user_id > 0 ) {
             wp_update_user( array( 'ID' => $user_id, 'first_name' => $first_name, 'last_name' => $last_name ) );
@@ -1032,10 +2131,13 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
         }
 
         $new_plan_name = '';
+        $skip_changed  = false;
+
         if ( $sub_id > 0 ) {
             $sub = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
             if ( $sub ) {
                 $old_resolved = cmp_get_subscription_logistics( $sub );
+                $old_skip     = ! empty( $sub->allow_meal_skip ) ? 1 : 0;
 
                 $plan_parts          = explode( ' - ', $sub->plan_name );
                 $potential_recipient = end( $plan_parts );
@@ -1051,22 +2153,32 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
                     $new_plan_name .= ' - ' . $recipient_name;
                 }
 
-                $wpdb->update(
-                    $table_subs,
-                    array(
-                        'plan_name'        => $new_plan_name,
-                        'delivery_address' => $address,
-                    ),
-                    array( 'id' => $sub_id )
+                $update_cols = array(
+                    'plan_name'        => $new_plan_name,
+                    'delivery_address' => $address,
                 );
+                if ( $has_skip_param ) {
+                    $update_cols['allow_meal_skip'] = $allow_meal_skip;
+                    $skip_changed                   = ( $old_skip !== $allow_meal_skip );
+                }
+
+                $wpdb->update( $table_subs, $update_cols, array( 'id' => $sub_id ) );
 
                 if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
-                    cmp_record_customer_activity_log( array(
-                        'subscription_id' => $sub_id,
-                        'action_type'     => 'Account Details Updated',
-                        'old_status'      => 'Name: ' . ( $old_resolved['full_name'] ?? '' ) . ' | Plan: ' . $sub->plan_name . ' | Address: ' . ( $old_resolved['address'] ?? '' ),
-                        'new_status'      => 'Name: ' . trim( $first_name . ' ' . $last_name ) . ' | Plan: ' . $new_plan_name . ' | Address: ' . $address,
-                    ) );
+                    $old_skip_lbl = $old_skip ? 'Allowed' : 'Disabled';
+                    $new_skip_lbl = ( $has_skip_param ? $allow_meal_skip : $old_skip ) ? 'Allowed' : 'Disabled';
+
+                    $old_summary = 'Name: ' . ( $old_resolved['full_name'] ?? '' ) . ' | Plan: ' . $sub->plan_name . ' | Address: ' . ( $old_resolved['address'] ?? '' ) . ' | Meal Skipping: ' . $old_skip_lbl;
+                    $new_summary = 'Name: ' . trim( $first_name . ' ' . $last_name ) . ' | Plan: ' . $new_plan_name . ' | Address: ' . $address . ' | Meal Skipping: ' . $new_skip_lbl;
+
+                    if ( $old_summary !== $new_summary ) {
+                        cmp_record_customer_activity_log( array(
+                            'subscription_id' => $sub_id,
+                            'action_type'     => $skip_changed ? ( $allow_meal_skip ? 'Meal Skipping Enabled' : 'Meal Skipping Disabled' ) : 'Account Details Updated',
+                            'old_status'      => $old_summary,
+                            'new_status'      => $new_summary,
+                        ) );
+                    }
                 }
 
                 if ( $user_id > 0 ) {
@@ -1090,10 +2202,11 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_update_account_details' ) ) {
         }
 
         wp_send_json_success( array(
-            'name'      => trim( $first_name . ' ' . $last_name ),
-            'address'   => $address ?: 'Address not provided',
-            'recipient' => $recipient_name,
-            'plan_name' => $new_plan_name,
+            'name'            => trim( $first_name . ' ' . $last_name ),
+            'address'         => $address ?: 'Address not provided',
+            'recipient'       => $recipient_name,
+            'plan_name'       => $new_plan_name,
+            'allow_meal_skip' => $allow_meal_skip,
         ) );
     }
 }
@@ -1157,7 +2270,7 @@ if ( ! function_exists( 'cmp_ajax_cp_admin_adjust_days' ) ) {
     }
 }
 
-// 1.5 CLEAR / RESET DAILY SELECTION (INCLUDES OPTION 3A: ADMIN-ONLY CANCELLATION RESET & EXTRA DAY REVERSAL)
+// 1.5 CLEAR / RESET DAILY SELECTION (STRICTLY SUPER ADMIN ONLY ACROSS ALL MODES)
 add_action( 'wp_ajax_cmp_clear_daily_log', 'cmp_ajax_clear_daily_log' );
 if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
     function cmp_ajax_clear_daily_log() {
@@ -1168,9 +2281,13 @@ if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
             wp_send_json_error( 'Not logged in.' );
         }
 
-        $log_id           = intval( $_POST['log_id'] );
-        $sub_id           = intval( $_POST['sub_id'] );
-        $is_override_mode = ! empty( $_POST['is_override_mode'] ) ? intval( $_POST['is_override_mode'] ) : 0;
+        // STRICT SUPER ADMIN ONLY RESTRICTION: Customers, FOH, Menu Managers & Kitchen cannot reset selections
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( 'Permission Denied: Only Super Administrators can reset a meal selection.' );
+        }
+
+        $log_id = intval( $_POST['log_id'] );
+        $sub_id = intval( $_POST['sub_id'] );
 
         $table_logs = $wpdb->prefix . 'cmp_daily_logs';
         $table_subs = $wpdb->prefix . 'cmp_subscriptions';
@@ -1187,33 +2304,14 @@ if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
 
         $is_cancelled_row = in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true );
 
-        // OPTION 3A: Strictly allow ONLY Super Admins (`manage_options`) to reset/clear a Cancelled row
-        if ( $is_cancelled_row ) {
-            if ( ! current_user_can( 'manage_options' ) ) {
-                wp_send_json_error( 'Permission Denied: Only Administrators can reset a cancelled meal selection.' );
-            }
-        } else {
-            $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can( 'kitchen_staff' ) && $is_override_mode === 1 );
-
-            if ( ! $can_bypass_dates && intval( $sub->user_id ) !== get_current_user_id() ) {
-                wp_send_json_error( 'Unauthorized access to this subscription.' );
-            }
-
-            if ( ! $can_bypass_dates ) {
-                if ( cmp_is_date_locked_for_customer( $log->target_date ) || $log->delivery_result === 'Successful' ) {
-                    wp_send_json_error( 'Past dates, today\'s date, and dates past the daily cut-off time cannot be reset.' );
-                }
-            }
-        }
-
         $old_snapshot = function_exists( 'cmp_format_log_meal_snapshot' )
             ? cmp_format_log_meal_snapshot( $log )
             : ( $is_cancelled_row ? 'Cancelled (' . $log->target_date . ')' : 'Selected (' . $log->target_date . ')' );
 
-        // Deleting the row from wp_cmp_daily_logs:
-        // 1. Removes the cancelled entry from the Kitchen Portal immediately.
-        // 2. Reduces $void_count by 1, reversing the extra compensation day and restoring this slot as a Pending Selection.
         $wpdb->delete( $table_logs, array( 'id' => $log_id ) );
+
+        // Synchronize Carryover Redemption Days after clearing
+        cmp_sync_subscription_carryover_state( $sub_id );
 
         if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
             cmp_record_customer_activity_log( array(
@@ -1240,7 +2338,7 @@ if ( ! function_exists( 'cmp_ajax_clear_daily_log' ) ) {
     }
 }
 
-// 1.6 CUSTOMER / FOH CANCEL SPECIFIC DAY (STAMPS ACTOR & RECORDS ACTIVITY LOG)
+// 1.6 CUSTOMER / FOH CANCEL SPECIFIC DAY (BLOCKS TERMINAL STATUSES FOR NON-ADMINS & STAMPS AUDIT CONTEXT)
 add_action( 'wp_ajax_cmp_cancel_daily_log', 'cmp_ajax_cancel_daily_log' );
 if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
     function cmp_ajax_cancel_daily_log() {
@@ -1272,6 +2370,13 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
             wp_send_json_error( 'Subscription not found.' );
         }
 
+        $is_super_admin = current_user_can( 'manage_options' );
+
+        // STRICT TERMINAL STATUS LOCK: Only Super Admins can cancel/modify a Successful, Returned, or already Cancelled meal day
+        if ( in_array( $log->delivery_result, array( 'Successful', 'Cancelled', 'Returned' ), true ) && ! $is_super_admin ) {
+            wp_send_json_error( 'Permission Denied: Completed, Returned, or Cancelled meal days can only be modified by a Super Administrator.' );
+        }
+
         $can_bypass_dates = cmp_can_bypass_date_restrictions() || ( current_user_can( 'kitchen_staff' ) && $is_override_mode === 1 );
 
         if ( ! $can_bypass_dates && intval( $sub->user_id ) !== get_current_user_id() ) {
@@ -1299,10 +2404,14 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
         $tz           = new DateTimeZone( 'Asia/Dubai' );
         $now_datetime = ( new DateTime( 'now', $tz ) )->format( 'Y-m-d H:i:s' );
 
+        $was_prepped  = ( intval( $log->is_prepared ) === 1 || intval( $log->dispatch_status ) === 1 );
+        $cancel_stage = $was_prepped ? 'Cancelled After Prep' : 'Cancelled Before Prep (DO NOT PREPARE)';
+
         $wpdb->update(
             $table_logs,
             array(
                 'delivery_result'  => 'Cancelled',
+                'pos_updated'      => 0,
                 'updated_by_id'    => $actor['id'],
                 'updated_by_name'  => $actor['name'],
                 'updated_by_role'  => $actor['role'],
@@ -1312,13 +2421,16 @@ if ( ! function_exists( 'cmp_ajax_cancel_daily_log' ) ) {
             array( 'id' => $log_id )
         );
 
+        // Synchronize Carryover Redemption Days after cancelling
+        cmp_sync_subscription_carryover_state( $sub_id );
+
         if ( function_exists( 'cmp_record_customer_activity_log' ) ) {
             cmp_record_customer_activity_log( array(
                 'subscription_id' => $sub_id,
                 'action_type'     => 'Meal Cancelled',
                 'target_date'     => $log->target_date,
                 'old_status'      => $old_snapshot,
-                'new_status'      => 'Cancelled (' . $log->target_date . ')',
+                'new_status'      => $cancel_stage . ' (' . $log->target_date . ')',
                 'actor_id'        => $actor['id'],
                 'actor_name'      => $actor['name'],
                 'actor_role'      => $actor['role'],
@@ -1417,7 +2529,7 @@ if ( ! function_exists( 'cmp_ajax_submit_customer_feedback' ) ) {
 }
 
 // ==========================================
-// 2. EXPORT CUSTOMER MEAL PLAN TO CSV (PER-PLAN LOGISTICS)
+// 2. EXPORT CUSTOMER MEAL PLAN TO CSV (PER-PLAN LOGISTICS, CARRYOVER & POS EXEMPTIONS)
 // ==========================================
 if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
     add_action( 'wp_ajax_cmp_export_customer_csv', 'cmp_export_customer_csv' );
@@ -1452,8 +2564,9 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         $allergies      = $resolved['allergies'];
         $address        = $resolved['address'];
         $method_display = ( $method === 'Pickup' && ! empty( $pickup ) ) ? $method . ' (' . $pickup . ')' : $method;
+        $prep_schedule  = cmp_is_same_day_prep_subscription( $sub, $resolved ) ? 'Same-Day Prep' : 'Day-Before Prep';
 
-        $logs     = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY target_date ASC", $sub_id ) );
+        $logs     = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}cmp_daily_logs WHERE subscription_id = %d ORDER BY is_carryover ASC, target_date ASC, id ASC", $sub_id ) );
         $foods    = $wpdb->get_results( "SELECT id, food_name FROM {$wpdb->prefix}cmp_foods" );
         $food_map = array();
         foreach ( $foods as $f ) {
@@ -1470,7 +2583,11 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         fputcsv( $output, array( 'CUSTOMER & PLAN DETAILS' ) );
         fputcsv( $output, array( 'Plan:', $sub->plan_name, 'Name:', $full_name, 'Email:', $email, 'Phone:', $phone ) );
         fputcsv( $output, array( 'Address:', $address ) );
-        fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot ) );
+        if ( $can_view_pos ) {
+            fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot, 'Kitchen Prep:', $prep_schedule ) );
+        } else {
+            fputcsv( $output, array( 'Logistics:', $method_display, 'Receive By:', $timing, 'Time Slot:', $time_slot ) );
+        }
         fputcsv( $output, array( 'Allergies:', $allergies ?: 'None' ) );
         fputcsv( $output, array( '' ) );
 
@@ -1494,18 +2611,23 @@ if ( ! function_exists( 'cmp_export_customer_csv' ) ) {
         }
 
         foreach ( $logs as $log ) {
-            $chefs = $log->is_chefs_choice ? 'Yes' : 'No';
+            $chefs          = $log->is_chefs_choice ? 'Yes' : 'No';
+            $is_canc_or_ret = in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true );
+            $is_carry       = ! empty( $log->is_carryover ) && intval( $log->is_carryover ) === 1;
 
             $status = 'Pending';
             if ( $log->delivery_result === 'Successful' ) {
                 $status = 'Successful';
-            } elseif ( in_array( $log->delivery_result, array( 'Cancelled', 'Returned' ), true ) ) {
+            } elseif ( $is_canc_or_ret ) {
                 $status = $log->delivery_result;
             } elseif ( $log->id > 0 ) {
                 $status = 'Selected';
             }
+            if ( $is_carry ) {
+                $status .= ' (Skipped Meal Carryover)';
+            }
 
-            $pos_status  = ( ! empty( $log->pos_updated ) ) ? 'Checked' : 'Pending';
+            $pos_status  = $is_canc_or_ret ? 'No POS Required' : ( ( ! empty( $log->pos_updated ) ) ? 'Checked' : 'Pending' );
             $audit_stamp = cmp_format_row_audit_stamp(
                 $log->last_action_type ?? '',
                 $log->updated_by_name ?? '',
@@ -1694,15 +2816,15 @@ if ( ! function_exists( 'cmp_render_customer_feedback_admin_page' ) ) {
         $identity_mode = isset( $_GET['mode_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['mode_filter'] ) ) : '';
         $rating_filter = isset( $_GET['rating_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['rating_filter'] ) ) : '';
 
-        $all_rows       = $wpdb->get_results( "SELECT * FROM {$table_feedback} ORDER BY created_at DESC, id DESC" );
-        $total_count    = is_array( $all_rows ) ? count( $all_rows ) : 0;
-        $named_count    = 0;
-        $anon_count     = 0;
-        $service_sum    = 0;
-        $service_cnt    = 0;
-        $portal_sum     = 0;
-        $portal_cnt     = 0;
-        $tag_frequency  = array();
+        $all_rows      = $wpdb->get_results( "SELECT * FROM {$table_feedback} ORDER BY created_at DESC, id DESC" );
+        $total_count   = is_array( $all_rows ) ? count( $all_rows ) : 0;
+        $named_count   = 0;
+        $anon_count    = 0;
+        $service_sum   = 0;
+        $service_cnt   = 0;
+        $portal_sum    = 0;
+        $portal_cnt    = 0;
+        $tag_frequency = array();
 
         if ( $all_rows ) {
             foreach ( $all_rows as $item ) {
