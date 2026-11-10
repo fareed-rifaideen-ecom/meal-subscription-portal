@@ -3,7 +3,7 @@
  * Plugin Name: Meal Subscription Portal
  * Plugin URI: https://github.com/fareed-rifaideen-ecom/meal-subscription-portal
  * Description: A custom meal subscription and kitchen reporting engine.
- * Version: 3.1.0
+ * Version: 3.0.0
  * Author: RM Dev Team | Customised by Fareed M Rifaideen
  * Author URI: https://fareed-rifaideen.netlify.app
  */
@@ -18,12 +18,6 @@ if ( function_exists( 'opcache_invalidate' ) ) {
     @opcache_invalidate( __FILE__, true );
     if ( file_exists( CMP_PLUGIN_DIR . 'accounts-portal.php' ) ) {
         @opcache_invalidate( CMP_PLUGIN_DIR . 'accounts-portal.php', true );
-    }
-    if ( file_exists( CMP_PLUGIN_DIR . 'kitchen-portal.php' ) ) {
-        @opcache_invalidate( CMP_PLUGIN_DIR . 'kitchen-portal.php', true );
-    }
-    if ( file_exists( CMP_PLUGIN_DIR . 'super-admin-portal.php' ) ) {
-        @opcache_invalidate( CMP_PLUGIN_DIR . 'super-admin-portal.php', true );
     }
 }
 
@@ -161,34 +155,6 @@ function cmp_activate_plugin() {
     ) $charset_collate;";
     dbDelta( $sql_activity );
 
-    $table_kitchen_logs = $wpdb->prefix . 'cmp_kitchen_logs';
-    $sql_kitchen_logs = "CREATE TABLE $table_kitchen_logs (
-        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-        log_id bigint(20) unsigned NOT NULL DEFAULT 0,
-        subscription_id mediumint(9) NOT NULL DEFAULT 0,
-        wc_order_id bigint(20) NOT NULL DEFAULT 0,
-        user_id bigint(20) NOT NULL DEFAULT 0,
-        customer_name varchar(255) NOT NULL DEFAULT '',
-        plan_name varchar(255) NOT NULL DEFAULT '',
-        prep_date varchar(50) DEFAULT '',
-        target_date varchar(50) DEFAULT '',
-        action_type varchar(100) NOT NULL DEFAULT '',
-        old_status text NULL,
-        new_status text NULL,
-        actor_id bigint(20) NOT NULL DEFAULT 0,
-        actor_name varchar(150) NOT NULL DEFAULT '',
-        actor_role varchar(100) NOT NULL DEFAULT '',
-        created_at datetime NOT NULL,
-        PRIMARY KEY  (id),
-        KEY log_idx (log_id),
-        KEY sub_idx (subscription_id),
-        KEY order_idx (wc_order_id),
-        KEY action_idx (action_type),
-        KEY target_idx (target_date),
-        KEY created_idx (created_at)
-    ) $charset_collate;";
-    dbDelta( $sql_kitchen_logs );
-
     cmp_register_custom_roles();
 }
 
@@ -198,14 +164,13 @@ function cmp_activate_plugin() {
 add_action( 'init', 'cmp_auto_patch_database', 5 );
 function cmp_auto_patch_database() {
     global $wpdb;
-    $table_subs         = $wpdb->prefix . 'cmp_subscriptions';
-    $table_logs         = $wpdb->prefix . 'cmp_daily_logs';
-    $table_activity     = $wpdb->prefix . 'cmp_activity_logs';
-    $table_kitchen_logs = $wpdb->prefix . 'cmp_kitchen_logs';
+    $table_subs     = $wpdb->prefix . 'cmp_subscriptions';
+    $table_logs     = $wpdb->prefix . 'cmp_daily_logs';
+    $table_activity = $wpdb->prefix . 'cmp_activity_logs';
 
-    // Run full check if schema version has not reached 3.1.0 or when inside wp-admin
+    // Run full check if schema version has not reached 3.0.0 or when inside wp-admin
     $schema_ver = get_option( 'cmp_db_schema_version', '' );
-    if ( $schema_ver === '3.1.0' && ! is_admin() ) {
+    if ( $schema_ver === '3.0.0' && ! is_admin() ) {
         return;
     }
 
@@ -281,61 +246,27 @@ function cmp_auto_patch_database() {
         dbDelta( $sql_activity );
     }
 
-    // Patch 7: Kitchen Activity Logs Table (Option 5A - For Meal Portal > Kitchen Logs)
-    $kitchen_logs_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_kitchen_logs ) );
-    if ( $kitchen_logs_exists !== $table_kitchen_logs ) {
-        require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-        $charset_collate = $wpdb->get_charset_collate();
-        $sql_kitchen_logs = "CREATE TABLE $table_kitchen_logs (
-            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-            log_id bigint(20) unsigned NOT NULL DEFAULT 0,
-            subscription_id mediumint(9) NOT NULL DEFAULT 0,
-            wc_order_id bigint(20) NOT NULL DEFAULT 0,
-            user_id bigint(20) NOT NULL DEFAULT 0,
-            customer_name varchar(255) NOT NULL DEFAULT '',
-            plan_name varchar(255) NOT NULL DEFAULT '',
-            prep_date varchar(50) DEFAULT '',
-            target_date varchar(50) DEFAULT '',
-            action_type varchar(100) NOT NULL DEFAULT '',
-            old_status text NULL,
-            new_status text NULL,
-            actor_id bigint(20) NOT NULL DEFAULT 0,
-            actor_name varchar(150) NOT NULL DEFAULT '',
-            actor_role varchar(100) NOT NULL DEFAULT '',
-            created_at datetime NOT NULL,
-            PRIMARY KEY  (id),
-            KEY log_idx (log_id),
-            KEY sub_idx (subscription_id),
-            KEY order_idx (wc_order_id),
-            KEY action_idx (action_type),
-            KEY target_idx (target_date),
-            KEY created_idx (created_at)
-        ) $charset_collate;";
-        dbDelta( $sql_kitchen_logs );
-    }
-
-    update_option( 'cmp_db_schema_version', '3.1.0' );
+    update_option( 'cmp_db_schema_version', '3.0.0' );
 }
 
 // ==========================================
 // 2. CREATE CUSTOM ROLES
 // ==========================================
-add_action( 'init', 'cmp_register_custom_roles' );
+add_action('init', 'cmp_register_custom_roles');
 function cmp_register_custom_roles() {
-    if ( ! get_role( 'foh_manager' ) )   { add_role( 'foh_manager', 'FOH Manager', array( 'read' => true ) ); }
-    if ( ! get_role( 'kitchen_staff' ) ) { add_role( 'kitchen_staff', 'Kitchen Staff', array( 'read' => true ) ); }
-    if ( ! get_role( 'menu_manager' ) )  { add_role( 'menu_manager', 'Menu Manager', array( 'read' => true ) ); }
-    if ( ! get_role( 'accounts_team' ) ) { add_role( 'accounts_team', 'Accounts Team', array( 'read' => true ) ); }
+    if (!get_role('foh_manager')) { add_role('foh_manager', 'FOH Manager', array('read' => true)); }
+    if (!get_role('kitchen_staff')) { add_role('kitchen_staff', 'Kitchen Staff', array('read' => true)); }
+    if (!get_role('menu_manager')) { add_role('menu_manager', 'Menu Manager', array('read' => true)); }
+    if (!get_role('accounts_team')) { add_role('accounts_team', 'Accounts Team', array('read' => true)); }
 }
 
 // ==========================================
-// 2.5 GLOBAL AUDIT, CUSTOMER LOGS & KITCHEN LOGS HELPERS
+// 2.5 GLOBAL AUDIT & CUSTOMER LOGGING HELPERS
 // ==========================================
 
 /**
  * Returns the current logged-in user's ID, clean display name, and friendly role label.
  */
-if ( ! function_exists( 'cmp_get_current_actor_info' ) ) {
 function cmp_get_current_actor_info( $subscription_owner_id = 0 ) {
     if ( ! is_user_logged_in() ) {
         return array(
@@ -377,13 +308,11 @@ function cmp_get_current_actor_info( $subscription_owner_id = 0 ) {
         'role' => $actor_role,
     );
 }
-}
 
 /**
  * Builds a concise human-readable snapshot of a daily log row (Status + Date + Meals)
- * for recording "Old Status" and "Current Status" in Customer Logs & Kitchen Logs.
+ * for recording "Old Status" and "Current Status" in Customer Logs.
  */
-if ( ! function_exists( 'cmp_format_log_meal_snapshot' ) ) {
 function cmp_format_log_meal_snapshot( $log_row ) {
     if ( empty( $log_row ) ) {
         return 'Pending Selection (Unscheduled)';
@@ -461,19 +390,20 @@ function cmp_format_log_meal_snapshot( $log_row ) {
 
     return "Selected ({$date_str}) | " . implode( ' • ', $parts );
 }
-}
 
 /**
- * Resolves Customer Name (with Recipient tag if present), Plan Name, and Order ID from a subscription ID.
+ * Inserts an audit entry into wp_cmp_activity_logs.
  */
-if ( ! function_exists( 'cmp_resolve_subscription_audit_identity' ) ) {
-function cmp_resolve_subscription_audit_identity( $sub_id, $fallback_user_id = 0, $fallback_order_id = 0, $fallback_plan_name = '', $fallback_cust_name = '' ) {
+function cmp_record_customer_activity_log( $args = array() ) {
     global $wpdb;
-    $table_subs  = $wpdb->prefix . 'cmp_subscriptions';
-    $user_id     = intval( $fallback_user_id );
-    $wc_order_id = intval( $fallback_order_id );
-    $plan_name   = sanitize_text_field( $fallback_plan_name );
-    $cust_name   = sanitize_text_field( $fallback_cust_name );
+    $table_activity = $wpdb->prefix . 'cmp_activity_logs';
+    $table_subs     = $wpdb->prefix . 'cmp_subscriptions';
+
+    $sub_id      = isset( $args['subscription_id'] ) ? intval( $args['subscription_id'] ) : 0;
+    $wc_order_id = isset( $args['wc_order_id'] ) ? intval( $args['wc_order_id'] ) : 0;
+    $user_id     = isset( $args['user_id'] ) ? intval( $args['user_id'] ) : 0;
+    $cust_name   = isset( $args['customer_name'] ) ? sanitize_text_field( $args['customer_name'] ) : '';
+    $plan_name   = isset( $args['plan_name'] ) ? sanitize_text_field( $args['plan_name'] ) : '';
 
     if ( $sub_id > 0 && ( $user_id === 0 || empty( $plan_name ) ) ) {
         $sub_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_subs} WHERE id = %d", $sub_id ) );
@@ -485,11 +415,11 @@ function cmp_resolve_subscription_audit_identity( $sub_id, $fallback_user_id = 0
     }
 
     if ( empty( $cust_name ) && $user_id > 0 ) {
-        $fname     = get_user_meta( $user_id, 'first_name', true ) ?: get_user_meta( $user_id, 'billing_first_name', true );
-        $lname     = get_user_meta( $user_id, 'last_name', true ) ?: get_user_meta( $user_id, 'billing_last_name', true );
+        $fname = get_user_meta( $user_id, 'first_name', true ) ?: get_user_meta( $user_id, 'billing_first_name', true );
+        $lname = get_user_meta( $user_id, 'last_name', true ) ?: get_user_meta( $user_id, 'billing_last_name', true );
         $cust_name = trim( $fname . ' ' . $lname );
         if ( empty( $cust_name ) ) {
-            $u         = get_userdata( $user_id );
+            $u = get_userdata( $user_id );
             $cust_name = $u ? $u->display_name : 'Customer #' . $user_id;
         }
         // Append Recipient Name if present in plan_name
@@ -502,33 +432,7 @@ function cmp_resolve_subscription_audit_identity( $sub_id, $fallback_user_id = 0
         }
     }
 
-    return array(
-        'user_id'       => $user_id,
-        'wc_order_id'   => $wc_order_id,
-        'plan_name'     => $plan_name,
-        'customer_name' => $cust_name,
-    );
-}
-}
-
-/**
- * Inserts an audit entry into wp_cmp_activity_logs (Customer Logs).
- */
-if ( ! function_exists( 'cmp_record_customer_activity_log' ) ) {
-function cmp_record_customer_activity_log( $args = array() ) {
-    global $wpdb;
-    $table_activity = $wpdb->prefix . 'cmp_activity_logs';
-
-    $sub_id   = isset( $args['subscription_id'] ) ? intval( $args['subscription_id'] ) : 0;
-    $identity = cmp_resolve_subscription_audit_identity(
-        $sub_id,
-        $args['user_id'] ?? 0,
-        $args['wc_order_id'] ?? 0,
-        $args['plan_name'] ?? '',
-        $args['customer_name'] ?? ''
-    );
-
-    $actor = cmp_get_current_actor_info( $identity['user_id'] );
+    $actor = cmp_get_current_actor_info( $user_id );
     $tz    = new DateTimeZone( 'Asia/Dubai' );
     $now   = new DateTime( 'now', $tz );
 
@@ -536,10 +440,10 @@ function cmp_record_customer_activity_log( $args = array() ) {
         $table_activity,
         array(
             'subscription_id' => $sub_id,
-            'wc_order_id'     => $identity['wc_order_id'],
-            'user_id'         => $identity['user_id'],
-            'customer_name'   => $identity['customer_name'],
-            'plan_name'       => $identity['plan_name'],
+            'wc_order_id'     => $wc_order_id,
+            'user_id'         => $user_id,
+            'customer_name'   => $cust_name,
+            'plan_name'       => $plan_name,
             'action_type'     => isset( $args['action_type'] ) ? sanitize_text_field( $args['action_type'] ) : 'Updated',
             'target_date'     => isset( $args['target_date'] ) ? sanitize_text_field( $args['target_date'] ) : '',
             'old_status'      => isset( $args['old_status'] ) ? wp_kses_post( $args['old_status'] ) : '',
@@ -550,219 +454,6 @@ function cmp_record_customer_activity_log( $args = array() ) {
             'created_at'      => $now->format( 'Y-m-d H:i:s' ),
         )
     );
-}
-}
-
-/**
- * Option 5A: Inserts an operational audit entry into wp_cmp_kitchen_logs (Kitchen Logs).
- */
-if ( ! function_exists( 'cmp_record_kitchen_activity_log' ) ) {
-function cmp_record_kitchen_activity_log( $args = array() ) {
-    global $wpdb;
-    $table_kitchen_logs = $wpdb->prefix . 'cmp_kitchen_logs';
-
-    static $logged_keys = array();
-
-    $log_id      = isset( $args['log_id'] ) ? intval( $args['log_id'] ) : 0;
-    $sub_id      = isset( $args['subscription_id'] ) ? intval( $args['subscription_id'] ) : 0;
-    $target_date = isset( $args['target_date'] ) ? sanitize_text_field( $args['target_date'] ) : '';
-    $prep_date   = isset( $args['prep_date'] ) ? sanitize_text_field( $args['prep_date'] ) : '';
-    if ( empty( $prep_date ) && ! empty( $target_date ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $target_date ) ) {
-        $prep_date = date( 'Y-m-d', strtotime( $target_date . ' - 1 day' ) );
-    }
-
-    $action_type = isset( $args['action_type'] ) ? sanitize_text_field( $args['action_type'] ) : 'Kitchen Update';
-    $old_status  = isset( $args['old_status'] ) ? wp_kses_post( $args['old_status'] ) : '';
-    $new_status  = isset( $args['new_status'] ) ? wp_kses_post( $args['new_status'] ) : '';
-
-    // Prevent duplicate entries within the same request cycle
-    $dedupe_key = md5( $log_id . '|' . $sub_id . '|' . $action_type . '|' . $old_status . '|' . $new_status );
-    if ( isset( $logged_keys[ $dedupe_key ] ) ) {
-        return;
-    }
-    $logged_keys[ $dedupe_key ] = true;
-
-    $identity = cmp_resolve_subscription_audit_identity(
-        $sub_id,
-        $args['user_id'] ?? 0,
-        $args['wc_order_id'] ?? 0,
-        $args['plan_name'] ?? '',
-        $args['customer_name'] ?? ''
-    );
-
-    $actor = cmp_get_current_actor_info( $identity['user_id'] );
-    $tz    = new DateTimeZone( 'Asia/Dubai' );
-    $now   = new DateTime( 'now', $tz );
-
-    $wpdb->insert(
-        $table_kitchen_logs,
-        array(
-            'log_id'          => $log_id,
-            'subscription_id' => $sub_id,
-            'wc_order_id'     => $identity['wc_order_id'],
-            'user_id'         => $identity['user_id'],
-            'customer_name'   => $identity['customer_name'],
-            'plan_name'       => $identity['plan_name'],
-            'prep_date'       => $prep_date,
-            'target_date'     => $target_date,
-            'action_type'     => $action_type,
-            'old_status'      => $old_status,
-            'new_status'      => $new_status,
-            'actor_id'        => isset( $args['actor_id'] ) ? intval( $args['actor_id'] ) : $actor['id'],
-            'actor_name'      => isset( $args['actor_name'] ) ? sanitize_text_field( $args['actor_name'] ) : $actor['name'],
-            'actor_role'      => isset( $args['actor_role'] ) ? sanitize_text_field( $args['actor_role'] ) : $actor['role'],
-            'created_at'      => $now->format( 'Y-m-d H:i:s' ),
-        )
-    );
-}
-}
-
-/**
- * Option 5A: Automatic Kitchen Portal AJAX Interceptors (Priority 5)
- * Captures every Prepared, Dispatch, Delivery Status, POS Check, and Chef's Choice assignment
- * made inside the Kitchen Portal and records the Before -> After state in wp_cmp_kitchen_logs.
- */
-add_action( 'wp_ajax_cmp_kitchen_action', 'cmp_audit_intercept_kitchen_action', 5 );
-function cmp_audit_intercept_kitchen_action() {
-    if ( ! check_ajax_referer( 'cmp_kitchen_nonce', 'nonce', false ) ) {
-        return;
-    }
-
-    global $wpdb;
-    cmp_auto_patch_database();
-
-    $log_id = isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : 0;
-    $field  = isset( $_POST['field'] ) ? sanitize_text_field( wp_unslash( $_POST['field'] ) ) : '';
-    $value  = isset( $_POST['value'] ) ? sanitize_text_field( wp_unslash( $_POST['value'] ) ) : '';
-
-    if ( $log_id <= 0 || ! in_array( $field, array( 'is_prepared', 'dispatch_status', 'delivery_result', 'pos_updated' ), true ) ) {
-        return;
-    }
-
-    $is_admin = current_user_can( 'manage_options' ) || current_user_can( 'menu_manager' );
-    $is_chef  = current_user_can( 'kitchen_staff' );
-    $is_foh   = current_user_can( 'foh_manager' );
-
-    $table_logs  = $wpdb->prefix . 'cmp_daily_logs';
-    $current_log = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_logs} WHERE id = %d", $log_id ) );
-    if ( ! $current_log ) {
-        return;
-    }
-
-    // Mirror permission & lock checks so we only log valid authorized actions
-    if ( $field === 'dispatch_status' || $field === 'delivery_result' ) {
-        if ( ( ! $is_admin && ! $is_chef ) || intval( $current_log->pos_updated ) === 1 ) {
-            return;
-        }
-    } elseif ( $field === 'pos_updated' ) {
-        if ( ! $is_admin && ! $is_foh ) {
-            return;
-        }
-    } elseif ( $field === 'is_prepared' ) {
-        if ( ! $is_admin && ! $is_chef ) {
-            return;
-        }
-    }
-
-    $action_type = 'Kitchen Update';
-    $old_status  = '';
-    $new_status  = '';
-
-    if ( $field === 'is_prepared' ) {
-        $old_bool = intval( $current_log->is_prepared ) === 1;
-        $new_bool = intval( $value ) === 1;
-        if ( $old_bool === $new_bool ) return;
-        $action_type = 'Prepared Check';
-        $old_status  = $old_bool ? 'Prepared (✓)' : 'Not Prepared';
-        $new_status  = $new_bool ? 'Prepared (✓)' : 'Not Prepared';
-    } elseif ( $field === 'dispatch_status' ) {
-        $old_bool = intval( $current_log->dispatch_status ) === 1;
-        $new_bool = intval( $value ) === 1;
-        if ( $old_bool === $new_bool ) return;
-        $action_type = 'Dispatch Check';
-        $old_status  = $old_bool ? 'Dispatched (✓)' : 'Not Dispatched';
-        $new_status  = $new_bool ? 'Dispatched (✓)' : 'Not Dispatched';
-    } elseif ( $field === 'delivery_result' ) {
-        $old_val = ! empty( $current_log->delivery_result ) ? $current_log->delivery_result : 'Pending';
-        if ( $old_val === $value ) return;
-        $action_type = ( $value === 'Cancelled' ) ? 'Meal Cancelled (Kitchen)' : ( $value === 'Returned' ? 'Delivery Returned' : 'Delivery Status' );
-        $old_status  = 'Delivery: ' . $old_val;
-        $new_status  = 'Delivery: ' . $value . ( intval( $current_log->is_prepared ) === 1 ? ' [After Prep]' : ' [Before Prep]' );
-    } elseif ( $field === 'pos_updated' ) {
-        $old_bool = intval( $current_log->pos_updated ) === 1;
-        $new_bool = intval( $value ) === 1;
-        if ( $old_bool === $new_bool ) return;
-        $action_type = 'POS Check';
-        $old_status  = $old_bool ? 'POS Verified (✓)' : 'POS Pending';
-        $new_status  = $new_bool ? 'POS Verified (✓)' : 'POS Pending';
-    }
-
-    cmp_record_kitchen_activity_log( array(
-        'log_id'          => $log_id,
-        'subscription_id' => intval( $current_log->subscription_id ),
-        'user_id'         => intval( $current_log->user_id ),
-        'target_date'     => $current_log->target_date,
-        'action_type'     => $action_type,
-        'old_status'      => $old_status,
-        'new_status'      => $new_status,
-    ) );
-}
-
-add_action( 'wp_ajax_cmp_assign_chef_meals', 'cmp_audit_intercept_chef_meals', 5 );
-function cmp_audit_intercept_chef_meals() {
-    if ( ! check_ajax_referer( 'cmp_kitchen_nonce', 'nonce', false ) ) {
-        return;
-    }
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'kitchen_staff' ) && ! current_user_can( 'menu_manager' ) ) {
-        return;
-    }
-
-    global $wpdb;
-    cmp_auto_patch_database();
-
-    $log_id = isset( $_POST['log_id'] ) ? intval( $_POST['log_id'] ) : 0;
-    if ( $log_id <= 0 ) {
-        return;
-    }
-
-    $table_logs = $wpdb->prefix . 'cmp_daily_logs';
-    $log_row    = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_logs} WHERE id = %d", $log_id ) );
-    if ( ! $log_row ) {
-        return;
-    }
-
-    $old_snapshot = cmp_format_log_meal_snapshot( $log_row );
-
-    // Build preview of the submitted meal assignment
-    $preview_row                   = clone $log_row;
-    $preview_row->breakfast_id     = ! empty( $_POST['breakfast'] ) ? intval( $_POST['breakfast'] ) : null;
-    $preview_row->lunch_id         = ! empty( $_POST['lunch'] ) ? intval( $_POST['lunch'] ) : null;
-    $preview_row->dinner_id        = ! empty( $_POST['dinner'] ) ? intval( $_POST['dinner'] ) : null;
-    $preview_row->snack_1_id       = ! empty( $_POST['snack_1'] ) ? intval( $_POST['snack_1'] ) : null;
-    $preview_row->snack_2_id       = ! empty( $_POST['snack_2'] ) ? intval( $_POST['snack_2'] ) : null;
-    $preview_row->juice_1_id       = ! empty( $_POST['juice_1'] ) ? intval( $_POST['juice_1'] ) : null;
-    $preview_row->juice_2_id       = ! empty( $_POST['juice_2'] ) ? intval( $_POST['juice_2'] ) : null;
-    $preview_row->juice_3_id       = ! empty( $_POST['juice_3'] ) ? intval( $_POST['juice_3'] ) : null;
-    $preview_row->custom_breakfast = ! empty( $_POST['custom_breakfast'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_breakfast'] ) ) : null;
-    $preview_row->custom_lunch     = ! empty( $_POST['custom_lunch'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_lunch'] ) ) : null;
-    $preview_row->custom_dinner    = ! empty( $_POST['custom_dinner'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_dinner'] ) ) : null;
-    $preview_row->custom_snack_1   = ! empty( $_POST['custom_snack_1'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_snack_1'] ) ) : null;
-    $preview_row->custom_snack_2   = ! empty( $_POST['custom_snack_2'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_snack_2'] ) ) : null;
-    $preview_row->custom_juice_1   = ! empty( $_POST['custom_juice_1'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_juice_1'] ) ) : null;
-    $preview_row->custom_juice_2   = ! empty( $_POST['custom_juice_2'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_juice_2'] ) ) : null;
-    $preview_row->custom_juice_3   = ! empty( $_POST['custom_juice_3'] ) ? sanitize_text_field( wp_unslash( $_POST['custom_juice_3'] ) ) : null;
-
-    $new_snapshot = cmp_format_log_meal_snapshot( $preview_row );
-
-    cmp_record_kitchen_activity_log( array(
-        'log_id'          => $log_id,
-        'subscription_id' => intval( $log_row->subscription_id ),
-        'user_id'         => intval( $log_row->user_id ),
-        'target_date'     => $log_row->target_date,
-        'action_type'     => "Chef's Choice Assigned",
-        'old_status'      => $old_snapshot,
-        'new_status'      => $new_snapshot,
-    ) );
 }
 
 // ==========================================
@@ -779,7 +470,7 @@ $files_to_include = array(
     'menu-manager-portal.php',
     'super-admin-portal.php',
     'chef-assignment-portal.php',
-    'accounts-portal.php',
+    'accounts-portal.php' 
 );
 
 foreach ( $files_to_include as $file ) {
@@ -788,120 +479,115 @@ foreach ( $files_to_include as $file ) {
     }
 }
 
+
 // ==========================================
 // 4. CRON JOBS & SCHEDULING LOGIC
 // ==========================================
-function cmp_schedule_exact_daily_cron( $hook_name, $setting_key, $default_time ) {
-    $tz          = new DateTimeZone( 'Asia/Dubai' );
-    $raw_val     = get_option( $setting_key, $default_time );
-    $target_time = ( strpos( $raw_val, ':' ) !== false ) ? $raw_val : str_pad( $raw_val, 2, '0', STR_PAD_LEFT ) . ':00';
+function cmp_schedule_exact_daily_cron($hook_name, $setting_key, $default_time) {
+    $tz = new DateTimeZone('Asia/Dubai');
+    $raw_val = get_option($setting_key, $default_time);
+    $target_time = (strpos($raw_val, ':') !== false) ? $raw_val : str_pad($raw_val, 2, '0', STR_PAD_LEFT) . ':00';
+    
+    $next_scheduled = wp_next_scheduled($hook_name);
+    $reschedule = false;
 
-    $next_scheduled = wp_next_scheduled( $hook_name );
-    $reschedule     = false;
-
-    if ( $next_scheduled ) {
-        $scheduled_date = new DateTime( '@' . $next_scheduled );
-        $scheduled_date->setTimezone( $tz );
-        if ( $scheduled_date->format( 'H:i' ) !== $target_time ) {
+    if ($next_scheduled) {
+        $scheduled_date = new DateTime('@' . $next_scheduled);
+        $scheduled_date->setTimezone($tz);
+        if ($scheduled_date->format('H:i') !== $target_time) {
             $reschedule = true;
-            wp_clear_scheduled_hook( $hook_name );
+            wp_clear_scheduled_hook($hook_name);
         }
     }
 
-    if ( ! $next_scheduled || $reschedule ) {
-        $date = new DateTime( "today $target_time", $tz );
-        if ( $date < new DateTime( 'now', $tz ) ) {
-            $date->modify( '+1 day' );
+    if (!$next_scheduled || $reschedule) {
+        $date = new DateTime("today $target_time", $tz);
+        if ($date < new DateTime('now', $tz)) {
+            $date->modify('+1 day');
         }
         wp_schedule_event( $date->getTimestamp(), 'daily', $hook_name );
     }
 }
 
-add_action( 'init', 'cmp_setup_crons' );
+add_action('init', 'cmp_setup_crons');
 function cmp_setup_crons() {
-    wp_clear_scheduled_hook( 'cmp_hourly_watchdog_cron_hook' );
-    wp_clear_scheduled_hook( 'cmp_foh_sameday_alert_hook' );
-    wp_clear_scheduled_hook( 'cmp_foh_nextday_alert_hook' );
-    wp_clear_scheduled_hook( 'cmp_kit_sameday_alert_hook' );
-    wp_clear_scheduled_hook( 'cmp_kit_nextday_alert_hook' );
+    wp_clear_scheduled_hook('cmp_hourly_watchdog_cron_hook');
+    wp_clear_scheduled_hook('cmp_foh_sameday_alert_hook');
+    wp_clear_scheduled_hook('cmp_foh_nextday_alert_hook');
+    wp_clear_scheduled_hook('cmp_kit_sameday_alert_hook');
+    wp_clear_scheduled_hook('cmp_kit_nextday_alert_hook');
 
     if ( ! wp_next_scheduled( 'cmp_daily_digest_cron_hook' ) ) {
-        $tz          = new DateTimeZone( 'Asia/Dubai' );
-        $cutoff_hour = intval( get_option( 'cmp_cutoff_time', '11' ) );
-        $date        = new DateTime( "today $cutoff_hour:30", $tz );
-        if ( $date < new DateTime( 'now', $tz ) ) {
-            $date->modify( '+1 day' );
-        }
+        $tz = new DateTimeZone('Asia/Dubai');
+        $cutoff_hour = intval(get_option('cmp_cutoff_time', '11'));
+        $date = new DateTime("today $cutoff_hour:30", $tz);
+        if ($date < new DateTime('now', $tz)) { $date->modify('+1 day'); }
         wp_schedule_event( $date->getTimestamp(), 'daily', 'cmp_daily_digest_cron_hook' );
     }
 
-    cmp_schedule_exact_daily_cron( 'cmp_foh_alert_1_hook', 'cmp_pos_alert_time_1', '19:00' );
-    cmp_schedule_exact_daily_cron( 'cmp_foh_alert_2_hook', 'cmp_pos_alert_time_2', '10:00' );
-    cmp_schedule_exact_daily_cron( 'cmp_kit_alert_1_hook', 'cmp_kitchen_alert_time_1', '19:00' );
-    cmp_schedule_exact_daily_cron( 'cmp_kit_alert_2_hook', 'cmp_kitchen_alert_time_2', '10:00' );
+    cmp_schedule_exact_daily_cron('cmp_foh_alert_1_hook', 'cmp_pos_alert_time_1', '19:00');
+    cmp_schedule_exact_daily_cron('cmp_foh_alert_2_hook', 'cmp_pos_alert_time_2', '10:00');
+    cmp_schedule_exact_daily_cron('cmp_kit_alert_1_hook', 'cmp_kitchen_alert_time_1', '19:00');
+    cmp_schedule_exact_daily_cron('cmp_kit_alert_2_hook', 'cmp_kitchen_alert_time_2', '10:00');
 }
 
 add_action( 'cmp_daily_digest_cron_hook', 'cmp_send_daily_digest_email' );
 function cmp_send_daily_digest_email() {
-    $updated_subs = get_option( 'cmp_daily_updated_subs', array() );
-    if ( empty( $updated_subs ) || ! is_array( $updated_subs ) ) {
-        return;
-    }
+    $updated_subs = get_option('cmp_daily_updated_subs', array());
+    if (empty($updated_subs) || !is_array($updated_subs)) { return; }
 
     global $wpdb;
-    $table_subs    = $wpdb->prefix . 'cmp_subscriptions';
-    $customer_list = '';
-    $updated_subs  = array_unique( $updated_subs );
+    $table_subs = $wpdb->prefix . 'cmp_subscriptions';
+    $customer_list = "";
+    $updated_subs = array_unique($updated_subs);
 
-    foreach ( $updated_subs as $sub_id ) {
-        $sub = $wpdb->get_row( $wpdb->prepare( "SELECT user_id, wc_order_id, plan_name FROM $table_subs WHERE id = %d", $sub_id ) );
-        if ( $sub ) {
-            $user  = get_userdata( $sub->user_id );
-            $fname = get_user_meta( $sub->user_id, 'first_name', true ) ?: get_user_meta( $sub->user_id, 'billing_first_name', true );
-            $lname = get_user_meta( $sub->user_id, 'last_name', true ) ?: get_user_meta( $sub->user_id, 'billing_last_name', true );
-            $name  = trim( $fname . ' ' . $lname );
-            if ( empty( $name ) ) {
-                $name = $user ? $user->display_name : 'Customer';
-            }
+    foreach ($updated_subs as $sub_id) {
+        $sub = $wpdb->get_row($wpdb->prepare("SELECT user_id, wc_order_id, plan_name FROM $table_subs WHERE id = %d", $sub_id));
+        if ($sub) {
+            $user = get_userdata($sub->user_id);
+            $fname = get_user_meta($sub->user_id, 'first_name', true) ?: get_user_meta($sub->user_id, 'billing_first_name', true);
+            $lname = get_user_meta($sub->user_id, 'last_name', true) ?: get_user_meta($sub->user_id, 'billing_last_name', true);
+            $name = trim($fname . ' ' . $lname);
+            if (empty($name)) { $name = $user ? $user->display_name : 'Customer'; }
             $customer_list .= "• {$name} (Order #{$sub->wc_order_id}) - {$sub->plan_name}\n";
         }
     }
 
-    $emails = get_option( 'cmp_digest_emails', get_option( 'admin_email' ) );
-    $to     = array_filter( array_map( 'trim', explode( ',', $emails ) ) );
+    $emails = get_option('cmp_digest_emails', get_option('admin_email'));
+    $to = array_filter(array_map('trim', explode(',', $emails)));
 
-    if ( ! empty( $to ) ) {
-        $subject  = 'Meal Selections Updated - Daily Digest';
-        $message  = "The following customers have selected or modified their meal calendars in the last 24 hours:\n\n";
+    if (!empty($to)) {
+        $subject = "Meal Selections Updated - Daily Digest";
+        $message = "The following customers have selected or modified their meal calendars in the last 24 hours:\n\n";
         $message .= $customer_list;
-        $message .= "\nLog in to the Kitchen Command Center to view their exact meal assignments.\n" . site_url( '/kitchen-command-center/' );
-        wp_mail( $to, $subject, $message );
+        $message .= "\nLog in to the Kitchen Command Center to view their exact meal assignments.\n" . site_url('/kitchen-command-center/');
+        wp_mail($to, $subject, $message);
     }
-    update_option( 'cmp_daily_updated_subs', array() );
+    update_option('cmp_daily_updated_subs', array());
 }
+
 
 // ==========================================
 // 5. ISOLATED COMPLIANCE ALERT HANDLERS
-//    (Exempts Paused plans, Cancelled days & Returned days from POS/Kitchen Pending Alerts)
 // ==========================================
 add_action( 'cmp_foh_alert_1_hook', 'cmp_run_foh_alert_1' );
 function cmp_run_foh_alert_1() {
-    $foh_emails = array_filter( array_map( 'trim', explode( ',', get_option( 'cmp_pos_alert_emails', '' ) ) ) );
-    if ( empty( $foh_emails ) ) return;
+    $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
+    if (empty($foh_emails)) return;
 
-    $tz       = new DateTimeZone( 'Asia/Dubai' );
-    $now      = new DateTime( 'now', $tz );
-    $tomorrow = date( 'Y-m-d', strtotime( '+1 day', $now->getTimestamp() ) );
-
-    $foh_days       = intval( get_option( 'cmp_pos_alert_days', '7' ) );
-    $foh_start_date = date( 'Y-m-d', strtotime( "-{$foh_days} days", $now->getTimestamp() ) );
+    $tz = new DateTimeZone('Asia/Dubai');
+    $now = new DateTime('now', $tz);
+    $tomorrow = date('Y-m-d', strtotime('+1 day', $now->getTimestamp()));
+    
+    $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
+    $foh_start_date = date('Y-m-d', strtotime("-{$foh_days} days", $now->getTimestamp()));
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
-    // Only Successful deliveries require a POS Check (Cancelled and Returned are exempted)
-    $foh_missed = $wpdb->get_var( $wpdb->prepare(
+    // Option C1: Exclude Paused plans and Cancelled meal days from FOH POS Watchdog
+    $foh_missed = $wpdb->get_var($wpdb->prepare(
         "SELECT COUNT(l.id)
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
@@ -909,38 +595,35 @@ function cmp_run_foh_alert_1() {
            AND l.is_locked = 1
            AND l.pos_updated = 0
            AND s.status IN ('active', 'completed')
-           AND l.delivery_result = 'Successful'",
-        $foh_start_date,
-        $tomorrow
-    ) );
+           AND l.delivery_result IN ('Successful', 'Returned')",
+        $foh_start_date, $tomorrow
+    ));
 
-    if ( $foh_missed > 0 ) {
+    if ($foh_missed > 0) {
         $subject = "ACTION REQUIRED: Pending POS Checks (Past {$foh_days} Days)";
-        $message = "Hello FOH Team,\n\nYou have {$foh_missed} un-reconciled Successful orders pending POS verification from the past {$foh_days} days.\n\nPlease log in to the Kitchen Portal, verify the delivery statuses, and click the POS checkboxes to finalize reconciliation.\n\n" . site_url( '/kitchen-command-center/' );
-        foreach ( $foh_emails as $recipient ) {
-            wp_mail( $recipient, $subject, $message );
-        }
+        $message = "Hello FOH Team,\n\nYou have {$foh_missed} un-reconciled orders pending in the system from the past {$foh_days} days.\n\nPlease log in to the Kitchen Portal, verify the delivery statuses, and click the POS checkboxes to finalize reconciliation.\n\n" . site_url('/kitchen-command-center/');
+        foreach ( $foh_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
 
 add_action( 'cmp_foh_alert_2_hook', 'cmp_run_foh_alert_2' );
 function cmp_run_foh_alert_2() {
-    $foh_emails = array_filter( array_map( 'trim', explode( ',', get_option( 'cmp_pos_alert_emails', '' ) ) ) );
-    if ( empty( $foh_emails ) ) return;
+    $foh_emails = array_filter(array_map('trim', explode(',', get_option('cmp_pos_alert_emails', ''))));
+    if (empty($foh_emails)) return;
 
-    $tz       = new DateTimeZone( 'Asia/Dubai' );
-    $now      = new DateTime( 'now', $tz );
-    $tomorrow = date( 'Y-m-d', strtotime( '+1 day', $now->getTimestamp() ) );
-
-    $foh_days       = intval( get_option( 'cmp_pos_alert_days', '7' ) );
-    $foh_start_date = date( 'Y-m-d', strtotime( "-{$foh_days} days", $now->getTimestamp() ) );
+    $tz = new DateTimeZone('Asia/Dubai');
+    $now = new DateTime('now', $tz);
+    $tomorrow = date('Y-m-d', strtotime('+1 day', $now->getTimestamp()));
+    
+    $foh_days = intval(get_option('cmp_pos_alert_days', '7'));
+    $foh_start_date = date('Y-m-d', strtotime("-{$foh_days} days", $now->getTimestamp()));
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
-    // Only Successful deliveries require a POS Check (Cancelled and Returned are exempted)
-    $foh_missed = $wpdb->get_var( $wpdb->prepare(
+    // Option C1: Exclude Paused plans and Cancelled meal days from FOH POS Watchdog
+    $foh_missed = $wpdb->get_var($wpdb->prepare(
         "SELECT COUNT(l.id)
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
@@ -948,107 +631,97 @@ function cmp_run_foh_alert_2() {
            AND l.is_locked = 1
            AND l.pos_updated = 0
            AND s.status IN ('active', 'completed')
-           AND l.delivery_result = 'Successful'",
-        $foh_start_date,
-        $tomorrow
-    ) );
+           AND l.delivery_result IN ('Successful', 'Returned')",
+        $foh_start_date, $tomorrow
+    ));
 
-    if ( $foh_missed > 0 ) {
-        $subject = 'ESCALATION: Missed POS Checks Detected';
-        $message = "Hello FOH Team,\n\nYou still have {$foh_missed} un-reconciled Successful orders from the past {$foh_days} days.\n\nPlease log in to the Kitchen Portal immediately and finalize the POS checks so customer portals and accounting records update correctly.\n\n" . site_url( '/kitchen-command-center/' );
-        foreach ( $foh_emails as $recipient ) {
-            wp_mail( $recipient, $subject, $message );
-        }
+    if ($foh_missed > 0) {
+        $subject = "ESCALATION: Missed POS Checks Detected";
+        $message = "Hello FOH Team,\n\nYou still have {$foh_missed} un-reconciled orders from the past {$foh_days} days.\n\nPlease log in to the Kitchen Portal immediately and finalize the POS checks so customer portals and accounting records update correctly.\n\n" . site_url('/kitchen-command-center/');
+        foreach ( $foh_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
 
 add_action( 'cmp_kit_alert_1_hook', 'cmp_run_kit_alert_1' );
 function cmp_run_kit_alert_1() {
-    $kitchen_emails = array_filter( array_map( 'trim', explode( ',', get_option( 'cmp_kitchen_alert_emails', '' ) ) ) );
-    if ( empty( $kitchen_emails ) ) return;
+    $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
+    if (empty($kitchen_emails)) return;
 
-    $tz           = new DateTimeZone( 'Asia/Dubai' );
-    $now          = new DateTime( 'now', $tz );
-    $current_date = $now->format( 'Y-m-d' );
-    $tomorrow     = date( 'Y-m-d', strtotime( '+1 day', $now->getTimestamp() ) );
-
-    $kit_days       = intval( get_option( 'cmp_kitchen_alert_days', '7' ) );
-    $kit_start_date = date( 'Y-m-d', strtotime( "-{$kit_days} days", $now->getTimestamp() ) );
+    $tz = new DateTimeZone('Asia/Dubai');
+    $now = new DateTime('now', $tz);
+    $current_date = $now->format('Y-m-d');
+    $tomorrow = date('Y-m-d', strtotime('+1 day', $now->getTimestamp()));
+    
+    $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
+    $kit_start_date = date('Y-m-d', strtotime("-{$kit_days} days", $now->getTimestamp()));
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
-    // Exclude Paused plans and Cancelled / Returned meal days from Kitchen Watchdog
-    $kitchen_missed = $wpdb->get_var( $wpdb->prepare(
+    // Option C1: Exclude Paused plans and Cancelled meal days from Kitchen Watchdog
+    $kitchen_missed = $wpdb->get_var($wpdb->prepare(
         "SELECT COUNT(l.id)
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
          WHERE l.is_locked = 1
            AND s.status = 'active'
-           AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned'))
+           AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')
            AND (
               (l.target_date >= %s AND l.target_date <= %s AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending'))
               OR 
               (l.target_date = %s AND l.is_prepared = 0)
            )",
-        $kit_start_date,
-        $current_date,
-        $tomorrow
-    ) );
+        $kit_start_date, $current_date, $tomorrow
+    ));
 
-    if ( $kitchen_missed > 0 ) {
+    if ($kitchen_missed > 0) {
         $subject = "ACTION REQUIRED: Pending Kitchen Logs (Past {$kit_days} Days)";
-        $message = "Hello Kitchen Team,\n\nYou have {$kitchen_missed} incomplete logs in the system from the past {$kit_days} days.\n\nThis means active meals have not been checked as 'Prepared', 'Dispatched', or given a final 'Delivery Status'. Please log in and finalize these records.\n\n" . site_url( '/kitchen-command-center/' );
-        foreach ( $kitchen_emails as $recipient ) {
-            wp_mail( $recipient, $subject, $message );
-        }
+        $message = "Hello Kitchen Team,\n\nYou have {$kitchen_missed} incomplete logs in the system from the past {$kit_days} days.\n\nThis means meals have not been checked as 'Prepared', 'Dispatched', or given a final 'Delivery Status'. Please log in and finalize these records.\n\n" . site_url('/kitchen-command-center/');
+        foreach ( $kitchen_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
 
 add_action( 'cmp_kit_alert_2_hook', 'cmp_run_kit_alert_2' );
 function cmp_run_kit_alert_2() {
-    $kitchen_emails = array_filter( array_map( 'trim', explode( ',', get_option( 'cmp_kitchen_alert_emails', '' ) ) ) );
-    if ( empty( $kitchen_emails ) ) return;
+    $kitchen_emails = array_filter(array_map('trim', explode(',', get_option('cmp_kitchen_alert_emails', ''))));
+    if (empty($kitchen_emails)) return;
 
-    $tz           = new DateTimeZone( 'Asia/Dubai' );
-    $now          = new DateTime( 'now', $tz );
-    $current_date = $now->format( 'Y-m-d' );
-    $tomorrow     = date( 'Y-m-d', strtotime( '+1 day', $now->getTimestamp() ) );
-
-    $kit_days       = intval( get_option( 'cmp_kitchen_alert_days', '7' ) );
-    $kit_start_date = date( 'Y-m-d', strtotime( "-{$kit_days} days", $now->getTimestamp() ) );
+    $tz = new DateTimeZone('Asia/Dubai');
+    $now = new DateTime('now', $tz);
+    $current_date = $now->format('Y-m-d');
+    $tomorrow = date('Y-m-d', strtotime('+1 day', $now->getTimestamp()));
+    
+    $kit_days = intval(get_option('cmp_kitchen_alert_days', '7'));
+    $kit_start_date = date('Y-m-d', strtotime("-{$kit_days} days", $now->getTimestamp()));
 
     global $wpdb;
     $table_logs = $wpdb->prefix . 'cmp_daily_logs';
     $table_subs = $wpdb->prefix . 'cmp_subscriptions';
 
-    // Exclude Paused plans and Cancelled / Returned meal days from Kitchen Watchdog
-    $kitchen_missed = $wpdb->get_var( $wpdb->prepare(
+    // Option C1: Exclude Paused plans and Cancelled meal days from Kitchen Watchdog
+    $kitchen_missed = $wpdb->get_var($wpdb->prepare(
         "SELECT COUNT(l.id)
          FROM {$table_logs} l
          INNER JOIN {$table_subs} s ON l.subscription_id = s.id
          WHERE l.is_locked = 1
            AND s.status = 'active'
-           AND (l.delivery_result IS NULL OR l.delivery_result NOT IN ('Cancelled', 'Returned'))
+           AND (l.delivery_result IS NULL OR l.delivery_result != 'Cancelled')
            AND (
               (l.target_date >= %s AND l.target_date <= %s AND (l.is_prepared = 0 OR l.dispatch_status = 0 OR l.delivery_result = 'Pending'))
               OR 
               (l.target_date = %s AND l.is_prepared = 0)
            )",
-        $kit_start_date,
-        $current_date,
-        $tomorrow
-    ) );
+        $kit_start_date, $current_date, $tomorrow
+    ));
 
-    if ( $kitchen_missed > 0 ) {
-        $subject = 'ESCALATION: Missed Kitchen Operational Logs';
-        $message = "Hello Kitchen Team,\n\nYou still have {$kitchen_missed} incomplete logs from the past {$kit_days} days.\n\nPlease log in immediately to ensure all active meals from yesterday and the past {$kit_days} days are properly marked as Prepared, Dispatched, and Delivered.\n\n" . site_url( '/kitchen-command-center/' );
-        foreach ( $kitchen_emails as $recipient ) {
-            wp_mail( $recipient, $subject, $message );
-        }
+    if ($kitchen_missed > 0) {
+        $subject = "ESCALATION: Missed Kitchen Operational Logs";
+        $message = "Hello Kitchen Team,\n\nYou still have {$kitchen_missed} incomplete logs from the past {$kit_days} days.\n\nPlease log in immediately to ensure all meals from yesterday and the past {$kit_days} days are properly marked as Prepared, Dispatched, and Delivered.\n\n" . site_url('/kitchen-command-center/');
+        foreach ( $kitchen_emails as $recipient ) { wp_mail( $recipient, $subject, $message ); }
     }
 }
+
 
 // ==========================================
 // 6. UNIFIED PORTAL AUTHENTICATION & GLASS UI/UX ENGINE
@@ -1060,7 +733,7 @@ add_action( 'wp_ajax_cmp_portal_login', 'cmp_handle_portal_ajax_login' );
 function cmp_handle_portal_ajax_login() {
     if ( ! check_ajax_referer( 'cmp_portal_auth_nonce', 'nonce', false ) ) {
         wp_send_json_error( array(
-            'message' => 'Session expired. Please refresh the page and try again.',
+            'message' => 'Session expired. Please refresh the page and try again.'
         ) );
     }
 
@@ -1074,7 +747,7 @@ function cmp_handle_portal_ajax_login() {
 
     if ( empty( $user_login ) || empty( $user_password ) ) {
         wp_send_json_error( array(
-            'message' => 'Please enter both your email/username and password.',
+            'message' => 'Please enter both your email/username and password.'
         ) );
     }
 
@@ -1105,7 +778,7 @@ function cmp_handle_portal_ajax_login() {
 
         if ( ! $has_access ) {
             wp_send_json_error( array(
-                'message' => "Access Denied: Your account ({$user->user_email}) does not have clearance to access the {$portal_title}.",
+                'message' => "Access Denied: Your account ({$user->user_email}) does not have clearance to access the {$portal_title}."
             ) );
         }
     }
@@ -1115,7 +788,7 @@ function cmp_handle_portal_ajax_login() {
     do_action( 'wp_login', $user->user_login, $user );
 
     wp_send_json_success( array(
-        'message' => 'Signed in successfully! Loading dashboard...',
+        'message' => 'Signed in successfully! Loading dashboard...'
     ) );
 }
 
@@ -1125,7 +798,7 @@ add_action( 'wp_ajax_cmp_portal_forgot_password', 'cmp_handle_portal_ajax_forgot
 function cmp_handle_portal_ajax_forgot_password() {
     if ( ! check_ajax_referer( 'cmp_portal_auth_nonce', 'nonce', false ) ) {
         wp_send_json_error( array(
-            'message' => 'Session expired. Please refresh the page and try again.',
+            'message' => 'Session expired. Please refresh the page and try again.'
         ) );
     }
 
@@ -1133,14 +806,14 @@ function cmp_handle_portal_ajax_forgot_password() {
 
     if ( empty( $user_login ) ) {
         wp_send_json_error( array(
-            'message' => 'Please enter your email address or username.',
+            'message' => 'Please enter your email address or username.'
         ) );
     }
 
     $user_data = is_email( $user_login ) ? get_user_by( 'email', $user_login ) : get_user_by( 'login', $user_login );
     if ( ! $user_data ) {
         wp_send_json_error( array(
-            'message' => 'No account was found matching that email address or username.',
+            'message' => 'No account was found matching that email address or username.'
         ) );
     }
 
@@ -1148,7 +821,7 @@ function cmp_handle_portal_ajax_forgot_password() {
 
     if ( true === $errors ) {
         wp_send_json_success( array(
-            'message' => 'Password reset link sent! Please check your email inbox (and spam folder).',
+            'message' => 'Password reset link sent! Please check your email inbox (and spam folder).'
         ) );
     } else {
         $err_msg = is_wp_error( $errors ) ? wp_strip_all_tags( $errors->get_error_message() ) : 'Unable to send password reset email. Please contact support.';
@@ -1280,7 +953,7 @@ function cmp_render_portal_login_ui( $args = array() ) {
             </div>
 
             <div class="cmp-auth-body">
-                <?php if ( is_user_logged_in() ) :
+                <?php if ( is_user_logged_in() ) : 
                     $curr_user = wp_get_current_user();
                 ?>
                     <div class="cmp-auth-alert error" style="display:block !important;">
@@ -1660,13 +1333,12 @@ function cmp_render_portal_login_ui( $args = array() ) {
     return ob_get_clean();
 }
 
+
 // ==========================================
-// 7. WP ADMIN DASHBOARD: MEAL PORTAL > CUSTOMER LOGS & KITCHEN LOGS
-//    (Option 1A: Strict Admin-Only Deletion + Immutable Deletion Stamp)
-//    (Option 5A: Dedicated Meal Portal > Kitchen Logs Submenu)
+// 7. WP ADMIN DASHBOARD: MEAL PORTAL > CUSTOMER LOGS (OPTION 4B)
 // ==========================================
-add_action( 'admin_menu', 'cmp_register_activity_logs_submenus', 55 );
-function cmp_register_activity_logs_submenus() {
+add_action( 'admin_menu', 'cmp_register_customer_logs_submenu', 55 );
+function cmp_register_customer_logs_submenu() {
     add_submenu_page(
         'cmp-menu-manager',
         'Customer Activity Logs',
@@ -1674,15 +1346,6 @@ function cmp_register_activity_logs_submenus() {
         'read',
         'cmp-customer-logs',
         'cmp_render_customer_logs_admin_page'
-    );
-
-    add_submenu_page(
-        'cmp-menu-manager',
-        'Kitchen Portal Activity Logs',
-        'Kitchen Logs',
-        'read',
-        'cmp-kitchen-logs',
-        'cmp_render_kitchen_logs_admin_page'
     );
 }
 
@@ -1749,7 +1412,7 @@ function cmp_build_customer_logs_query_filter() {
 }
 
 /**
- * CSV Exporter for Customer Logs
+ * CSV Exporter for Customer Logs (Option 4B)
  */
 add_action( 'admin_init', 'cmp_export_customer_activity_logs_csv' );
 function cmp_export_customer_activity_logs_csv() {
@@ -1814,7 +1477,7 @@ function cmp_export_customer_activity_logs_csv() {
 }
 
 /**
- * Renders the Meal Portal > Customer Logs Admin Page (Option 1A: Strict Admin-Only Deletion + Immutable Deletion Trail)
+ * Renders the Meal Portal > Customer Logs Admin Page (Option 4B)
  */
 function cmp_render_customer_logs_admin_page() {
     if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'accounts_team' ) ) {
@@ -1826,108 +1489,60 @@ function cmp_render_customer_logs_admin_page() {
     global $wpdb;
     $table_activity = $wpdb->prefix . 'cmp_activity_logs';
     $notice         = '';
-    $can_delete     = current_user_can( 'manage_options' ); // Option 1A: Strictly Super Admin only
 
-    // 1. Handle Single Row Delete (Admin Only + Immutable Audit Stamp)
+    // 1. Handle Single Row Delete
     if ( isset( $_GET['delete_log_id'] ) && isset( $_GET['_wpnonce'] ) && wp_verify_nonce( $_GET['_wpnonce'], 'cmp_del_single_log_' . intval( $_GET['delete_log_id'] ) ) ) {
-        if ( ! $can_delete ) {
-            $notice = '<div class="notice notice-error is-dismissible"><p><strong>Access Denied:</strong> Only Administrators can delete customer activity logs.</p></div>';
-        } else {
-            $del_id     = intval( $_GET['delete_log_id'] );
-            $target_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_activity} WHERE id = %d", $del_id ) );
-            if ( $target_row && $target_row->action_type === 'Audit Log Deleted' ) {
-                $notice = '<div class="notice notice-warning is-dismissible"><p>System audit deletion stamps are immutable and cannot be removed.</p></div>';
-            } elseif ( $target_row ) {
-                $wpdb->delete( $table_activity, array( 'id' => $del_id ), array( '%d' ) );
-                cmp_record_customer_activity_log( array(
-                    'subscription_id' => intval( $target_row->subscription_id ),
-                    'wc_order_id'     => intval( $target_row->wc_order_id ),
-                    'user_id'         => intval( $target_row->user_id ),
-                    'customer_name'   => $target_row->customer_name,
-                    'plan_name'       => $target_row->plan_name,
-                    'action_type'     => 'Audit Log Deleted',
-                    'target_date'     => $target_row->target_date,
-                    'old_status'      => sprintf( 'Deleted Log #%d [%s]: %s -> %s', $del_id, $target_row->action_type, $target_row->old_status, $target_row->new_status ),
-                    'new_status'      => 'Log Entry Removed by Administrator',
-                ) );
-                $notice = '<div class="notice notice-success is-dismissible"><p>Log entry #' . esc_html( $del_id ) . ' deleted and recorded in the audit trail.</p></div>';
-            }
-        }
+        $del_id = intval( $_GET['delete_log_id'] );
+        $wpdb->delete( $table_activity, array( 'id' => $del_id ), array( '%d' ) );
+        $notice = '<div class="notice notice-success is-dismissible"><p>Log entry #' . esc_html( $del_id ) . ' deleted successfully.</p></div>';
     }
 
-    // 2. Handle Bulk Delete Selected Logs (Admin Only + Immutable Audit Stamp)
+    // 2. Handle Bulk Delete Selected Logs
     if ( isset( $_POST['cmp_bulk_delete_logs'] ) && check_admin_referer( 'cmp_customer_logs_bulk_action', 'cmp_logs_bulk_nonce' ) ) {
-        if ( ! $can_delete ) {
-            $notice = '<div class="notice notice-error is-dismissible"><p><strong>Access Denied:</strong> Only Administrators can delete customer activity logs.</p></div>';
-        } elseif ( ! empty( $_POST['log_ids'] ) && is_array( $_POST['log_ids'] ) ) {
+        if ( ! empty( $_POST['log_ids'] ) && is_array( $_POST['log_ids'] ) ) {
             $ids_clean = array_filter( array_map( 'intval', $_POST['log_ids'] ) );
             if ( ! empty( $ids_clean ) ) {
                 $ids_sql = implode( ',', $ids_clean );
-                $deleted = $wpdb->query( "DELETE FROM {$table_activity} WHERE id IN ({$ids_sql}) AND action_type != 'Audit Log Deleted'" );
-                if ( $deleted > 0 ) {
-                    cmp_record_customer_activity_log( array(
-                        'subscription_id' => 0,
-                        'wc_order_id'     => 0,
-                        'user_id'         => 0,
-                        'customer_name'   => 'System Audit Trail',
-                        'plan_name'       => 'Customer Activity Logs',
-                        'action_type'     => 'Audit Log Deleted',
-                        'target_date'     => date( 'Y-m-d' ),
-                        'old_status'      => sprintf( 'Bulk selected %d log entry ID(s): %s', intval( $deleted ), implode( ', #', $ids_clean ) ),
-                        'new_status'      => sprintf( 'Permanently removed %d log entries', intval( $deleted ) ),
-                    ) );
-                }
-                $notice = '<div class="notice notice-success is-dismissible"><p>Deleted <strong>' . intval( $deleted ) . '</strong> selected log entries.</p></div>';
+                $deleted = $wpdb->query( "DELETE FROM {$table_activity} WHERE id IN ({$ids_sql})" );
+                $notice  = '<div class="notice notice-success is-dismissible"><p>Deleted <strong>' . intval( $deleted ) . '</strong> selected log entries.</p></div>';
             }
         } else {
             $notice = '<div class="notice notice-warning is-dismissible"><p>Please select at least one log entry to delete.</p></div>';
         }
     }
 
-    // 3. Handle Clear All Logs (Admin Only + Immutable Audit Stamp)
+    // 3. Handle Clear All Logs / Purge Older Logs
     if ( isset( $_POST['cmp_clear_all_logs'] ) && check_admin_referer( 'cmp_customer_logs_clear_action', 'cmp_logs_clear_nonce' ) ) {
-        if ( $can_delete ) {
-            $prev_count = intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$table_activity}" ) );
+        if ( current_user_can( 'manage_options' ) ) {
             $wpdb->query( "TRUNCATE TABLE {$table_activity}" );
-            cmp_record_customer_activity_log( array(
-                'subscription_id' => 0,
-                'wc_order_id'     => 0,
-                'user_id'         => 0,
-                'customer_name'   => 'System Audit Trail',
-                'plan_name'       => 'Customer Activity Logs',
-                'action_type'     => 'Audit Log Deleted',
-                'target_date'     => date( 'Y-m-d' ),
-                'old_status'      => sprintf( 'Full Customer Activity Log Table (%d records)', $prev_count ),
-                'new_status'      => 'All previous customer activity logs cleared by Administrator',
-            ) );
-            $notice = '<div class="notice notice-success is-dismissible"><p><strong>All customer activity logs have been cleared and stamped in the audit trail.</strong></p></div>';
+            $notice = '<div class="notice notice-success is-dismissible"><p><strong>All customer activity logs have been cleared.</strong></p></div>';
         } else {
             $notice = '<div class="notice notice-error is-dismissible"><p>Only Administrators can clear the entire log history.</p></div>';
         }
     }
 
     // Build Filters & Pagination
-    $filter      = cmp_build_customer_logs_query_filter();
-    $per_page    = 50;
-    $paged       = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
-    $offset      = ( $paged - 1 ) * $per_page;
+    $filter     = cmp_build_customer_logs_query_filter();
+    $per_page   = 50;
+    $paged      = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
+    $offset     = ( $paged - 1 ) * $per_page;
 
-    $count_sql   = "SELECT COUNT(*) FROM {$table_activity} WHERE {$filter['where_sql']}";
-    $total_rows  = ! empty( $filter['params'] ) ? intval( $wpdb->get_var( $wpdb->prepare( $count_sql, $filter['params'] ) ) ) : intval( $wpdb->get_var( $count_sql ) );
+    $count_sql  = "SELECT COUNT(*) FROM {$table_activity} WHERE {$filter['where_sql']}";
+    $total_rows = ! empty( $filter['params'] ) ? intval( $wpdb->get_var( $wpdb->prepare( $count_sql, $filter['params'] ) ) ) : intval( $wpdb->get_var( $count_sql ) );
     $total_pages = max( 1, ceil( $total_rows / $per_page ) );
 
-    $data_sql    = "SELECT * FROM {$table_activity} WHERE {$filter['where_sql']} ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d";
-    $query_args  = array_merge( $filter['params'], array( $per_page, $offset ) );
-    $logs        = $wpdb->get_results( $wpdb->prepare( $data_sql, $query_args ) );
+    $data_sql   = "SELECT * FROM {$table_activity} WHERE {$filter['where_sql']} ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d";
+    $query_args = array_merge( $filter['params'], array( $per_page, $offset ) );
+    $logs       = $wpdb->get_results( $wpdb->prepare( $data_sql, $query_args ) );
 
     // Fetch distinct Action Types for filter dropdown
     $distinct_actions = $wpdb->get_col( "SELECT DISTINCT action_type FROM {$table_activity} WHERE action_type != '' ORDER BY action_type ASC" );
 
-    $search_val = isset( $_GET['s_log'] ) ? sanitize_text_field( wp_unslash( $_GET['s_log'] ) ) : '';
-    $action_val = isset( $_GET['f_action'] ) ? sanitize_text_field( wp_unslash( $_GET['f_action'] ) ) : '';
-    $role_val   = isset( $_GET['f_role'] ) ? sanitize_text_field( wp_unslash( $_GET['f_role'] ) ) : '';
-    $from_val   = isset( $_GET['f_from'] ) ? sanitize_text_field( wp_unslash( $_GET['f_from'] ) ) : '';
-    $to_val     = isset( $_GET['f_to'] ) ? sanitize_text_field( wp_unslash( $_GET['f_to'] ) ) : '';
+    $search_val  = isset( $_GET['s_log'] ) ? sanitize_text_field( wp_unslash( $_GET['s_log'] ) ) : '';
+    $action_val  = isset( $_GET['f_action'] ) ? sanitize_text_field( wp_unslash( $_GET['f_action'] ) ) : '';
+    $role_val    = isset( $_GET['f_role'] ) ? sanitize_text_field( wp_unslash( $_GET['f_role'] ) ) : '';
+    $from_val    = isset( $_GET['f_from'] ) ? sanitize_text_field( wp_unslash( $_GET['f_from'] ) ) : '';
+    $to_val      = isset( $_GET['f_to'] ) ? sanitize_text_field( wp_unslash( $_GET['f_to'] ) ) : '';
 
     $export_url = wp_nonce_url(
         add_query_arg( array( 'cmp_export_activity_logs' => '1' ) ),
@@ -1955,7 +1570,6 @@ function cmp_render_customer_logs_admin_page() {
         .cmp-action-cancel { background: #fee2e2; color: #991b1b; }
         .cmp-action-reset  { background: #fef3c7; color: #92400e; }
         .cmp-action-plan   { background: #f3e8ff; color: #6b21a8; }
-        .cmp-action-audit  { background: #1e293b; color: #f8fafc; }
         .cmp-role-pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; background: #e2e8f0; color: #334155; margin-top: 3px; }
         .cmp-status-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 7px 10px; font-size: 12.5px; color: #1e293b; max-width: 340px; word-break: break-word; }
         .cmp-status-box.old { border-left: 3px solid #94a3b8; color: #64748b; }
@@ -1968,17 +1582,14 @@ function cmp_render_customer_logs_admin_page() {
         <div class="cmp-logs-header">
             <div>
                 <h1>Customer Activity &amp; Audit Logs</h1>
-                <p>Tamper-protected history of meal selections, edits, cancellations, admin resets, logistics updates, and plan changes.</p>
+                <p>Complete history of meal selections, edits, cancellations, admin resets, and plan status updates.</p>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <a href="<?php echo esc_url( admin_url( 'admin.php?page=cmp-kitchen-logs' ) ); ?>" class="button" style="background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); font-weight:700; padding:6px 14px; height:auto; border-radius:6px;">
-                    View Kitchen Logs &rarr;
-                </a>
                 <a href="<?php echo esc_url( $export_url ); ?>" class="button" style="background:#ffffff; color:#1B5E20; border:none; font-weight:700; padding:6px 16px; height:auto; border-radius:6px;">
                     &#128190; Export Filtered Logs to CSV
                 </a>
-                <?php if ( $can_delete && $total_rows > 0 ) : ?>
-                <form method="POST" style="margin:0;" onsubmit="return confirm('Are you sure you want to clear ALL customer activity logs? This action will be permanently stamped in the audit trail.');">
+                <?php if ( current_user_can( 'manage_options' ) && $total_rows > 0 ) : ?>
+                <form method="POST" style="margin:0;" onsubmit="return confirm('Are you sure you want to permanently clear ALL customer activity logs?');">
                     <?php wp_nonce_field( 'cmp_customer_logs_clear_action', 'cmp_logs_clear_nonce' ); ?>
                     <button type="submit" name="cmp_clear_all_logs" class="button" style="background:#dc2626; color:#fff; border:none; font-weight:700; padding:6px 14px; height:auto; border-radius:6px; cursor:pointer;">
                         Clear All Logs
@@ -1988,7 +1599,7 @@ function cmp_render_customer_logs_admin_page() {
             </div>
         </div>
 
-        <!-- SEARCH & FILTER BAR -->
+        <!-- SEARCH & FILTER BAR (OPTION 4B) -->
         <form method="GET" action="" class="cmp-logs-filter-bar">
             <input type="hidden" name="page" value="cmp-customer-logs">
             
@@ -2041,15 +1652,9 @@ function cmp_render_customer_logs_admin_page() {
             
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <?php if ( $can_delete ) : ?>
-                        <button type="submit" name="cmp_bulk_delete_logs" class="button" style="color:#dc2626; border-color:#fca5a5; background:#fff1f2; font-weight:600;" onclick="return confirm('Delete all selected log entries?');">
-                            &#128465; Delete Selected Logs
-                        </button>
-                    <?php else : ?>
-                        <span style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:700;">
-                            &#128274; Protected Audit Trail (Read-Only for Staff)
-                        </span>
-                    <?php endif; ?>
+                    <button type="submit" name="cmp_bulk_delete_logs" class="button" style="color:#dc2626; border-color:#fca5a5; background:#fff1f2; font-weight:600;" onclick="return confirm('Delete all selected log entries?');">
+                        &#128465; Delete Selected Logs
+                    </button>
                     <span style="color:#64748b; font-size:13px;">Showing <strong><?php echo intval( count( $logs ) ); ?></strong> of <strong><?php echo intval( $total_rows ); ?></strong> total logs</span>
                 </div>
 
@@ -2070,9 +1675,7 @@ function cmp_render_customer_logs_admin_page() {
                 <table class="cmp-logs-table">
                     <thead>
                         <tr>
-                            <?php if ( $can_delete ) : ?>
-                                <th style="width:32px;"><input type="checkbox" id="cmp-select-all-logs"></th>
-                            <?php endif; ?>
+                            <th style="width:32px;"><input type="checkbox" id="cmp-select-all-logs"></th>
                             <th style="width:145px;">Date &amp; Time (GST)</th>
                             <th style="width:95px;">Order ID</th>
                             <th style="width:200px;">Customer Name</th>
@@ -2080,30 +1683,25 @@ function cmp_render_customer_logs_admin_page() {
                             <th>Old Status (Before Update)</th>
                             <th>Current Status (After Update)</th>
                             <th style="width:150px;">Updated By</th>
-                            <?php if ( $can_delete ) : ?>
-                                <th style="width:75px; text-align:center;">Delete</th>
-                            <?php endif; ?>
+                            <th style="width:75px; text-align:center;">Delete</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if ( empty( $logs ) ) : ?>
                             <tr>
-                                <td colspan="<?php echo $can_delete ? 9 : 7; ?>" style="text-align:center; padding:40px; color:#64748b; font-size:14px;">
+                                <td colspan="9" style="text-align:center; padding:40px; color:#64748b; font-size:14px;">
                                     No customer activity logs found matching your filter criteria.
                                 </td>
                             </tr>
                         <?php else : ?>
                             <?php foreach ( $logs as $log ) :
-                                $is_immutable_audit = ( $log->action_type === 'Audit Log Deleted' );
-                                $order_badge        = ( intval( $log->wc_order_id ) < 0 )
+                                $order_badge = ( intval( $log->wc_order_id ) < 0 )
                                     ? 'Manual #' . absint( $log->wc_order_id )
-                                    : ( intval( $log->wc_order_id ) > 0 ? '#' . intval( $log->wc_order_id ) : ( $is_immutable_audit ? 'Audit' : 'Manual' ) );
+                                    : ( intval( $log->wc_order_id ) > 0 ? '#' . intval( $log->wc_order_id ) : 'Manual' );
 
                                 $act_lower   = strtolower( $log->action_type );
                                 $badge_class = 'cmp-action-update';
-                                if ( $is_immutable_audit ) {
-                                    $badge_class = 'cmp-action-audit';
-                                } elseif ( strpos( $act_lower, 'select' ) !== false ) {
+                                if ( strpos( $act_lower, 'select' ) !== false ) {
                                     $badge_class = 'cmp-action-select';
                                 } elseif ( strpos( $act_lower, 'cancel' ) !== false && strpos( $act_lower, 'reset' ) === false ) {
                                     $badge_class = 'cmp-action-cancel';
@@ -2119,15 +1717,7 @@ function cmp_render_customer_logs_admin_page() {
                                 );
                             ?>
                             <tr>
-                                <?php if ( $can_delete ) : ?>
-                                    <td>
-                                        <?php if ( ! $is_immutable_audit ) : ?>
-                                            <input type="checkbox" name="log_ids[]" value="<?php echo esc_attr( $log->id ); ?>" class="cmp-log-row-cb">
-                                        <?php else : ?>
-                                            <span title="Protected System Audit Entry">&#128274;</span>
-                                        <?php endif; ?>
-                                    </td>
-                                <?php endif; ?>
+                                <td><input type="checkbox" name="log_ids[]" value="<?php echo esc_attr( $log->id ); ?>" class="cmp-log-row-cb"></td>
                                 <td style="white-space:nowrap; font-size:12.5px; color:#475569;">
                                     <strong><?php echo esc_html( date( 'd M Y', strtotime( $log->created_at ) ) ); ?></strong><br>
                                     <?php echo esc_html( date( 'h:i A', strtotime( $log->created_at ) ) ); ?>
@@ -2165,17 +1755,11 @@ function cmp_render_customer_logs_admin_page() {
                                     <strong style="color:#0f172a;"><?php echo esc_html( $log->actor_name ); ?></strong><br>
                                     <span class="cmp-role-pill"><?php echo esc_html( $log->actor_role ); ?></span>
                                 </td>
-                                <?php if ( $can_delete ) : ?>
-                                    <td style="text-align:center;">
-                                        <?php if ( ! $is_immutable_audit ) : ?>
-                                            <a href="<?php echo esc_url( $del_url ); ?>" onclick="return confirm('Delete this log entry?');" style="color:#dc2626; text-decoration:none; font-weight:700; font-size:12px; padding:4px 8px; border:1px solid #fecaca; border-radius:4px; background:#fff1f2; display:inline-block;">
-                                                Delete
-                                            </a>
-                                        <?php else : ?>
-                                            <span style="font-size:11px; color:#64748b; font-weight:700;">Locked</span>
-                                        <?php endif; ?>
-                                    </td>
-                                <?php endif; ?>
+                                <td style="text-align:center;">
+                                    <a href="<?php echo esc_url( $del_url ); ?>" onclick="return confirm('Delete this log entry?');" style="color:#dc2626; text-decoration:none; font-weight:700; font-size:12px; padding:4px 8px; border:1px solid #fecaca; border-radius:4px; background:#fff1f2; display:inline-block;">
+                                        Delete
+                                    </a>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>
@@ -2191,537 +1775,6 @@ function cmp_render_customer_logs_admin_page() {
         if (selectAll) {
             selectAll.addEventListener('change', function() {
                 document.querySelectorAll('.cmp-log-row-cb').forEach(cb => {
-                    cb.checked = selectAll.checked;
-                });
-            });
-        }
-    });
-    </script>
-    <?php
-}
-
-// ==========================================
-// 8. WP ADMIN DASHBOARD: MEAL PORTAL > KITCHEN LOGS (OPTION 5A)
-// ==========================================
-
-/**
- * Helper to build WHERE clauses and parameters for Kitchen Logs filtering & CSV export
- */
-function cmp_build_kitchen_logs_query_filter() {
-    global $wpdb;
-    $where  = array( '1=1' );
-    $params = array();
-
-    $search      = isset( $_GET['s_klog'] ) ? sanitize_text_field( wp_unslash( $_GET['s_klog'] ) ) : '';
-    $action_type = isset( $_GET['fk_action'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_action'] ) ) : '';
-    $actor_role  = isset( $_GET['fk_role'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_role'] ) ) : '';
-    $date_from   = isset( $_GET['fk_from'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_from'] ) ) : '';
-    $date_to     = isset( $_GET['fk_to'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_to'] ) ) : '';
-
-    if ( $search !== '' ) {
-        $like     = '%' . $wpdb->esc_like( $search ) . '%';
-        $clean_id = preg_replace( '/[^0-9\-]/', '', $search );
-        if ( $clean_id !== '' && is_numeric( $clean_id ) ) {
-            $where[]  = '(customer_name LIKE %s OR plan_name LIKE %s OR actor_name LIKE %s OR old_status LIKE %s OR new_status LIKE %s OR wc_order_id = %d OR subscription_id = %d)';
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = intval( $clean_id );
-            $params[] = absint( $clean_id );
-        } else {
-            $where[]  = '(customer_name LIKE %s OR plan_name LIKE %s OR actor_name LIKE %s OR old_status LIKE %s OR new_status LIKE %s)';
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
-        }
-    }
-
-    if ( $action_type !== '' ) {
-        $where[]  = 'action_type = %s';
-        $params[] = $action_type;
-    }
-
-    if ( $actor_role !== '' ) {
-        $where[]  = 'actor_role = %s';
-        $params[] = $actor_role;
-    }
-
-    if ( $date_from !== '' ) {
-        $where[]  = 'DATE(created_at) >= %s';
-        $params[] = $date_from;
-    }
-
-    if ( $date_to !== '' ) {
-        $where[]  = 'DATE(created_at) <= %s';
-        $params[] = $date_to;
-    }
-
-    return array(
-        'where_sql' => implode( ' AND ', $where ),
-        'params'    => $params,
-    );
-}
-
-/**
- * CSV Exporter for Kitchen Logs (Option 5A)
- */
-add_action( 'admin_init', 'cmp_export_kitchen_activity_logs_csv' );
-function cmp_export_kitchen_activity_logs_csv() {
-    if ( ! isset( $_GET['page'] ) || $_GET['page'] !== 'cmp-kitchen-logs' || ! isset( $_GET['cmp_export_kitchen_logs'] ) ) {
-        return;
-    }
-
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'kitchen_staff' ) && ! current_user_can( 'accounts_team' ) ) {
-        wp_die( 'Unauthorized Access' );
-    }
-
-    check_admin_referer( 'cmp_kitchen_logs_export', 'export_nonce' );
-
-    global $wpdb;
-    $table_kitchen_logs = $wpdb->prefix . 'cmp_kitchen_logs';
-    $filter             = cmp_build_kitchen_logs_query_filter();
-    $sql                = "SELECT * FROM {$table_kitchen_logs} WHERE {$filter['where_sql']} ORDER BY created_at DESC, id DESC";
-    $rows               = ! empty( $filter['params'] ) ? $wpdb->get_results( $wpdb->prepare( $sql, $filter['params'] ) ) : $wpdb->get_results( $sql );
-
-    header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename="Kitchen_Activity_Logs_' . date( 'Y-m-d_His' ) . '.csv"' );
-    $output = fopen( 'php://output', 'w' );
-    fputs( $output, chr( 0xEF ) . chr( 0xBB ) . chr( 0xBF ) );
-
-    fputcsv( $output, array(
-        'Log ID',
-        'Date & Time (GST)',
-        'Order ID',
-        'Subscription ID',
-        'Customer Name',
-        'Plan Name',
-        'Prep Date',
-        'Eating Date',
-        'Action Type',
-        'Old Status (Before Update)',
-        'Current Status (After Update)',
-        'Updated By',
-        'Role',
-    ) );
-
-    if ( $rows ) {
-        foreach ( $rows as $r ) {
-            $order_disp = ( intval( $r->wc_order_id ) < 0 ) ? 'Manual #' . absint( $r->wc_order_id ) : ( intval( $r->wc_order_id ) > 0 ? '#' . $r->wc_order_id : 'Manual' );
-            fputcsv( $output, array(
-                $r->id,
-                $r->created_at,
-                $order_disp,
-                $r->subscription_id,
-                $r->customer_name,
-                $r->plan_name,
-                $r->prep_date ?: '-',
-                $r->target_date ?: '-',
-                $r->action_type,
-                wp_strip_all_tags( $r->old_status ),
-                wp_strip_all_tags( $r->new_status ),
-                $r->actor_name,
-                $r->actor_role,
-            ) );
-        }
-    }
-
-    fclose( $output );
-    exit;
-}
-
-/**
- * Renders the Meal Portal > Kitchen Logs Admin Page (Option 5A)
- */
-function cmp_render_kitchen_logs_admin_page() {
-    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'menu_manager' ) && ! current_user_can( 'foh_manager' ) && ! current_user_can( 'kitchen_staff' ) && ! current_user_can( 'accounts_team' ) ) {
-        wp_die( 'Access Denied: You do not have permission to view Kitchen Logs.' );
-    }
-
-    cmp_auto_patch_database();
-
-    global $wpdb;
-    $table_kitchen_logs = $wpdb->prefix . 'cmp_kitchen_logs';
-    $notice             = '';
-    $can_delete         = current_user_can( 'manage_options' );
-
-    // 1. Handle Single Row Delete (Admin Only + Immutable Audit Stamp)
-    if ( isset( $_GET['delete_klog_id'] ) && isset( $_GET['_wpnonce'] ) && wp_verify_nonce( $_GET['_wpnonce'], 'cmp_del_single_klog_' . intval( $_GET['delete_klog_id'] ) ) ) {
-        if ( ! $can_delete ) {
-            $notice = '<div class="notice notice-error is-dismissible"><p><strong>Access Denied:</strong> Only Administrators can delete kitchen activity logs.</p></div>';
-        } else {
-            $del_id     = intval( $_GET['delete_klog_id'] );
-            $target_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_kitchen_logs} WHERE id = %d", $del_id ) );
-            if ( $target_row && $target_row->action_type === 'Audit Log Deleted' ) {
-                $notice = '<div class="notice notice-warning is-dismissible"><p>System audit deletion stamps are immutable and cannot be removed.</p></div>';
-            } elseif ( $target_row ) {
-                $wpdb->delete( $table_kitchen_logs, array( 'id' => $del_id ), array( '%d' ) );
-                cmp_record_kitchen_activity_log( array(
-                    'log_id'          => intval( $target_row->log_id ),
-                    'subscription_id' => intval( $target_row->subscription_id ),
-                    'wc_order_id'     => intval( $target_row->wc_order_id ),
-                    'user_id'         => intval( $target_row->user_id ),
-                    'customer_name'   => $target_row->customer_name,
-                    'plan_name'       => $target_row->plan_name,
-                    'prep_date'       => $target_row->prep_date,
-                    'target_date'     => $target_row->target_date,
-                    'action_type'     => 'Audit Log Deleted',
-                    'old_status'      => sprintf( 'Deleted Kitchen Log #%d [%s]: %s -> %s', $del_id, $target_row->action_type, $target_row->old_status, $target_row->new_status ),
-                    'new_status'      => 'Kitchen Log Entry Removed by Administrator',
-                ) );
-                $notice = '<div class="notice notice-success is-dismissible"><p>Kitchen log entry #' . esc_html( $del_id ) . ' deleted and recorded in the audit trail.</p></div>';
-            }
-        }
-    }
-
-    // 2. Handle Bulk Delete Selected Kitchen Logs (Admin Only)
-    if ( isset( $_POST['cmp_bulk_delete_klogs'] ) && check_admin_referer( 'cmp_kitchen_logs_bulk_action', 'cmp_klogs_bulk_nonce' ) ) {
-        if ( ! $can_delete ) {
-            $notice = '<div class="notice notice-error is-dismissible"><p><strong>Access Denied:</strong> Only Administrators can delete kitchen activity logs.</p></div>';
-        } elseif ( ! empty( $_POST['klog_ids'] ) && is_array( $_POST['klog_ids'] ) ) {
-            $ids_clean = array_filter( array_map( 'intval', $_POST['klog_ids'] ) );
-            if ( ! empty( $ids_clean ) ) {
-                $ids_sql = implode( ',', $ids_clean );
-                $deleted = $wpdb->query( "DELETE FROM {$table_kitchen_logs} WHERE id IN ({$ids_sql}) AND action_type != 'Audit Log Deleted'" );
-                if ( $deleted > 0 ) {
-                    cmp_record_kitchen_activity_log( array(
-                        'log_id'          => 0,
-                        'subscription_id' => 0,
-                        'wc_order_id'     => 0,
-                        'user_id'         => 0,
-                        'customer_name'   => 'System Audit Trail',
-                        'plan_name'       => 'Kitchen Activity Logs',
-                        'prep_date'       => date( 'Y-m-d' ),
-                        'target_date'     => date( 'Y-m-d' ),
-                        'action_type'     => 'Audit Log Deleted',
-                        'old_status'      => sprintf( 'Bulk selected %d kitchen log ID(s): %s', intval( $deleted ), implode( ', #', $ids_clean ) ),
-                        'new_status'      => sprintf( 'Permanently removed %d kitchen log entries', intval( $deleted ) ),
-                    ) );
-                }
-                $notice = '<div class="notice notice-success is-dismissible"><p>Deleted <strong>' . intval( $deleted ) . '</strong> selected kitchen log entries.</p></div>';
-            }
-        } else {
-            $notice = '<div class="notice notice-warning is-dismissible"><p>Please select at least one kitchen log entry to delete.</p></div>';
-        }
-    }
-
-    // 3. Handle Clear All Kitchen Logs (Admin Only)
-    if ( isset( $_POST['cmp_clear_all_klogs'] ) && check_admin_referer( 'cmp_kitchen_logs_clear_action', 'cmp_klogs_clear_nonce' ) ) {
-        if ( $can_delete ) {
-            $prev_count = intval( $wpdb->get_var( "SELECT COUNT(*) FROM {$table_kitchen_logs}" ) );
-            $wpdb->query( "TRUNCATE TABLE {$table_kitchen_logs}" );
-            cmp_record_kitchen_activity_log( array(
-                'log_id'          => 0,
-                'subscription_id' => 0,
-                'wc_order_id'     => 0,
-                'user_id'         => 0,
-                'customer_name'   => 'System Audit Trail',
-                'plan_name'       => 'Kitchen Activity Logs',
-                'prep_date'       => date( 'Y-m-d' ),
-                'target_date'     => date( 'Y-m-d' ),
-                'action_type'     => 'Audit Log Deleted',
-                'old_status'      => sprintf( 'Full Kitchen Activity Log Table (%d records)', $prev_count ),
-                'new_status'      => 'All previous kitchen activity logs cleared by Administrator',
-            ) );
-            $notice = '<div class="notice notice-success is-dismissible"><p><strong>All kitchen activity logs have been cleared and stamped in the audit trail.</strong></p></div>';
-        } else {
-            $notice = '<div class="notice notice-error is-dismissible"><p>Only Administrators can clear the entire kitchen log history.</p></div>';
-        }
-    }
-
-    $filter      = cmp_build_kitchen_logs_query_filter();
-    $per_page    = 50;
-    $paged       = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
-    $offset      = ( $paged - 1 ) * $per_page;
-
-    $count_sql   = "SELECT COUNT(*) FROM {$table_kitchen_logs} WHERE {$filter['where_sql']}";
-    $total_rows  = ! empty( $filter['params'] ) ? intval( $wpdb->get_var( $wpdb->prepare( $count_sql, $filter['params'] ) ) ) : intval( $wpdb->get_var( $count_sql ) );
-    $total_pages = max( 1, ceil( $total_rows / $per_page ) );
-
-    $data_sql    = "SELECT * FROM {$table_kitchen_logs} WHERE {$filter['where_sql']} ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d";
-    $query_args  = array_merge( $filter['params'], array( $per_page, $offset ) );
-    $logs        = $wpdb->get_results( $wpdb->prepare( $data_sql, $query_args ) );
-
-    $distinct_actions = $wpdb->get_col( "SELECT DISTINCT action_type FROM {$table_kitchen_logs} WHERE action_type != '' ORDER BY action_type ASC" );
-
-    $search_val = isset( $_GET['s_klog'] ) ? sanitize_text_field( wp_unslash( $_GET['s_klog'] ) ) : '';
-    $action_val = isset( $_GET['fk_action'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_action'] ) ) : '';
-    $role_val   = isset( $_GET['fk_role'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_role'] ) ) : '';
-    $from_val   = isset( $_GET['fk_from'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_from'] ) ) : '';
-    $to_val     = isset( $_GET['fk_to'] ) ? sanitize_text_field( wp_unslash( $_GET['fk_to'] ) ) : '';
-
-    $export_url = wp_nonce_url(
-        add_query_arg( array( 'cmp_export_kitchen_logs' => '1' ) ),
-        'cmp_kitchen_logs_export',
-        'export_nonce'
-    );
-    ?>
-    <style>
-        .cmp-klogs-wrap { max-width: 1450px; margin-top: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .cmp-klogs-header { background: linear-gradient(135deg, #0f172a 0%, #1B5E20 100%); color: #fff; padding: 22px 28px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(15,23,42,0.18); }
-        .cmp-klogs-header h1 { color: #fff; margin: 0; font-size: 1.6rem; font-weight: 800; }
-        .cmp-klogs-header p { color: #DCECC9; margin: 4px 0 0 0; font-size: 0.92rem; }
-        .cmp-klogs-filter-bar { background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
-        .cmp-filter-group { display: flex; flex-direction: column; gap: 5px; }
-        .cmp-filter-group label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; color: #475569; letter-spacing: 0.4px; }
-        .cmp-filter-group input, .cmp-filter-group select { height: 38px; padding: 0 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13.5px; min-width: 150px; }
-        .cmp-klogs-table-card { background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
-        .cmp-klogs-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-        .cmp-klogs-table th { background: #f8fafc; color: #1e293b; font-weight: 700; text-align: left; padding: 13px 14px; border-bottom: 2px solid #e2e8f0; white-space: nowrap; }
-        .cmp-klogs-table td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: top; color: #334155; line-height: 1.45; }
-        .cmp-klogs-table tr:hover td { background: #f8fafc; }
-        .cmp-kbadge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap; }
-        .cmp-kbadge-prep     { background: #dcfce7; color: #166534; }
-        .cmp-kbadge-dispatch { background: #dbeafe; color: #1e40af; }
-        .cmp-kbadge-pos      { background: #e0e7ff; color: #3730a3; }
-        .cmp-kbadge-cancel   { background: #fee2e2; color: #991b1b; }
-        .cmp-kbadge-return   { background: #fef3c7; color: #92400e; }
-        .cmp-kbadge-chef     { background: #f3e8ff; color: #6b21a8; }
-        .cmp-kbadge-audit    { background: #1e293b; color: #f8fafc; }
-        .cmp-role-pill { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; background: #e2e8f0; color: #334155; margin-top: 3px; }
-        .cmp-status-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 7px 10px; font-size: 12.5px; color: #1e293b; max-width: 340px; word-break: break-word; }
-        .cmp-status-box.old { border-left: 3px solid #94a3b8; color: #64748b; }
-        .cmp-status-box.new { border-left: 3px solid #379237; background: #f4fdf4; }
-    </style>
-
-    <div class="wrap cmp-klogs-wrap">
-        <?php echo $notice; ?>
-
-        <div class="cmp-klogs-header">
-            <div>
-                <h1>Kitchen Portal Activity &amp; Operational Logs</h1>
-                <p>Complete operational audit trail of Prepared checks, Dispatches, Delivery results, POS checks, and Chef's Choice meal assignments.</p>
-            </div>
-            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <a href="<?php echo esc_url( admin_url( 'admin.php?page=cmp-customer-logs' ) ); ?>" class="button" style="background:rgba(255,255,255,0.16); color:#fff; border:1px solid rgba(255,255,255,0.4); font-weight:700; padding:6px 14px; height:auto; border-radius:6px;">
-                    &larr; View Customer Logs
-                </a>
-                <a href="<?php echo esc_url( $export_url ); ?>" class="button" style="background:#ffffff; color:#1B5E20; border:none; font-weight:700; padding:6px 16px; height:auto; border-radius:6px;">
-                    &#128190; Export Filtered Kitchen Logs to CSV
-                </a>
-                <?php if ( $can_delete && $total_rows > 0 ) : ?>
-                <form method="POST" style="margin:0;" onsubmit="return confirm('Are you sure you want to clear ALL kitchen activity logs? This action will be permanently stamped in the audit trail.');">
-                    <?php wp_nonce_field( 'cmp_kitchen_logs_clear_action', 'cmp_klogs_clear_nonce' ); ?>
-                    <button type="submit" name="cmp_clear_all_klogs" class="button" style="background:#dc2626; color:#fff; border:none; font-weight:700; padding:6px 14px; height:auto; border-radius:6px; cursor:pointer;">
-                        Clear All Logs
-                    </button>
-                </form>
-                <?php endif; ?>
-            </div>
-        </div>
-
-        <!-- SEARCH & FILTER BAR (OPTION 5A) -->
-        <form method="GET" action="" class="cmp-klogs-filter-bar">
-            <input type="hidden" name="page" value="cmp-kitchen-logs">
-            
-            <div class="cmp-filter-group" style="flex: 2; min-width: 240px;">
-                <label>Search Order ID, Customer, Recipient, Staff, or Status</label>
-                <input type="text" name="s_klog" value="<?php echo esc_attr( $search_val ); ?>" placeholder="e.g. #1045, John Doe, Prepared, Cancelled...">
-            </div>
-
-            <div class="cmp-filter-group">
-                <label>Kitchen Action</label>
-                <select name="fk_action">
-                    <option value="">All Kitchen Actions</option>
-                    <?php foreach ( $distinct_actions as $act ) : ?>
-                        <option value="<?php echo esc_attr( $act ); ?>" <?php selected( $action_val, $act ); ?>><?php echo esc_html( $act ); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <div class="cmp-filter-group">
-                <label>Updated By Role</label>
-                <select name="fk_role">
-                    <option value="">All Staff Roles</option>
-                    <option value="Kitchen" <?php selected( $role_val, 'Kitchen' ); ?>>Kitchen</option>
-                    <option value="FOH" <?php selected( $role_val, 'FOH' ); ?>>FOH</option>
-                    <option value="Menu Manager" <?php selected( $role_val, 'Menu Manager' ); ?>>Menu Manager</option>
-                    <option value="Admin" <?php selected( $role_val, 'Admin' ); ?>>Admin</option>
-                </select>
-            </div>
-
-            <div class="cmp-filter-group">
-                <label>From Date</label>
-                <input type="date" name="fk_from" value="<?php echo esc_attr( $from_val ); ?>">
-            </div>
-
-            <div class="cmp-filter-group">
-                <label>To Date</label>
-                <input type="date" name="fk_to" value="<?php echo esc_attr( $to_val ); ?>">
-            </div>
-
-            <div style="display:flex; gap:8px;">
-                <button type="submit" class="button button-primary" style="background:#379237; border-color:#379237; height:38px; padding:0 18px; font-weight:700; border-radius:6px;">Filter</button>
-                <a href="<?php echo esc_url( admin_url( 'admin.php?page=cmp-kitchen-logs' ) ); ?>" class="button" style="height:38px; line-height:36px; padding:0 14px; border-radius:6px;">Reset</a>
-            </div>
-        </form>
-
-        <!-- BULK DELETE & KITCHEN LOGS TABLE -->
-        <form method="POST" action="">
-            <?php wp_nonce_field( 'cmp_kitchen_logs_bulk_action', 'cmp_klogs_bulk_nonce' ); ?>
-            
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <?php if ( $can_delete ) : ?>
-                        <button type="submit" name="cmp_bulk_delete_klogs" class="button" style="color:#dc2626; border-color:#fca5a5; background:#fff1f2; font-weight:600;" onclick="return confirm('Delete all selected kitchen log entries?');">
-                            &#128465; Delete Selected Logs
-                        </button>
-                    <?php else : ?>
-                        <span style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:700;">
-                            &#128274; Protected Kitchen Audit Trail (Read-Only for Staff)
-                        </span>
-                    <?php endif; ?>
-                    <span style="color:#64748b; font-size:13px;">Showing <strong><?php echo intval( count( $logs ) ); ?></strong> of <strong><?php echo intval( $total_rows ); ?></strong> total kitchen logs</span>
-                </div>
-
-                <?php if ( $total_pages > 1 ) : ?>
-                <div style="display:flex; gap:6px; align-items:center;">
-                    <?php
-                    for ( $p = 1; $p <= $total_pages; $p++ ) {
-                        $page_url = add_query_arg( 'paged', $p );
-                        $active_s = ( $p === $paged ) ? 'background:#379237; color:#fff; border-color:#379237; font-weight:700;' : '';
-                        echo '<a href="' . esc_url( $page_url ) . '" class="button" style="' . esc_attr( $active_s ) . '">' . intval( $p ) . '</a>';
-                    }
-                    ?>
-                </div>
-                <?php endif; ?>
-            </div>
-
-            <div class="cmp-klogs-table-card">
-                <table class="cmp-klogs-table">
-                    <thead>
-                        <tr>
-                            <?php if ( $can_delete ) : ?>
-                                <th style="width:32px;"><input type="checkbox" id="cmp-select-all-klogs"></th>
-                            <?php endif; ?>
-                            <th style="width:145px;">Date &amp; Time (GST)</th>
-                            <th style="width:95px;">Order ID</th>
-                            <th style="width:200px;">Customer Name</th>
-                            <th style="width:165px;">Action &amp; Dates</th>
-                            <th>Old Status (Before Update)</th>
-                            <th>Current Status (After Update)</th>
-                            <th style="width:150px;">Updated By</th>
-                            <?php if ( $can_delete ) : ?>
-                                <th style="width:75px; text-align:center;">Delete</th>
-                            <?php endif; ?>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if ( empty( $logs ) ) : ?>
-                            <tr>
-                                <td colspan="<?php echo $can_delete ? 9 : 7; ?>" style="text-align:center; padding:40px; color:#64748b; font-size:14px;">
-                                    No kitchen operational logs found matching your filter criteria.
-                                </td>
-                            </tr>
-                        <?php else : ?>
-                            <?php foreach ( $logs as $log ) :
-                                $is_immutable_audit = ( $log->action_type === 'Audit Log Deleted' );
-                                $order_badge        = ( intval( $log->wc_order_id ) < 0 )
-                                    ? 'Manual #' . absint( $log->wc_order_id )
-                                    : ( intval( $log->wc_order_id ) > 0 ? '#' . intval( $log->wc_order_id ) : ( $is_immutable_audit ? 'Audit' : 'Manual' ) );
-
-                                $act_lower   = strtolower( $log->action_type );
-                                $badge_class = 'cmp-kbadge-dispatch';
-                                if ( $is_immutable_audit ) {
-                                    $badge_class = 'cmp-kbadge-audit';
-                                } elseif ( strpos( $act_lower, 'prepared' ) !== false ) {
-                                    $badge_class = 'cmp-kbadge-prep';
-                                } elseif ( strpos( $act_lower, 'pos' ) !== false ) {
-                                    $badge_class = 'cmp-kbadge-pos';
-                                } elseif ( strpos( $act_lower, 'cancel' ) !== false ) {
-                                    $badge_class = 'cmp-kbadge-cancel';
-                                } elseif ( strpos( $act_lower, 'return' ) !== false ) {
-                                    $badge_class = 'cmp-kbadge-return';
-                                } elseif ( strpos( $act_lower, 'chef' ) !== false ) {
-                                    $badge_class = 'cmp-kbadge-chef';
-                                }
-
-                                $del_url = wp_nonce_url(
-                                    add_query_arg( array( 'delete_klog_id' => $log->id ) ),
-                                    'cmp_del_single_klog_' . $log->id
-                                );
-                            ?>
-                            <tr>
-                                <?php if ( $can_delete ) : ?>
-                                    <td>
-                                        <?php if ( ! $is_immutable_audit ) : ?>
-                                            <input type="checkbox" name="klog_ids[]" value="<?php echo esc_attr( $log->id ); ?>" class="cmp-klog-row-cb">
-                                        <?php else : ?>
-                                            <span title="Protected System Audit Entry">&#128274;</span>
-                                        <?php endif; ?>
-                                    </td>
-                                <?php endif; ?>
-                                <td style="white-space:nowrap; font-size:12.5px; color:#475569;">
-                                    <strong><?php echo esc_html( date( 'd M Y', strtotime( $log->created_at ) ) ); ?></strong><br>
-                                    <?php echo esc_html( date( 'h:i A', strtotime( $log->created_at ) ) ); ?>
-                                </td>
-                                <td>
-                                    <span style="background:#e2e8f0; color:#1e293b; padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px;">
-                                        <?php echo esc_html( $order_badge ); ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <strong style="color:#0f172a; font-size:13.5px;"><?php echo esc_html( $log->customer_name ); ?></strong><br>
-                                    <span style="font-size:12px; color:#64748b;"><?php echo esc_html( $log->plan_name ); ?></span>
-                                </td>
-                                <td>
-                                    <span class="cmp-kbadge <?php echo esc_attr( $badge_class ); ?>">
-                                        <?php echo esc_html( $log->action_type ); ?>
-                                    </span>
-                                    <?php if ( ! empty( $log->prep_date ) ) : ?>
-                                        <div style="font-size:11.5px; color:#475569; margin-top:4px; font-weight:600;">
-                                            Prep: <?php echo esc_html( $log->prep_date ); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if ( ! empty( $log->target_date ) ) : ?>
-                                        <div style="font-size:11.5px; color:#64748b; margin-top:2px; font-weight:600;">
-                                            Eating: <?php echo esc_html( $log->target_date ); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <div class="cmp-status-box old">
-                                        <?php echo ! empty( $log->old_status ) ? esc_html( $log->old_status ) : '<em>None</em>'; ?>
-                                    </div>
-                                </td>
-                                <td>
-                                    <div class="cmp-status-box new">
-                                        <?php echo ! empty( $log->new_status ) ? esc_html( $log->new_status ) : '<em>None</em>'; ?>
-                                    </div>
-                                </td>
-                                <td>
-                                    <strong style="color:#0f172a;"><?php echo esc_html( $log->actor_name ); ?></strong><br>
-                                    <span class="cmp-role-pill"><?php echo esc_html( $log->actor_role ); ?></span>
-                                </td>
-                                <?php if ( $can_delete ) : ?>
-                                    <td style="text-align:center;">
-                                        <?php if ( ! $is_immutable_audit ) : ?>
-                                            <a href="<?php echo esc_url( $del_url ); ?>" onclick="return confirm('Delete this kitchen log entry?');" style="color:#dc2626; text-decoration:none; font-weight:700; font-size:12px; padding:4px 8px; border:1px solid #fecaca; border-radius:4px; background:#fff1f2; display:inline-block;">
-                                                Delete
-                                            </a>
-                                        <?php else : ?>
-                                            <span style="font-size:11px; color:#64748b; font-weight:700;">Locked</span>
-                                        <?php endif; ?>
-                                    </td>
-                                <?php endif; ?>
-                            </tr>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
-        </form>
-    </div>
-
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const selectAll = document.getElementById('cmp-select-all-klogs');
-        if (selectAll) {
-            selectAll.addEventListener('change', function() {
-                document.querySelectorAll('.cmp-klog-row-cb').forEach(cb => {
                     cb.checked = selectAll.checked;
                 });
             });
