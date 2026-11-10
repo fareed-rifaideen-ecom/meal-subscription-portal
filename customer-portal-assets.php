@@ -1340,8 +1340,8 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             }
 
             /* =========================================================
-               3-MODE DISH INGREDIENTS & MACROS ENGINE (DISH-1, DISH-2, DISH-3)
-               (Desktop, Tablet & Mobile Responsive)
+               5-MODE DISH DESCRIPTION & MACROS ENGINE (DISH-1 TO DISH-5)
+               (Desktop, Tablet & Mobile Responsive — Persists After Save)
                ========================================================= */
 
             /* Header Flex Wrapper for Slot Label + DISH-2 Interactive Badge */
@@ -1358,23 +1358,41 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 margin-bottom: 0 !important;
             }
 
+            /* Pastel Macro Pills (Matching Reference Image: Peach, Mint, Sky Blue, Lavender) */
+            .cmp-d-pill {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 3px 10px;
+                border-radius: 999px;
+                font-size: 0.72rem;
+                font-weight: 800;
+                line-height: 1.2;
+                white-space: nowrap;
+            }
+            .cmp-d-pill.p-cal  { background: #ffedd5; color: #c2410c; border: 1px solid #fed7aa; }
+            .cmp-d-pill.p-pro  { background: #d1fae5; color: #047857; border: 1px solid #a7f3d0; }
+            .cmp-d-pill.p-carb { background: #dbeafe; color: #1d4ed8; border: 1px solid #bfdbfe; }
+            .cmp-d-pill.p-fat  { background: #f3e8ff; color: #6d28d9; border: 1px solid #e9d5ff; }
+
             /* OPTION DISH-1: Live Dish Info Micro-Card Below Dropdown */
             .cmp-dish-detail-d1 {
                 margin-top: 7px;
-                padding: 8px 10px;
-                background: linear-gradient(145deg, #f8fafc 0%, #f0fdf4 100%);
-                border: 1px solid #DCECC9;
-                border-left: 3.5px solid #379237;
-                border-radius: 9px;
-                font-size: 0.78rem;
-                line-height: 1.38;
+                padding: 9px 11px;
+                background: #ffffff;
+                border: 1.5px solid #cbd5e1;
+                border-left: 4px solid #379237;
+                border-radius: 10px;
+                font-size: 0.79rem;
+                line-height: 1.4;
                 color: #334155;
+                box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
                 transition: all 0.18s ease;
             }
             .cmp-d1-ing {
-                color: #334155;
+                color: #475569;
                 font-weight: 500;
-                margin-bottom: 6px;
+                margin-bottom: 7px;
                 display: -webkit-box;
                 -webkit-line-clamp: 2;
                 -webkit-box-orient: vertical;
@@ -1386,30 +1404,12 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: block !important;
                 -webkit-line-clamp: unset !important;
             }
-            .cmp-d1-ing strong {
-                color: #1B5E20;
-                font-weight: 800;
-            }
             .cmp-d1-macros {
                 display: flex;
                 align-items: center;
                 flex-wrap: wrap;
                 gap: 5px;
             }
-            .cmp-d-pill {
-                display: inline-flex;
-                align-items: center;
-                padding: 2px 7px;
-                border-radius: 999px;
-                font-size: 0.69rem;
-                font-weight: 800;
-                line-height: 1.2;
-                white-space: nowrap;
-            }
-            .cmp-d-pill.p-cal  { background: #fffbeb; color: #b45309; border: 1px solid #fcd34d; }
-            .cmp-d-pill.p-pro  { background: #ecfdf5; color: #047857; border: 1px solid #6ee7b7; }
-            .cmp-d-pill.p-carb { background: #f0f9ff; color: #0369a1; border: 1px solid #7dd3fc; }
-            .cmp-d-pill.p-fat  { background: #faf5ff; color: #6d28d9; border: 1px solid #d8b4fe; }
 
             /* OPTION DISH-2: Compact Header Pill + Floating Glassmorphic Popover */
             .cmp-dish-d2-badge {
@@ -1439,7 +1439,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             #cmp-dish-floating-popover {
                 position: fixed;
                 z-index: 100080;
-                width: 290px;
+                width: 300px;
                 max-width: 90vw;
                 background: rgba(15, 23, 42, 0.96);
                 backdrop-filter: blur(14px);
@@ -1461,14 +1461,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 transform: translate(-50%, -10px);
             }
             #cmp-dish-floating-popover .pop-dish-title {
-                font-size: 0.86rem;
+                font-size: 0.88rem;
                 font-weight: 800;
                 color: #86efac;
                 margin-bottom: 5px;
                 line-height: 1.3;
             }
             #cmp-dish-floating-popover .pop-dish-ing {
-                font-size: 0.77rem;
+                font-size: 0.78rem;
                 color: #e2e8f0;
                 line-height: 1.42;
                 margin-bottom: 9px;
@@ -1481,7 +1481,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 border-top: 1px dashed rgba(255, 255, 255, 0.2);
             }
 
-            /* OPTION DISH-3: Hybrid 1-Line Macro Strip + Tap-to-Expand Ingredients Drawer */
+            /* OPTION DISH-3: Hybrid 1-Line Macro Strip + Tap-to-Expand Description Drawer */
             .cmp-dish-detail-d3 {
                 margin-top: 6px;
                 background: #f8fafc;
@@ -1504,9 +1504,9 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 font-size: 0.73rem;
                 line-height: 1.25;
             }
-            .cmp-d3-macro-str .m-cal  { color: #b45309; }
+            .cmp-d3-macro-str .m-cal  { color: #c2410c; }
             .cmp-d3-macro-str .m-pro  { color: #047857; }
-            .cmp-d3-macro-str .m-carb { color: #0369a1; }
+            .cmp-d3-macro-str .m-carb { color: #1d4ed8; }
             .cmp-d3-macro-str .m-fat  { color: #6d28d9; }
             .cmp-d3-toggle-btn {
                 background: #EEF7E3 !important;
@@ -1529,7 +1529,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 padding: 7px 9px;
                 background: #ffffff;
                 border-top: 1px dashed #cbd5e1;
-                color: #334155;
+                color: #475569;
                 font-size: 0.75rem;
                 line-height: 1.4;
             }
@@ -1537,7 +1537,371 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: block !important;
             }
 
-            /* Tablet & Mobile Refinements for Dish Details */
+            /* =========================================================
+               OPTIONS DISH-4 (4A) & DISH-5 (4B): VISUAL CARD-STACK PICKER
+               & SELECTED DISH CARD PREVIEW (MATCHING REFERENCE IMAGE)
+               ========================================================= */
+            .cmp-dashboard-wrap[data-dish-mode="dish_4"] select.cmp-has-card-picker,
+            .cmp-dashboard-wrap[data-dish-mode="dish_5"] select.cmp-has-card-picker {
+                display: none !important;
+            }
+
+            .cmp-card-picker-wrap {
+                position: relative;
+                width: 100%;
+            }
+
+            /* Trigger Box (Before & After Selection) */
+            .cmp-card-picker-trigger {
+                width: 100%;
+                text-align: left;
+                background: #ffffff;
+                border: 1.8px solid #1e293b;
+                border-radius: 12px;
+                padding: 11px 13px;
+                cursor: pointer;
+                transition: all 0.18s ease;
+                position: relative;
+                box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+            }
+            .cmp-card-picker-trigger:hover:not(.is-disabled) {
+                border-color: #379237;
+                box-shadow: 0 4px 12px rgba(27, 94, 32, 0.10);
+            }
+            .cmp-card-picker-trigger.is-empty {
+                min-height: 48px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                background: #f8fafc;
+                border: 2px solid #cbd5e1;
+                box-shadow: 0 2px 0 #cbd5e1;
+                padding: 10px 14px;
+            }
+            .cmp-card-picker-trigger.is-disabled {
+                background: #f1f5f9 !important;
+                border-color: #cbd5e1 !important;
+                color: #64748b !important;
+                cursor: not-allowed !important;
+                box-shadow: none !important;
+                opacity: 0.78;
+            }
+            .cmp-cp-placeholder-txt {
+                font-size: 14.5px;
+                font-weight: 700;
+                color: #334155;
+            }
+            .cmp-cp-chevron {
+                color: #379237;
+                font-size: 0.78rem;
+                font-weight: 900;
+                margin-left: 8px;
+                flex-shrink: 0;
+            }
+
+            /* Selected Dish Card (Inside Slot & Inside Picker Stack) */
+            .cmp-ref-dish-card {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                width: 100%;
+            }
+            .cmp-ref-card-top {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .cmp-ref-dish-title {
+                font-size: 0.96rem;
+                font-weight: 800;
+                color: #0f172a;
+                line-height: 1.28;
+                margin: 0;
+            }
+            .cmp-ref-card-actions {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                flex-shrink: 0;
+            }
+            .cmp-ref-clear-slot-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 22px;
+                height: 22px;
+                border-radius: 50%;
+                background: #f1f5f9;
+                color: #64748b;
+                border: 1px solid #cbd5e1;
+                font-size: 11px;
+                font-weight: 900;
+                cursor: pointer;
+                line-height: 1;
+                padding: 0;
+                transition: all 0.15s ease;
+            }
+            .cmp-ref-clear-slot-btn:hover {
+                background: #fee2e2;
+                color: #dc2626;
+                border-color: #fca5a5;
+            }
+            .cmp-ref-change-hint {
+                font-size: 0.7rem;
+                font-weight: 800;
+                color: #379237;
+                background: #EEF7E3;
+                border: 1px solid #b7e1a1;
+                border-radius: 6px;
+                padding: 2px 6px;
+                white-space: nowrap;
+            }
+            .cmp-card-picker-trigger.is-disabled .cmp-ref-clear-slot-btn,
+            .cmp-card-picker-trigger.is-disabled .cmp-ref-change-hint {
+                display: none !important;
+            }
+            .cmp-ref-dish-desc {
+                font-size: 0.8rem;
+                font-weight: 500;
+                color: #475569;
+                line-height: 1.38;
+                margin: 0;
+                word-break: break-word;
+            }
+            .cmp-ref-dish-pills {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-top: 2px;
+            }
+
+            /* Option DISH-4 (4A): Inline Floating Card-Stack Dropdown Panel (Desktop/Tablet) */
+            .cmp-d4-floating-panel {
+                display: none;
+                position: absolute;
+                top: calc(100% + 6px);
+                left: 0;
+                width: 100%;
+                min-width: 310px;
+                max-height: 410px;
+                overflow-y: auto;
+                background: #f8fafc;
+                border: 2px solid #1B5E20;
+                border-radius: 14px;
+                padding: 10px;
+                box-shadow: 0 18px 38px rgba(15, 23, 42, 0.24);
+                z-index: 10040;
+            }
+            .cmp-card-picker-wrap.is-d4-open .cmp-d4-floating-panel {
+                display: block !important;
+            }
+
+            /* Stack Option Card Item (Used in both DISH-4 and DISH-5) */
+            .cmp-stack-option-card {
+                background: #ffffff;
+                border: 1.8px solid #1e293b;
+                border-radius: 12px;
+                padding: 12px 14px;
+                margin-bottom: 9px;
+                cursor: pointer;
+                transition: all 0.16s ease;
+                position: relative;
+            }
+            .cmp-stack-option-card:last-child {
+                margin-bottom: 0;
+            }
+            .cmp-stack-option-card:hover {
+                border-color: #379237;
+                background: #f4fbf0;
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(27, 94, 32, 0.10);
+            }
+            .cmp-stack-option-card.is-selected {
+                border: 2.2px solid #379237;
+                background: #f0fdf4;
+                box-shadow: 0 4px 12px rgba(27, 94, 32, 0.12);
+            }
+            .cmp-stack-option-card.is-clear-card {
+                border: 1.5px dashed #cbd5e1;
+                background: #ffffff;
+                padding: 8px 12px;
+                text-align: center;
+                font-size: 0.8rem;
+                font-weight: 800;
+                color: #64748b;
+            }
+            .cmp-stack-option-card.is-clear-card:hover {
+                border-color: #dc2626;
+                color: #dc2626;
+                background: #fff1f2;
+            }
+            .cmp-stack-cat-divider {
+                font-size: 0.73rem;
+                font-weight: 900;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: #1B5E20;
+                background: #EEF7E3;
+                border: 1px solid #DCECC9;
+                border-radius: 7px;
+                padding: 5px 10px;
+                margin: 8px 0 7px 0;
+            }
+
+            /* Option DISH-5 (4B) & Mobile DISH-4: App-Style Slide-Up / Modal Card Drawer */
+            .cmp-card-drawer-backdrop {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(15, 23, 42, 0.62);
+                backdrop-filter: blur(5px);
+                -webkit-backdrop-filter: blur(5px);
+                z-index: 100095;
+                align-items: center;
+                justify-content: center;
+                padding: 16px;
+            }
+            .cmp-card-drawer-backdrop.is-open {
+                display: flex !important;
+            }
+            .cmp-card-drawer-sheet {
+                background: #f8fafc;
+                border: 2px solid #DCECC9;
+                border-top: 5px solid #379237;
+                border-radius: 18px;
+                width: 100%;
+                max-width: 560px;
+                max-height: 86vh;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                box-shadow: 0 24px 48px rgba(15, 23, 42, 0.35);
+                animation: cmpDrawerSlideUp 0.22s ease-out;
+            }
+            @keyframes cmpDrawerSlideUp {
+                from { opacity: 0; transform: translateY(18px); }
+                to   { opacity: 1; transform: translateY(0); }
+            }
+            .cmp-card-drawer-header {
+                background: #ffffff;
+                padding: 14px 18px 12px 18px;
+                border-bottom: 1px solid #e2e8f0;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .cmp-card-drawer-title-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+            }
+            .cmp-card-drawer-title-row h4 {
+                margin: 0;
+                font-size: 1.08rem;
+                font-weight: 800;
+                color: #1B5E20;
+            }
+            .cmp-card-drawer-close {
+                background: #f1f5f9 !important;
+                color: #334155 !important;
+                border: 1px solid #cbd5e1 !important;
+                border-radius: 50% !important;
+                width: 34px !important;
+                height: 34px !important;
+                font-size: 1.2rem !important;
+                font-weight: 800 !important;
+                line-height: 1 !important;
+                cursor: pointer !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                padding: 0 !important;
+            }
+            .cmp-card-drawer-search {
+                width: 100% !important;
+                height: 40px !important;
+                padding: 7px 12px !important;
+                border: 1.5px solid #cbd5e1 !important;
+                border-radius: 9px !important;
+                font-size: 0.9rem !important;
+                font-weight: 600 !important;
+                background: #f8fafc !important;
+                color: #0f172a !important;
+            }
+            .cmp-card-drawer-search:focus {
+                background: #ffffff !important;
+                border-color: #379237 !important;
+                outline: none !important;
+            }
+            .cmp-card-drawer-cats {
+                display: flex;
+                gap: 6px;
+                overflow-x: auto;
+                scrollbar-width: none;
+                padding-bottom: 2px;
+            }
+            .cmp-card-drawer-cats::-webkit-scrollbar { display: none; }
+            .cmp-drawer-cat-tab {
+                background: #f1f5f9 !important;
+                color: #475569 !important;
+                border: 1px solid #cbd5e1 !important;
+                border-radius: 999px !important;
+                padding: 4px 12px !important;
+                font-size: 0.76rem !important;
+                font-weight: 800 !important;
+                cursor: pointer !important;
+                white-space: nowrap !important;
+            }
+            .cmp-drawer-cat-tab.active {
+                background: #379237 !important;
+                color: #ffffff !important;
+                border-color: #1B5E20 !important;
+            }
+            .cmp-card-drawer-body {
+                padding: 12px 14px;
+                overflow-y: auto;
+                flex: 1;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            /* Collapsed Row Rich Dish Summary Cards (Visible Even When Day Row is Collapsed After Saving) */
+            .cmp-collapsed-cards-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 8px;
+                width: 100%;
+                margin-top: 6px;
+            }
+            .cmp-collapsed-mini-card {
+                background: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-left: 3.5px solid #379237;
+                border-radius: 8px;
+                padding: 7px 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .cmp-collapsed-mini-title {
+                font-size: 0.82rem;
+                font-weight: 800;
+                color: #0f172a;
+                line-height: 1.25;
+            }
+            .cmp-collapsed-mini-desc {
+                font-size: 0.73rem;
+                color: #475569;
+                line-height: 1.32;
+                display: -webkit-box;
+                -webkit-line-clamp: 1;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+
+            /* Tablet & Mobile Refinements for Dish Details & Card Stack */
             @media (max-width: 768px) {
                 .cmp-slot-label-row {
                     margin-bottom: 2px !important;
@@ -1546,15 +1910,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-dish-detail-d1 {
                     margin-top: 4px;
                     padding: 6px 8px;
-                    font-size: 0.72rem;
+                    font-size: 0.73rem;
                 }
                 .cmp-d1-ing {
-                    -webkit-line-clamp: 1;
-                    margin-bottom: 4px;
+                    -webkit-line-clamp: 2;
+                    margin-bottom: 5px;
                 }
                 .cmp-d-pill {
-                    font-size: 0.63rem;
-                    padding: 1px 6px;
+                    font-size: 0.65rem;
+                    padding: 2px 7px;
                 }
                 .cmp-dish-d2-badge {
                     font-size: 0.62rem !important;
@@ -1576,6 +1940,33 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-d3-drawer {
                     padding: 5px 7px;
                     font-size: 0.71rem;
+                }
+                .cmp-card-picker-trigger {
+                    padding: 9px 11px;
+                    border-radius: 10px;
+                }
+                .cmp-card-picker-trigger.is-empty {
+                    min-height: 38px;
+                    padding: 6px 10px;
+                }
+                .cmp-cp-placeholder-txt {
+                    font-size: 13px;
+                }
+                .cmp-ref-dish-title {
+                    font-size: 0.88rem;
+                }
+                .cmp-ref-dish-desc {
+                    font-size: 0.74rem;
+                }
+                .cmp-card-drawer-backdrop {
+                    align-items: flex-end;
+                    padding: 0;
+                }
+                .cmp-card-drawer-sheet {
+                    max-width: 100%;
+                    max-height: 88vh;
+                    border-radius: 18px 18px 0 0;
+                    border-bottom: none;
                 }
             }
 
@@ -2651,6 +3042,21 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
         <!-- Floating Popover Container for Option DISH-2 -->
         <div id="cmp-dish-floating-popover" role="tooltip" aria-hidden="true"></div>
 
+        <!-- App-Style Slide-Up / Modal Card-Stack Drawer for Option DISH-5 (4B) & Mobile DISH-4 (4A) -->
+        <div id="cmp-card-stack-drawer-backdrop" class="cmp-card-drawer-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+            <div class="cmp-card-drawer-sheet">
+                <div class="cmp-card-drawer-header">
+                    <div class="cmp-card-drawer-title-row">
+                        <h4 id="cmp-card-drawer-title">Select Meal</h4>
+                        <button type="button" class="cmp-card-drawer-close" id="cmp-card-drawer-close-btn" aria-label="Close">&times;</button>
+                    </div>
+                    <input type="text" id="cmp-card-drawer-search" class="cmp-card-drawer-search" placeholder="Search dishes or descriptions...">
+                    <div id="cmp-card-drawer-cats" class="cmp-card-drawer-cats" style="display:none;"></div>
+                </div>
+                <div id="cmp-card-drawer-body" class="cmp-card-drawer-body"></div>
+            </div>
+        </div>
+
         <script type="text/javascript">
         function switchTab(evt, tabId) {
             var contents = document.getElementsByClassName("cmp-tab-content");
@@ -2708,56 +3114,152 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             }
 
             // =========================================================
-            // 3-MODE DISH INGREDIENTS & MACROS RENDERER (DISH-1, DISH-2, DISH-3)
+            // 5-MODE DISH DESCRIPTION & MACROS ENGINE (DISH-1 TO DISH-5)
+            // (Persists After Saving & Refreshing + Zero "Ingredients" Label)
             // =========================================================
+            function getFoodDetailsFromOptionOrId(val, $opt) {
+                if (!val) return null;
+                var foodObj = cmpFoodLookupById[String(val)] || null;
+                var foodName = foodObj ? (foodObj.food_name || '') : ($opt && $opt.length ? $opt.text().trim() : '');
+                var rawDesc  = foodObj ? (foodObj.description || '') : ($opt && $opt.length ? ($opt.attr('data-desc') || '') : '');
+                var cleanDesc = rawDesc.toString().replace(/<[^>]*>?/gm, '').trim();
+
+                var cal   = Math.round(parseFloat(foodObj ? foodObj.calories : ($opt ? $opt.data('cal') : 0)) || 0);
+                var pro   = Math.round((parseFloat(foodObj ? foodObj.protein : ($opt ? $opt.data('pro') : 0)) || 0) * 10) / 10;
+                var carbs = Math.round((parseFloat(foodObj ? foodObj.carbohydrates : ($opt ? $opt.data('carbs') : 0)) || 0) * 10) / 10;
+                var fat   = Math.round((parseFloat(foodObj ? foodObj.total_fat : ($opt ? $opt.data('fat') : 0)) || 0) * 10) / 10;
+
+                return {
+                    id: String(val),
+                    name: foodName,
+                    desc: cleanDesc,
+                    cal: cal,
+                    pro: pro,
+                    carbs: carbs,
+                    fat: fat,
+                    hasMacros: (cal > 0 || pro > 0 || carbs > 0 || fat > 0)
+                };
+            }
+
+            function buildPastelMacroPillsHtml(info) {
+                if (!info || !info.hasMacros) return '';
+                return '<div class="cmp-ref-dish-pills">' +
+                    '<span class="cmp-d-pill p-cal">' + info.cal + ' kcal</span>' +
+                    '<span class="cmp-d-pill p-pro">' + info.pro + 'g P</span>' +
+                    '<span class="cmp-d-pill p-carb">' + info.carbs + 'g C</span>' +
+                    '<span class="cmp-d-pill p-fat">' + info.fat + 'g F</span>' +
+                '</div>';
+            }
+
+            function buildReferenceDishCardInnerHtml(info, includeSlotActions) {
+                var actionsHtml = includeSlotActions
+                    ? '<div class="cmp-ref-card-actions">' +
+                        '<span class="cmp-ref-change-hint">Change &#9662;</span>' +
+                        '<span class="cmp-ref-clear-slot-btn" title="Clear selection">&times;</span>' +
+                      '</div>'
+                    : '';
+                var descHtml = info.desc
+                    ? '<p class="cmp-ref-dish-desc">' + cmpEscapeHtml(info.desc) + '</p>'
+                    : '';
+                return '<div class="cmp-ref-dish-card">' +
+                    '<div class="cmp-ref-card-top">' +
+                        '<h5 class="cmp-ref-dish-title">' + cmpEscapeHtml(info.name) + '</h5>' +
+                        actionsHtml +
+                    '</div>' +
+                    descHtml +
+                    buildPastelMacroPillsHtml(info) +
+                '</div>';
+            }
+
             function renderSlotDishDetails($select) {
                 if (!$select || !$select.length) return;
                 var $slotWrap = $select.closest('.cmp-snack-slot, td.cmp-cell-meal, td.cmp-cell-juice');
                 if (!$slotWrap.length) return;
 
                 // Remove any previous dish detail artifacts in this slot
-                $slotWrap.find('.cmp-dish-detail-d1, .cmp-dish-detail-d3, .cmp-dish-d2-badge').remove();
+                $slotWrap.find('.cmp-dish-detail-d1, .cmp-dish-detail-d3, .cmp-dish-d2-badge, .cmp-card-picker-wrap').remove();
+                $select.removeClass('cmp-has-card-picker');
 
                 if (!dishDisplayMode || dishDisplayMode === 'off') {
                     return;
                 }
 
-                var val = ($select.val() || '').toString().trim();
-                if (!val || !$select.is(':visible')) {
+                // Do not render if the cell is waiting on a date or menu release
+                if ($slotWrap.find('.date-prompt-overlay, .boundary-overlay').length > 0) {
+                    return;
+                }
+                var $row = $select.closest('tr.cmp-day-row');
+                var rowDate = ($row.find('.cmp-date-picker').val() || '').toString().trim();
+                if (!rowDate) {
                     return;
                 }
 
-                var foodObj = cmpFoodLookupById[val] || null;
-                var $opt    = $select.find('option:selected');
+                // Resolve current value (or data-saved-val on initial load)
+                var val = ($select.val() || '').toString().trim();
+                if (!val) {
+                    var savedAttr = ($select.data('saved-val') || $select.attr('data-saved-val') || '').toString().trim();
+                    if (savedAttr && $select.find('option[value="' + savedAttr + '"]').length > 0) {
+                        $select.val(savedAttr);
+                        val = savedAttr;
+                    }
+                }
 
-                var foodName = foodObj ? (foodObj.food_name || '') : $opt.text().trim();
-                var rawDesc  = foodObj ? (foodObj.description || '') : ($opt.attr('data-desc') || '');
-                var cleanIng = rawDesc.toString().replace(/<[^>]*>?/gm, '').trim();
+                // OPTIONS DISH-4 (4A) & DISH-5 (4B): Replace native dropdown with Visual Card-Stack Trigger
+                if (dishDisplayMode === 'dish_4' || dishDisplayMode === 'dish_5') {
+                    $select.addClass('cmp-has-card-picker');
+                    var isSelectDisabled = $select.is(':disabled');
+                    var placeholderTxt   = $select.find('option').first().text() || '- Select Meal -';
+                    var $pickerWrap      = $('<div class="cmp-card-picker-wrap"></div>');
+                    var $triggerBtn      = $('<div class="cmp-card-picker-trigger" tabindex="0" role="button"></div>');
 
-                var cal   = Math.round(parseFloat(foodObj ? foodObj.calories : $opt.data('cal')) || 0);
-                var pro   = Math.round((parseFloat(foodObj ? foodObj.protein : $opt.data('pro')) || 0) * 10) / 10;
-                var carbs = Math.round((parseFloat(foodObj ? foodObj.carbohydrates : $opt.data('carbs')) || 0) * 10) / 10;
-                var fat   = Math.round((parseFloat(foodObj ? foodObj.total_fat : $opt.data('fat')) || 0) * 10) / 10;
+                    if (isSelectDisabled) {
+                        $triggerBtn.addClass('is-disabled');
+                    }
 
-                var hasMacros = (cal > 0 || pro > 0 || carbs > 0 || fat > 0);
-                if (!cleanIng && !hasMacros) {
+                    if (val) {
+                        var $selOpt = $select.find('option:selected');
+                        var info    = getFoodDetailsFromOptionOrId(val, $selOpt);
+                        if (info) {
+                            $triggerBtn.removeClass('is-empty').html(buildReferenceDishCardInnerHtml(info, true));
+                        } else {
+                            $triggerBtn.addClass('is-empty').html(
+                                '<span class="cmp-cp-placeholder-txt">' + cmpEscapeHtml(placeholderTxt) + '</span>' +
+                                '<span class="cmp-cp-chevron">&#9662;</span>'
+                            );
+                        }
+                    } else {
+                        $triggerBtn.addClass('is-empty').html(
+                            '<span class="cmp-cp-placeholder-txt">' + cmpEscapeHtml(placeholderTxt) + '</span>' +
+                            '<span class="cmp-cp-chevron">&#9662;</span>'
+                        );
+                    }
+
+                    $pickerWrap.append($triggerBtn);
+                    if (dishDisplayMode === 'dish_4') {
+                        $pickerWrap.append('<div class="cmp-d4-floating-panel"></div>');
+                    }
+                    $pickerWrap.insertAfter($select);
+                    return;
+                }
+
+                // OPTIONS DISH-1, DISH-2, DISH-3: Render below/next to standard <select> when a dish is selected
+                if (!val) {
+                    return;
+                }
+
+                var $opt = $select.find('option:selected');
+                var info = getFoodDetailsFromOptionOrId(val, $opt);
+                if (!info || (!info.desc && !info.hasMacros)) {
                     return;
                 }
 
                 if (dishDisplayMode === 'dish_1') {
-                    // OPTION DISH-1: Live Dish Info Micro-Card Below Dropdown
-                    var ingHtml = cleanIng
-                        ? '<div class="cmp-d1-ing" title="Tap to expand/collapse full ingredients"><strong>Ingredients:</strong> ' + cmpEscapeHtml(cleanIng) + '</div>'
+                    // OPTION DISH-1: Live Dish Info Micro-Card Below Dropdown (No "Ingredients:" prefix)
+                    var descHtml = info.desc
+                        ? '<div class="cmp-d1-ing" title="Tap to expand/collapse">' + cmpEscapeHtml(info.desc) + '</div>'
                         : '';
-                    var macroHtml = hasMacros
-                        ? '<div class="cmp-d1-macros">' +
-                            '<span class="cmp-d-pill p-cal">' + cal + ' kcal</span>' +
-                            '<span class="cmp-d-pill p-pro">' + pro + 'g P</span>' +
-                            '<span class="cmp-d-pill p-carb">' + carbs + 'g C</span>' +
-                            '<span class="cmp-d-pill p-fat">' + fat + 'g F</span>' +
-                          '</div>'
-                        : '';
-                    $('<div class="cmp-dish-detail-d1">' + ingHtml + macroHtml + '</div>').insertAfter($select);
+                    var macroHtml = buildPastelMacroPillsHtml(info);
+                    $('<div class="cmp-dish-detail-d1">' + descHtml + macroHtml + '</div>').insertAfter($select);
 
                 } else if (dishDisplayMode === 'dish_2') {
                     // OPTION DISH-2: Compact Header Badge Next to Label + Floating Popover
@@ -2766,15 +3268,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         $lbl.wrap('<div class="cmp-slot-label-row"></div>');
                     }
                     var $labelRow = $slotWrap.find('> .cmp-slot-label-row').first();
-                    var badgeText = (cal > 0 ? cal + ' kcal • ' : '') + 'ℹ️ Details';
-                    var $badge = $('<button type="button" class="cmp-dish-d2-badge" title="View Ingredients &amp; Macros">' + cmpEscapeHtml(badgeText) + '</button>');
+                    var badgeText = (info.cal > 0 ? info.cal + ' kcal • ' : '') + 'ℹ️ Details';
+                    var $badge = $('<button type="button" class="cmp-dish-d2-badge" title="View dish details &amp; macros">' + cmpEscapeHtml(badgeText) + '</button>');
                     $badge.attr({
-                        'data-dish-name': foodName,
-                        'data-dish-ing': cleanIng || 'Prepared fresh daily by our kitchen team.',
-                        'data-cal': cal,
-                        'data-pro': pro,
-                        'data-carb': carbs,
-                        'data-fat': fat
+                        'data-dish-name': info.name,
+                        'data-dish-ing': info.desc || 'Prepared fresh daily by our kitchen team.',
+                        'data-cal': info.cal,
+                        'data-pro': info.pro,
+                        'data-carb': info.carbs,
+                        'data-fat': info.fat
                     });
                     if ($labelRow.length) {
                         $labelRow.append($badge);
@@ -2783,19 +3285,19 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     }
 
                 } else if (dishDisplayMode === 'dish_3') {
-                    // OPTION DISH-3: 1-Line Macro Bar + Tap-to-Expand Ingredients Drawer
-                    var macroStr = hasMacros
-                        ? '<span class="m-cal">' + cal + ' kcal</span> &bull; ' +
-                          '<span class="m-pro">' + pro + 'g P</span> &bull; ' +
-                          '<span class="m-carb">' + carbs + 'g C</span> &bull; ' +
-                          '<span class="m-fat">' + fat + 'g F</span>'
+                    // OPTION DISH-3: 1-Line Macro Bar + Tap-to-Expand Description Drawer
+                    var macroStr = info.hasMacros
+                        ? '<span class="m-cal">' + info.cal + ' kcal</span> &bull; ' +
+                          '<span class="m-pro">' + info.pro + 'g P</span> &bull; ' +
+                          '<span class="m-carb">' + info.carbs + 'g C</span> &bull; ' +
+                          '<span class="m-fat">' + info.fat + 'g F</span>'
                         : '<span>Nutrition Info</span>';
 
-                    var toggleBtnHtml = cleanIng
-                        ? '<button type="button" class="cmp-d3-toggle-btn">Ingredients &#9660;</button>'
+                    var toggleBtnHtml = info.desc
+                        ? '<button type="button" class="cmp-d3-toggle-btn">Details &#9660;</button>'
                         : '';
-                    var drawerHtml = cleanIng
-                        ? '<div class="cmp-d3-drawer"><strong>Ingredients:</strong> ' + cmpEscapeHtml(cleanIng) + '</div>'
+                    var drawerHtml = info.desc
+                        ? '<div class="cmp-d3-drawer">' + cmpEscapeHtml(info.desc) + '</div>'
                         : '';
 
                     var d3Html = '<div class="cmp-dish-detail-d3">' +
@@ -2816,6 +3318,208 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 });
             }
 
+            // Build Card Stack List HTML from a <select> element's options/optgroups
+            function buildCardStackOptionsHtml($select, filterCat, searchQuery) {
+                var currentVal = ($select.val() || '').toString().trim();
+                var q          = (searchQuery || '').toString().toLowerCase().trim();
+                var fCat       = (filterCat || 'all').toString();
+                var html       = '';
+
+                if (currentVal !== '') {
+                    html += '<div class="cmp-stack-option-card is-clear-card" data-opt-val="">&times; Clear Selection</div>';
+                }
+
+                var hasOptgroups = $select.children('optgroup').length > 0;
+                var matchCount   = 0;
+
+                if (hasOptgroups) {
+                    $select.children('optgroup').each(function() {
+                        var $og      = $(this);
+                        var ogLabel  = ($og.attr('label') || '').replace(/—/g, '').trim();
+                        if (fCat !== 'all' && ogLabel.toLowerCase().indexOf(fCat.toLowerCase()) === -1) {
+                            return;
+                        }
+                        var groupCardsHtml = '';
+                        $og.children('option').each(function() {
+                            var $o = $(this);
+                            var v  = ($o.val() || '').toString().trim();
+                            if (!v) return;
+                            var info = getFoodDetailsFromOptionOrId(v, $o);
+                            if (!info) return;
+                            if (q && (info.name.toLowerCase().indexOf(q) === -1 && info.desc.toLowerCase().indexOf(q) === -1)) {
+                                return;
+                            }
+                            matchCount++;
+                            var selClass = (v === currentVal) ? ' is-selected' : '';
+                            groupCardsHtml += '<div class="cmp-stack-option-card' + selClass + '" data-opt-val="' + cmpEscapeHtml(v) + '">' +
+                                buildReferenceDishCardInnerHtml(info, false) +
+                            '</div>';
+                        });
+                        if (groupCardsHtml !== '') {
+                            html += '<div class="cmp-stack-cat-divider">' + cmpEscapeHtml(ogLabel) + '</div>' + groupCardsHtml;
+                        }
+                    });
+                } else {
+                    $select.children('option').each(function() {
+                        var $o = $(this);
+                        var v  = ($o.val() || '').toString().trim();
+                        if (!v) return;
+                        var info = getFoodDetailsFromOptionOrId(v, $o);
+                        if (!info) return;
+                        if (q && (info.name.toLowerCase().indexOf(q) === -1 && info.desc.toLowerCase().indexOf(q) === -1)) {
+                            return;
+                        }
+                        matchCount++;
+                        var selClass = (v === currentVal) ? ' is-selected' : '';
+                        html += '<div class="cmp-stack-option-card' + selClass + '" data-opt-val="' + cmpEscapeHtml(v) + '">' +
+                            buildReferenceDishCardInnerHtml(info, false) +
+                        '</div>';
+                    });
+                }
+
+                if (matchCount === 0) {
+                    html += '<div style="padding:24px 12px; text-align:center; color:#64748b; font-weight:700; font-size:0.86rem;">No matching dishes found.</div>';
+                }
+                return html;
+            }
+
+            // Active <select> reference for the App-Style Card Drawer (DISH-5 & Mobile DISH-4)
+            var $activeDrawerSelect = null;
+            var activeDrawerCat     = 'all';
+
+            function openCardStackDrawer($select) {
+                if (!$select || !$select.length || $select.is(':disabled')) return;
+                $activeDrawerSelect = $select;
+                activeDrawerCat     = 'all';
+
+                var $slotWrap = $select.closest('.cmp-snack-slot, td.cmp-cell-meal, td.cmp-cell-juice');
+                var slotLabel = $slotWrap.find('.cmp-mobile-label').first().text() || 'Select Meal';
+                var dayNum    = $select.closest('tr.cmp-day-row').data('row') || '';
+
+                $('#cmp-card-drawer-title').text((dayNum ? 'Day ' + dayNum + ' — ' : '') + slotLabel);
+                $('#cmp-card-drawer-search').val('');
+
+                var $catsBar = $('#cmp-card-drawer-cats');
+                if ($select.children('optgroup').length > 0) {
+                    var catsHtml = '<button type="button" class="cmp-drawer-cat-tab active" data-cat="all">All</button>';
+                    $select.children('optgroup').each(function() {
+                        var cleanLbl = ($(this).attr('label') || '').replace(/—/g, '').trim();
+                        if (cleanLbl) {
+                            catsHtml += '<button type="button" class="cmp-drawer-cat-tab" data-cat="' + cmpEscapeHtml(cleanLbl) + '">' + cmpEscapeHtml(cleanLbl) + '</button>';
+                        }
+                    });
+                    $catsBar.html(catsHtml).show();
+                } else {
+                    $catsBar.empty().hide();
+                }
+
+                $('#cmp-card-drawer-body').html(buildCardStackOptionsHtml($select, 'all', ''));
+                $('#cmp-card-stack-drawer-backdrop').addClass('is-open').attr('aria-hidden', 'false');
+            }
+
+            function closeCardStackDrawer() {
+                $('#cmp-card-stack-drawer-backdrop').removeClass('is-open').attr('aria-hidden', 'true');
+                $activeDrawerSelect = null;
+            }
+
+            // Trigger Click for DISH-4 (4A) & DISH-5 (4B)
+            $(document).on('click', '.cmp-card-picker-trigger', function(e) {
+                if ($(e.target).closest('.cmp-ref-clear-slot-btn').length) {
+                    return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                var $trig = $(this);
+                if ($trig.hasClass('is-disabled')) return;
+
+                var $wrap   = $trig.closest('.cmp-card-picker-wrap');
+                var $select = $wrap.prev('select');
+                if (!$select.length || $select.is(':disabled')) return;
+
+                // Use the App-Style Slide-Up / Modal Drawer for DISH-5 (all devices) or DISH-4 on Mobile (<= 768px)
+                if (dishDisplayMode === 'dish_5' || $(window).width() <= 768) {
+                    $('.cmp-card-picker-wrap.is-d4-open').removeClass('is-d4-open');
+                    openCardStackDrawer($select);
+                } else {
+                    // DISH-4 on Desktop/Tablet: Toggle Inline Floating Card-Stack Panel
+                    var willOpen = !$wrap.hasClass('is-d4-open');
+                    $('.cmp-card-picker-wrap.is-d4-open').removeClass('is-d4-open');
+                    if (willOpen) {
+                        var $panel = $wrap.find('.cmp-d4-floating-panel');
+                        $panel.html(buildCardStackOptionsHtml($select, 'all', ''));
+                        $wrap.addClass('is-d4-open');
+                    }
+                }
+            });
+
+            // Clear Slot Button ("x") on Selected Dish Card (Unlocks Quota Immediately)
+            $(document).on('click', '.cmp-ref-clear-slot-btn', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var $wrap   = $(this).closest('.cmp-card-picker-wrap');
+                var $select = $wrap.prev('select');
+                if (!$select.length || $select.is(':disabled')) return;
+                $select.val('').trigger('change');
+            });
+
+            // Select a Card from Inline DISH-4 Floating Panel
+            $(document).on('click', '.cmp-d4-floating-panel .cmp-stack-option-card', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var pickedVal = ($(this).attr('data-opt-val') || '').toString();
+                var $wrap     = $(this).closest('.cmp-card-picker-wrap');
+                var $select   = $wrap.prev('select');
+                $wrap.removeClass('is-d4-open');
+                if ($select.length && !$select.is(':disabled')) {
+                    $select.val(pickedVal).trigger('change');
+                }
+            });
+
+            // Select a Card from DISH-5 / Mobile Drawer
+            $(document).on('click', '#cmp-card-drawer-body .cmp-stack-option-card', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var pickedVal = ($(this).attr('data-opt-val') || '').toString();
+                if ($activeDrawerSelect && $activeDrawerSelect.length && !$activeDrawerSelect.is(':disabled')) {
+                    $activeDrawerSelect.val(pickedVal).trigger('change');
+                }
+                closeCardStackDrawer();
+            });
+
+            // Drawer Search & Category Tabs
+            $(document).on('input', '#cmp-card-drawer-search', function() {
+                if (!$activeDrawerSelect) return;
+                var q = $(this).val();
+                $('#cmp-card-drawer-body').html(buildCardStackOptionsHtml($activeDrawerSelect, activeDrawerCat, q));
+            });
+
+            $(document).on('click', '.cmp-drawer-cat-tab', function(e) {
+                e.preventDefault();
+                if (!$activeDrawerSelect) return;
+                $('.cmp-drawer-cat-tab').removeClass('active');
+                $(this).addClass('active');
+                activeDrawerCat = $(this).attr('data-cat') || 'all';
+                var q = $('#cmp-card-drawer-search').val();
+                $('#cmp-card-drawer-body').html(buildCardStackOptionsHtml($activeDrawerSelect, activeDrawerCat, q));
+            });
+
+            $(document).on('click', '#cmp-card-drawer-close-btn', function(e) {
+                e.preventDefault();
+                closeCardStackDrawer();
+            });
+            $(document).on('click', '#cmp-card-stack-drawer-backdrop', function(e) {
+                if (e.target === this) {
+                    closeCardStackDrawer();
+                }
+            });
+
+            // Close Inline DISH-4 Floating Panel on Outside Click
+            $(document).on('click', function(e) {
+                if (!$(e.target).closest('.cmp-card-picker-wrap').length) {
+                    $('.cmp-card-picker-wrap.is-d4-open').removeClass('is-d4-open');
+                }
+            });
+
             // Interactive Handlers for DISH-1, DISH-2, and DISH-3
             $(document).on('click', '.cmp-d1-ing', function(e) {
                 e.stopPropagation();
@@ -2829,7 +3533,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var $wrap = $btn.closest('.cmp-dish-detail-d3');
                 var open  = !$wrap.hasClass('is-d3-open');
                 $wrap.toggleClass('is-d3-open', open);
-                $btn.html(open ? 'Hide &#9650;' : 'Ingredients &#9660;');
+                $btn.html(open ? 'Hide &#9650;' : 'Details &#9660;');
             });
 
             var $dishPopover = $('#cmp-dish-floating-popover');
@@ -2852,7 +3556,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var dFat  = $btn.attr('data-fat') || '0';
 
                 var popHtml = '<div class="pop-dish-title">' + cmpEscapeHtml(dName) + '</div>' +
-                              '<div class="pop-dish-ing"><strong>Ingredients:</strong> ' + cmpEscapeHtml(dIng) + '</div>' +
+                              '<div class="pop-dish-ing">' + cmpEscapeHtml(dIng) + '</div>' +
                               '<div class="pop-dish-macros">' +
                                   '<span class="cmp-d-pill p-cal">' + cmpEscapeHtml(dCal) + ' kcal</span>' +
                                   '<span class="cmp-d-pill p-pro">' + cmpEscapeHtml(dPro) + 'g P</span>' +
@@ -3336,13 +4040,21 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var logId         = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
                 var hasValues     = false;
                 var pickedNames   = [];
+                var pickedInfos   = [];
 
                 rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"]').each(function() {
-                    var val = $(this).val();
-                    if (val && val !== "") {
+                    var val = ($(this).val() || '').toString().trim();
+                    if (val !== "") {
                         hasValues = true;
-                        var txt = $(this).find('option:selected').text().trim();
-                        if (txt) pickedNames.push(txt);
+                        var $selOpt = $(this).find('option:selected');
+                        var info    = getFoodDetailsFromOptionOrId(val, $selOpt);
+                        if (info && info.name) {
+                            pickedNames.push(info.name);
+                            pickedInfos.push(info);
+                        } else {
+                            var txt = $selOpt.text().trim();
+                            if (txt) pickedNames.push(txt);
+                        }
                     }
                 });
                 rowElement.find('input.cmp-meal-custom').each(function() {
@@ -3369,7 +4081,21 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     if (isChefsChoice && !hasValues) {
                         summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong>' + carryoverHint + ' &mdash; Click to expand');
                     } else if (pickedNames.length > 0) {
-                        summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  ') + carryoverHint);
+                        if (dishDisplayMode && dishDisplayMode !== 'off' && pickedInfos.length > 0) {
+                            var miniCardsHtml = '<div class="cmp-collapsed-cards-grid">';
+                            pickedInfos.forEach(function(inf) {
+                                var descLine = inf.desc ? '<div class="cmp-collapsed-mini-desc">' + cmpEscapeHtml(inf.desc) + '</div>' : '';
+                                miniCardsHtml += '<div class="cmp-collapsed-mini-card">' +
+                                    '<div class="cmp-collapsed-mini-title">' + cmpEscapeHtml(inf.name) + '</div>' +
+                                    descLine +
+                                    buildPastelMacroPillsHtml(inf) +
+                                '</div>';
+                            });
+                            miniCardsHtml += '</div>';
+                            summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong>' + carryoverHint + miniCardsHtml);
+                        } else {
+                            summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  ') + carryoverHint);
+                        }
                     } else if (logId > 0 && !isUnsaved) {
                         summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong>' + carryoverHint + ' &mdash; Click to expand and select meals');
                     } else {
@@ -3382,7 +4108,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         mobilePreviewEl.text(chefsChoiceLabel + ' Selected').addClass('has-preview');
                     } else if (pickedNames.length > 0) {
                         var prefix = isChefsChoice ? ('[' + chefsChoiceLabel + '] ') : '';
-                        mobilePreviewEl.text(prefix + pickedNames.join(' • ')).addClass('has-preview');
+                        if (dishDisplayMode && dishDisplayMode !== 'off' && pickedInfos.length > 0) {
+                            var richMobParts = pickedInfos.map(function(inf) {
+                                return inf.name + (inf.cal > 0 ? ' (' + inf.cal + ' kcal)' : '');
+                            });
+                            mobilePreviewEl.text(prefix + richMobParts.join(' • ')).addClass('has-preview');
+                        } else {
+                            mobilePreviewEl.text(prefix + pickedNames.join(' • ')).addClass('has-preview');
+                        }
                     } else if (logId > 0 && !isUnsaved) {
                         mobilePreviewEl.text('Date Reserved — Tap to choose meals').addClass('has-preview');
                     } else {
@@ -3935,6 +4668,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     selects.hide();
                     inputs.hide();
                     snacksGrid.hide();
+                    rowElement.find('.cmp-dish-detail-d1, .cmp-dish-detail-d3, .cmp-dish-d2-badge, .cmp-card-picker-wrap').remove();
                     chefChoiceCell.find('.cmp-chef-box').hide();
                     macroCell.css('opacity', '0.45');
 
@@ -3963,6 +4697,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 if (availableFoods.length === 0) {
                     selects.hide();
                     snacksGrid.hide();
+                    rowElement.find('.cmp-dish-detail-d1, .cmp-dish-detail-d3, .cmp-dish-d2-badge, .cmp-card-picker-wrap').remove();
                     chefChoiceCell.find('.cmp-chef-box').show();
 
                     selectContainer.append('<div class="boundary-overlay" style="color:#b45309; font-weight:bold; font-size:0.88em; background:#fef3c7; border:1px solid #fde68a; padding:11px; border-radius:8px; text-align:center; line-height:1.4;">Menu Pending Release</div>');
@@ -4057,6 +4792,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     if (willOpen) {
                         $row.siblings('tr.cmp-day-row.is-open:not(.is-unsaved)').removeClass('is-open');
                         $row.addClass('is-open');
+                        renderAllRowDishDetails($row);
                         setTimeout(function() {
                             $('html, body').stop(true).animate({
                                 scrollTop: Math.max(0, $row.offset().top - 10)
@@ -4068,6 +4804,9 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     }
                 } else {
                     $row.toggleClass('is-collapsed-desktop');
+                    if (!$row.hasClass('is-collapsed-desktop')) {
+                        renderAllRowDishDetails($row);
+                    }
                 }
             });
 
@@ -4080,7 +4819,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             $(document).on('click', '.cmp-expand-all-btn', function(e) {
                 e.preventDefault();
                 var $container = $(this).closest('.cmp-portal-container');
-                $container.find('tr.cmp-day-row:not(.status-void)').removeClass('is-collapsed-desktop');
+                $container.find('tr.cmp-day-row:not(.status-void)').each(function() {
+                    $(this).removeClass('is-collapsed-desktop');
+                    renderAllRowDishDetails($(this));
+                });
             });
 
             function calculateMacros(rowElement) {
@@ -4186,6 +4928,15 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                         $(this).prop('disabled', false).removeClass('quota-locked');
                     });
                 }
+
+                // Sync disabled state onto DISH-4 / DISH-5 Visual Card Picker triggers
+                rowElement.find('select.cmp-has-card-picker').each(function() {
+                    var $sel  = $(this);
+                    var $trig = $sel.next('.cmp-card-picker-wrap').find('.cmp-card-picker-trigger');
+                    if ($trig.length) {
+                        $trig.toggleClass('is-disabled', $sel.is(':disabled'));
+                    }
+                });
             }
 
             $('.cmp-day-row').each(function() {
@@ -4246,6 +4997,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     inputs.prop('disabled', true).val('');
                     inputs.removeClass('quota-locked');
                     rowElement.find('.cmp-dish-detail-d1, .cmp-dish-detail-d3, .cmp-dish-d2-badge').remove();
+                    renderAllRowDishDetails(rowElement);
                 } else {
                     inputs.prop('disabled', false);
                     renderAllRowDishDetails(rowElement);
@@ -4672,6 +5424,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                         markRowSaved(rowElement);
                         rowElement.removeClass('status-pending').addClass('status-saved is-collapsed-desktop');
+                        renderAllRowDishDetails(rowElement);
                         captureRowSnapshot(rowElement);
                         syncRowCompactAndSummary(rowElement);
                         updatePendingCounts(container);
@@ -4694,6 +5447,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                             if (isTimeLocked) {
                                 rowElement.find('.cmp-date-picker, .cmp-chefs-choice, select, input.cmp-meal-custom').prop('disabled', true).removeClass('quota-locked');
+                                renderAllRowDishDetails(rowElement);
                                 rowElement.find('.cmp-action-box').html('<span style="color:#94a3b8; font-size:0.85em; font-weight:bold; display:block; text-align:center; width:100%; padding:10px 0;">Locked (Cutoff Passed)</span>');
                             } else {
                                 btn.text('✓ Updated').css({'background':'#1B5E20'}).prop('disabled', false);
