@@ -218,5 +218,5 @@ function cmp_render_admin_page() {
             </div>
         </div>
     </div>
-    <?:
+    <?php
 }
