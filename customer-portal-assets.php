@@ -1093,10 +1093,250 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             }
             .cmp-table input[type="date"],
             .cmp-table input[type="text"] {
-            .cmp-Chef-box span {
-                font-size: 0.86rem;
+                padding-right: 12px !important;
+                background-image: none !important;
+            }
+
+            .cmp-snacks-grid {
+                display: grid !important;
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 14px !important;
+                width: 100% !important;
+            }
+            .cmp-snacks-grid.single-snack {
+                grid-template-columns: minmax(0, 1fr) !important;
+            }
+            .cmp-snack-slot {
+                display: flex !important;
+                flex-direction: column !important;
+                width: 100% !important;
+            }
+
+            .cmp-status-box {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 4px !important;
+                width: 100% !important;
+                min-height: 48px !important;
+                padding: 5px 8px !important;
+                background: #f8fafc !important;
+                border: 1.5px solid #e2e8f0 !important;
+                border-radius: 10px !important;
+                box-sizing: border-box !important;
+                text-align: center !important;
+                overflow: hidden !important;
+            }
+            .cmp-status-pill {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                min-width: 92px !important;
+                max-width: 100% !important;
+                padding: 4px 12px !important;
+                border-radius: 999px !important;
+                font-size: 0.81rem !important;
+                font-weight: 800 !important;
+                line-height: 1.2 !important;
+                white-space: nowrap !important;
+                text-align: center !important;
+                box-sizing: border-box !important;
+            }
+            .cmp-status-pill.pill-pending { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; }
+            .cmp-status-pill.pill-confirmed { color: #166534; background: #f0fdf4; border: 1px solid #86efac; }
+            .cmp-status-pill.pill-successful { color: #166534; background: #dcfce7; border: 1px solid #86efac; }
+            .cmp-status-pill.pill-void { color: #9f1239; background: #fff1f2; border: 1px solid #fda4af; }
+            .cmp-status-pill.pill-paused { color: #b45309; background: #fef3c7; border: 1px solid #fde68a; }
+
+            .cmp-pos-readonly-pill {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 4px !important;
+                padding: 2px 8px !important;
+                border-radius: 999px !important;
+                font-size: 0.67rem !important;
+                font-weight: 800 !important;
+                line-height: 1.15 !important;
+                letter-spacing: 0.02em !important;
+                white-space: nowrap !important;
+            }
+            .cmp-pos-readonly-pill.pos-is-checked {
+                background: #ccfbf1 !important;
+                color: #0f766e !important;
+                border: 1px solid #5eead4 !important;
+            }
+            .cmp-pos-readonly-pill.pos-is-pending {
+                background: #f1f5f9 !important;
+                color: #64748b !important;
+                border: 1px solid #cbd5e1 !important;
+            }
+
+            .cmp-action-box {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: flex-end !important;
+                gap: 8px !important;
+                flex-wrap: nowrap !important;
+                width: 100% !important;
+            }
+            .cmp-save-row {
+                min-width: 132px !important;
+                width: auto !important;
+                flex: 1 1 auto !important;
+                min-height: 48px !important;
+                padding: 10px 14px !important;
+                font-size: 14px !important;
+                font-weight: 800 !important;
+                line-height: 1.2 !important;
+                white-space: nowrap !important;
+                border-radius: 10px !important;
+                border: none !important;
+                color: #ffffff !important;
+                cursor: pointer !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 6px !important;
+                transition: all 0.2s ease !important;
+                box-shadow: 0 4px 10px rgba(27, 94, 32, 0.18) !important;
+            }
+            .cmp-save-row:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
+            .cmp-save-row:focus { outline: none !important; box-shadow: 0 0 0 3.5px rgba(55, 146, 55, 0.4) !important; }
+            .cmp-save-row:disabled { opacity: 0.7; cursor: not-allowed !important; transform: none !important; animation: none !important; }
+
+            .cmp-secondary-actions {
+                display: inline-flex !important;
+                gap: 6px !important;
+                flex-shrink: 0 !important;
+            }
+            .cmp-clear-row,
+            .cmp-cancel-day-row {
+                width: 44px !important;
+                height: 48px !important;
+                padding: 0 !important;
+                border-radius: 10px !important;
+                border: none !important;
+                color: #fff !important;
+                cursor: pointer !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                transition: all 0.2s ease !important;
+                flex-shrink: 0 !important;
+            }
+            .cmp-clear-row { background: #f59e0b !important; }
+            .cmp-clear-row:hover:not(:disabled) { background: #d97706 !important; }
+            .cmp-cancel-day-row { background: #dc2626 !important; }
+            .cmp-cancel-day-row:hover:not(:disabled) { background: #b91c1c !important; }
+
+            /* Colourful Macro Tiles */
+            .cmp-macro-display {
+                display: block !important;
+                width: 100% !important;
+                padding: 10px 12px !important;
+                background: #f8fafc !important;
+                border: 1.5px solid #e2e8f0 !important;
+                border-radius: 12px !important;
+                box-sizing: border-box !important;
+            }
+            .cmp-macro-chef-tag {
+                display: inline-block;
+                background: #EEF7E3;
+                color: #1B5E20;
+                border: 1px solid #68B946;
+                font-size: 0.73rem;
+                font-weight: 800;
+                padding: 2px 8px;
+                border-radius: 999px;
+                margin-bottom: 8px;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+            }
+            .cmp-macro-tiles-grid {
+                display: grid !important;
+                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                gap: 8px !important;
+                width: 100% !important;
+            }
+            .cmp-macro-tile {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
+                padding: 7px 6px !important;
+                border-radius: 10px !important;
+                text-align: center !important;
+                box-sizing: border-box !important;
+            }
+            .cmp-macro-tile .tile-label {
+                font-size: 0.66rem !important;
+                font-weight: 800 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+                opacity: 0.88 !important;
+                margin-bottom: 2px !important;
+                line-height: 1.1 !important;
+            }
+            .cmp-macro-tile .tile-val {
+                font-size: 0.95rem !important;
+                font-weight: 900 !important;
+                line-height: 1.2 !important;
+                white-space: nowrap !important;
+            }
+            .cmp-macro-tile.tile-cal {
+                background: linear-gradient(145deg, #fffbeb 0%, #fef3c7 100%) !important;
+                border: 1.5px solid #fcd34d !important;
+                color: #b45309 !important;
+            }
+            .cmp-macro-tile.tile-pro {
+                background: linear-gradient(145deg, #ecfdf5 0%, #d1fae5 100%) !important;
+                border: 1.5px solid #6ee7b7 !important;
+                color: #047857 !important;
+            }
+            .cmp-macro-tile.tile-carb {
+                background: linear-gradient(145deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+                border: 1.5px solid #7dd3fc !important;
+                color: #0369a1 !important;
+            }
+            .cmp-macro-tile.tile-fat {
+                background: linear-gradient(145deg, #faf5ff 0%, #f3e8ff 100%) !important;
+                border: 1.5px solid #d8b4fe !important;
+                color: #6d28d9 !important;
+            }
+            .cmp-macro-banner-state {
+                padding: 8px 12px;
+                border-radius: 8px;
                 font-weight: 700;
-                color: #231F20;
+                font-size: 0.86rem;
+                text-align: center;
+            }
+
+            .cmp-chef-box {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                min-height: 48px !important;
+                padding: 6px 12px !important;
+                background: #f8fafc !important;
+                border: 2px solid #cbd5e1 !important;
+                border-radius: 10px !important;
+                gap: 9px !important;
+                cursor: pointer !important;
+                transition: all 0.18s ease;
+            }
+            .cmp-chef-box:focus-within {
+                background: #ffffff !important;
+                border-color: #1B5E20 !important;
+                box-shadow: 0 0 0 3.5px rgba(55, 146, 55, 0.32) !important;
+            }
+            .cmp-chefs-choice {
+                width: 20px !important;
+                height: 20px !important;
+                accent-color: #379237 !important;
+                cursor: pointer !important;
+                margin: 0 !important;
             }
 
             /* =========================================================
@@ -4488,18 +4728,18 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 var btn = $(this);
                 var rowElement = btn.closest('tr');
             // CANCEL DAY LOGIC (WITH HELPFUL REMINDER FOR DISH CHANGES VS. FULL DAY CANCELLATION)
-            $(document).on('click', '.cmp-cancel-day-row', function(e) {
+            // CLEAR / RESET SELECTION LOGIC (ADMIN ONLY — INCLUDES OPTION 3A: ADMIN CANCELLATION RESET)
+            $(document).on('click', '.cmp-clear-row, .cmp-admin-reset-cancel-btn', function(e) {
                 e.preventDefault();
                 var btn = $(this);
                 var rowElement = btn.closest('tr');
-                var dateVal = rowElement.find('.cmp-date-picker').val();
+                var isCancelledReset = (btn.attr('data-is-cancelled-reset') == '1' || btn.hasClass('cmp-admin-reset-cancel-btn'));
 
-                if (!canBypassDateLock && dateVal && (dateVal <= todayYmd || (customerMinDate && dateVal < customerMinDate))) {
-                    cmpShowNotice('Past dates, today\'s date, and dates past the cut-off time cannot be cancelled.', 'error');
-                    return;
-                }
+                var confirmPrompt = isCancelledReset
+                    ? 'Reset this CANCELLED day?\n\n• This cancelled entry will be removed from the Kitchen Portal.\n• The extra compensation day added for this cancellation will be reversed.\n• This slot will return as an open Pending Selection.'
+                    : 'Admin Only: Are you sure you want to reset and clear this day? This will wipe the selection and return the slot to Pending.';
 
-                cmpConfirmAction('Are you sure you want to CANCEL this delivery date?\n\n• Tip: To change your meals for this date, simply select a new dish from the dropdown and click "Update".\n• Only confirm if you want to void this date ("Cancelled") and move a replacement day to the bottom of your plan.', function() {
+                cmpConfirmAction(confirmPrompt, function() {
                     var origHTML = btn.html();
                     btn.html('...').prop('disabled', true);
 
@@ -4527,7 +4767,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 });
             });
 
-            // CANCEL DAY LOGIC
+            // CANCEL DAY LOGIC (WITH HELPFUL REMINDER FOR DISH CHANGES VS. FULL DAY CANCELLATION)
             $(document).on('click', '.cmp-cancel-day-row', function(e) {
                 e.preventDefault();
                 var btn = $(this);
@@ -4539,7 +4779,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     return;
                 }
 
-                cmpConfirmAction('Are you sure you want to CANCEL this specific day?\n\nThis will permanently void this date, display it as "Cancelled", and push a replacement day to the bottom of the plan.', function() {
+                cmpConfirmAction('Are you sure you want to CANCEL this delivery date?\n\n• Tip: To change your meals for this date, simply select a new dish from the dropdown and click "Update".\n• Only confirm if you want to void this date ("Cancelled") and move a replacement day to the bottom of your plan.', function() {
                     var origHTML = btn.html();
                     btn.html('...').prop('disabled', true);
 
