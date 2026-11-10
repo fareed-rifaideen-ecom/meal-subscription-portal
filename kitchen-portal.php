@@ -7,7 +7,7 @@
  *      * Auto-detects Same-Day Preparation when Receive By = "Same Day" AND Time Slot starts at or after 4:00 PM (16:00+)
  *      * Supports per-plan manual override (`prep_timing`: 'auto', 'same_day', 'day_before') for FOH, Menu Manager & Admin (never shown to customers)
  *      * Queries both Today ($selected_date) for Same-Day Prep orders and Tomorrow ($target_date) for Advance Prep orders
- *      * Displays "⚡ SAME-DAY PREP" badge without adding "(Today)" or "(Tomorrow)" after dates
+ *      * Displays "SAME-DAY PREP" badge without adding "(Today)" or "(Tomorrow)" after dates
  *  - Default 3-Tier Priority Sorting:
  *      1. Same Day Delivery - Same Day Preparation (Eating 10-Nov, Prep 10-Nov, Delivery 10-Nov)
  *      2. Day Before Delivery (Eating 11-Nov, Prep 10-Nov, Delivery 10-Nov)
