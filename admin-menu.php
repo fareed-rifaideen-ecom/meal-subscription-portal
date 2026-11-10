@@ -130,16 +130,66 @@ function cmp_render_admin_page() {
     // --- PHASE 4: HTML FOR ADMIN PAGE ---
     ?>
     <style>
+        .cmp-mm-admin-wrap,
+        .cmp-mm-admin-wrap *,
+        .cmp-mm-admin-wrap *::before,
+        .cmp-mm-admin-wrap *::after {
+            box-sizing: border-box;
+        }
+        .cmp-mm-admin-wrap {
+            max-width: 1240px;
+            margin: 20px 20px 40px 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #1e293b;
+        }
+        .cmp-mm-hero-banner {
+            background: linear-gradient(135deg, #1B5E20 0%, #379237 100%);
+            color: #ffffff;
+            padding: 22px 26px;
+            border-radius: 14px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            box-shadow: 0 8px 22px rgba(27, 94, 32, 0.14);
+        }
+        .cmp-mm-hero-banner h1 {
+            margin: 0 !important;
+            padding: 0 !important;
+            color: #ffffff !important;
+            font-size: 1.6rem !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+        }
+        .cmp-mm-hero-banner p {
+            margin: 5px 0 0 0 !important;
+            color: #DCECC9 !important;
+            font-size: 0.92rem !important;
+            font-weight: 500 !important;
+        }
+        .cmp-mm-hero-badge {
+            background: rgba(255, 255, 255, 0.16);
+            color: #ffffff;
+            border: 1px solid rgba(220, 236, 201, 0.55);
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        /* Dish Display Mode Card */
         .cmp-dish-mode-card {
             background: #ffffff;
             border: 1.5px solid #DCECC9;
             border-left: 5px solid #379237;
-            border-radius: 12px;
-            padding: 18px 22px;
-            margin: 18px 0 22px 0;
-            max-width: 1240px;
-            box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05);
-            box-sizing: border-box;
+            border-radius: 14px;
+            padding: 20px 24px;
+            margin: 0 0 22px 0;
+            width: 100%;
+            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
         }
         .cmp-dish-mode-header {
             display: flex;
@@ -147,15 +197,18 @@ function cmp_render_admin_page() {
             align-items: center;
             flex-wrap: wrap;
             gap: 12px;
-            margin-bottom: 14px;
+            margin-bottom: 16px;
+            padding-bottom: 14px;
+            border-bottom: 1px solid #f1f5f9;
         }
         .cmp-dish-mode-title {
-            margin: 0;
-            font-size: 1.1rem;
-            color: #1B5E20;
-            font-weight: 800;
+            margin: 0 !important;
+            font-size: 1.12rem !important;
+            color: #1B5E20 !important;
+            font-weight: 800 !important;
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 8px;
         }
         .cmp-dish-mode-live-pill {
@@ -166,9 +219,11 @@ function cmp_render_admin_page() {
             padding: 2px 10px;
             font-size: 0.72rem;
             font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
         }
         .cmp-dish-mode-sub {
-            margin: 4px 0 0 0;
+            margin: 5px 0 0 0;
             color: #475569;
             font-size: 0.86rem;
         }
@@ -176,6 +231,7 @@ function cmp_render_admin_page() {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 12px;
+            align-items: stretch;
         }
         @media (max-width: 1024px) {
             .cmp-dish-mode-grid {
@@ -187,61 +243,242 @@ function cmp_render_admin_page() {
                 grid-template-columns: 1fr;
             }
         }
-        .cmp-dish-mode-option {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 12px 14px;
-            border-radius: 10px;
-            border: 1.5px solid #cbd5e1;
-            background: #f8fafc;
-            cursor: pointer;
-            transition: all 0.15s ease;
+        label.cmp-dish-mode-option {
+            display: flex !important;
+            align-items: flex-start !important;
+            gap: 10px !important;
+            padding: 13px 15px !important;
+            border-radius: 11px !important;
+            border: 1.5px solid #e2e8f0 !important;
+            background: #f8fafc !important;
+            cursor: pointer !important;
+            transition: all 0.16s ease !important;
+            margin: 0 !important;
+            height: 100% !important;
+            box-shadow: none !important;
         }
-        .cmp-dish-mode-option:hover {
-            border-color: #68B946;
-            background: #ffffff;
+        label.cmp-dish-mode-option:hover {
+            border-color: #86efac !important;
+            background: #ffffff !important;
         }
-        .cmp-dish-mode-option.is-active {
-            border: 2px solid #379237;
-            background: #EEF7E3;
+        label.cmp-dish-mode-option.is-selected-mode {
+            border: 2px solid #379237 !important;
+            background: #EEF7E3 !important;
+            box-shadow: 0 4px 12px rgba(55, 146, 55, 0.12) !important;
         }
-        .cmp-dish-mode-option input[type="radio"] {
-            margin-top: 3px;
-            accent-color: #379237;
-            flex-shrink: 0;
+        label.cmp-dish-mode-option input[type="radio"] {
+            margin: 3px 0 0 0 !important;
+            accent-color: #379237 !important;
+            flex-shrink: 0 !important;
+            width: 16px !important;
+            height: 16px !important;
         }
         .cmp-dish-mode-opt-title {
             display: block;
-            color: #1e293b;
+            color: #0f172a;
             font-size: 0.88rem;
             font-weight: 800;
-            margin-bottom: 3px;
+            margin-bottom: 4px;
+            line-height: 1.25;
+        }
+        label.cmp-dish-mode-option.is-selected-mode .cmp-dish-mode-opt-title {
+            color: #1B5E20;
         }
         .cmp-dish-mode-opt-desc {
             display: block;
             color: #475569;
             font-size: 0.77rem;
-            line-height: 1.38;
+            line-height: 1.42;
+            font-weight: 500;
         }
         .cmp-dish-mode-save-btn {
             background: linear-gradient(135deg, #379237 0%, #1B5E20 100%);
             color: #ffffff;
             border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
+            padding: 10px 22px;
+            border-radius: 9px;
             font-weight: 800;
-            font-size: 0.86rem;
+            font-size: 0.88rem;
             cursor: pointer;
-            box-shadow: 0 3px 10px rgba(27, 94, 32, 0.2);
+            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.22);
+            transition: all 0.18s ease;
+            white-space: nowrap;
         }
         .cmp-dish-mode-save-btn:hover {
-            filter: brightness(1.06);
+            filter: brightness(1.07);
+            transform: translateY(-1px);
+        }
+
+        /* Bottom 2-Column Management Grid (CSV Upload + Safe Deletion) */
+        .cmp-mm-bottom-grid {
+            display: grid;
+            grid-template-columns: 1.45fr 1fr;
+            gap: 20px;
+            align-items: stretch;
+        }
+        @media (max-width: 960px) {
+            .cmp-mm-bottom-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .cmp-mm-panel-card {
+            background: #ffffff;
+            border: 1.5px solid #dce4ec;
+            border-top: 4px solid #379237;
+            border-radius: 14px;
+            padding: 22px 24px;
+            box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .cmp-mm-panel-card.danger-card {
+            background: linear-gradient(180deg, #fffbeb 0%, #ffffff 100%);
+            border-color: #fde68a;
+            border-top: 4px solid #d97706;
+        }
+        .cmp-mm-panel-card h2 {
+            margin: 0 0 8px 0 !important;
+            font-size: 1.15rem !important;
+            font-weight: 800 !important;
+            color: #1B5E20 !important;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .cmp-mm-panel-card.danger-card h2 {
+            color: #b45309 !important;
+        }
+        .cmp-mm-panel-desc {
+            margin: 0 0 14px 0;
+            font-size: 0.86rem;
+            color: #475569;
+            line-height: 1.48;
+        }
+        .cmp-mm-csv-cols-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-bottom: 16px;
+            padding: 10px 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 9px;
+        }
+        .cmp-mm-col-pill {
+            background: #EEF7E3;
+            color: #1B5E20;
+            border: 1px solid #b7e1a1;
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 0.74rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        .cmp-mm-file-dropzone {
+            background: #f8fafc;
+            border: 1.5px dashed #94a3b8;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }
+        .cmp-mm-file-dropzone:hover {
+            border-color: #379237;
+            background: #f4fbf0;
+        }
+        .cmp-mm-file-dropzone input[type="file"] {
+            width: 100%;
+            font-size: 0.86rem;
+            color: #334155;
+            font-weight: 600;
+        }
+        .cmp-mm-date-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        @media (max-width: 540px) {
+            .cmp-mm-date-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .cmp-mm-field-label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 800;
+            color: #334155;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-bottom: 6px;
+        }
+        .cmp-mm-input,
+        .cmp-mm-select {
+            width: 100% !important;
+            max-width: 100% !important;
+            height: 40px !important;
+            padding: 6px 12px !important;
+            border: 1.5px solid #cbd5e1 !important;
+            border-radius: 8px !important;
+            background: #ffffff !important;
+            font-size: 0.9rem !important;
+            font-weight: 600 !important;
+            color: #0f172a !important;
+        }
+        .cmp-mm-input:focus,
+        .cmp-mm-select:focus {
+            border-color: #379237 !important;
+            box-shadow: 0 0 0 3px rgba(55, 146, 55, 0.16) !important;
+            outline: none !important;
+        }
+        .cmp-mm-primary-btn {
+            background: linear-gradient(135deg, #379237 0%, #1B5E20 100%);
+            color: #ffffff;
+            border: none;
+            border-radius: 9px;
+            padding: 11px 22px;
+            font-size: 0.9rem;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(27, 94, 32, 0.2);
+            transition: all 0.18s ease;
+            width: 100%;
+        }
+        .cmp-mm-primary-btn:hover {
+            filter: brightness(1.07);
+            transform: translateY(-1px);
+        }
+        .cmp-mm-danger-btn {
+            background: #ffffff;
+            color: #dc2626;
+            border: 1.5px solid #f87171;
+            border-radius: 9px;
+            padding: 10px 18px;
+            font-size: 0.88rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.18s ease;
+            width: 100%;
+        }
+        .cmp-mm-danger-btn:hover {
+            background: #dc2626;
+            color: #ffffff;
+            border-color: #b91c1c;
         }
     </style>
 
-    <div class="wrap">
-        <h1>Meal Portal - Menu Manager</h1>
+    <div class="wrap cmp-mm-admin-wrap">
+        <div class="cmp-mm-hero-banner">
+            <div>
+                <h1>Meal Portal &mdash; Menu Manager</h1>
+                <p>Configure Customer Portal Dish Display Modes, upload quarterly menu CSVs, and manage active menu periods.</p>
+            </div>
+            <span class="cmp-mm-hero-badge">
+                <?php echo count( $menu_ranges ); ?> Active Menu Period<?php echo count( $menu_ranges ) === 1 ? '' : 's'; ?>
+            </span>
+        </div>
+
         <?php echo $message; ?>
 
         <!-- CUSTOMER PORTAL DISH DESCRIPTION & MACROS DISPLAY MODE TOGGLE (OPTIONS DISH-1 TO DISH-5 + OFF) -->
@@ -260,7 +497,7 @@ function cmp_render_admin_page() {
                 </div>
 
                 <div class="cmp-dish-mode-grid" id="cmp-dish-mode-options-grid">
-                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_1' ? 'is-active' : ''; ?>">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_1' ? 'is-selected-mode' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_dish_mode, 'dish_1' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-1: Micro-Card</span>
@@ -268,7 +505,7 @@ function cmp_render_admin_page() {
                         </span>
                     </label>
 
-                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_2' ? 'is-active' : ''; ?>">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_2' ? 'is-selected-mode' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_dish_mode, 'dish_2' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-2: Badge &amp; Popover</span>
@@ -276,7 +513,7 @@ function cmp_render_admin_page() {
                         </span>
                     </label>
 
-                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_3' ? 'is-active' : ''; ?>">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_3' ? 'is-selected-mode' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_dish_mode, 'dish_3' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-3: Macro Bar + Drawer</span>
@@ -284,7 +521,7 @@ function cmp_render_admin_page() {
                         </span>
                     </label>
 
-                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_4' ? 'is-active' : ''; ?>">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_4' ? 'is-selected-mode' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_4" <?php checked( $current_dish_mode, 'dish_4' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-4 (4A): Card-Stack Picker + Card Preview</span>
@@ -292,7 +529,7 @@ function cmp_render_admin_page() {
                         </span>
                     </label>
 
-                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_5' ? 'is-active' : ''; ?>">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'dish_5' ? 'is-selected-mode' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="dish_5" <?php checked( $current_dish_mode, 'dish_5' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Option DISH-5 (4B): App-Style Menu Drawer + Card</span>
@@ -300,7 +537,7 @@ function cmp_render_admin_page() {
                         </span>
                     </label>
 
-                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'off' ? 'is-active' : ''; ?>">
+                    <label class="cmp-dish-mode-option <?php echo $current_dish_mode === 'off' ? 'is-selected-mode' : ''; ?>">
                         <input type="radio" name="cmp_dish_details_display_mode" value="off" <?php checked( $current_dish_mode, 'off' ); ?>>
                         <span>
                             <span class="cmp-dish-mode-opt-title">Off (Menu Name Only)</span>
@@ -315,60 +552,140 @@ function cmp_render_admin_page() {
         document.querySelectorAll('#cmp-dish-mode-options-grid input[type="radio"]').forEach(function(radio) {
             radio.addEventListener('change', function() {
                 document.querySelectorAll('#cmp-dish-mode-options-grid .cmp-dish-mode-option').forEach(function(lbl) {
-                    lbl.classList.remove('is-active');
+                    lbl.classList.remove('is-selected-mode');
                 });
                 if (this.closest('.cmp-dish-mode-option')) {
-                    this.closest('.cmp-dish-mode-option').classList.add('is-active');
+                    this.closest('.cmp-dish-mode-option').classList.add('is-selected-mode');
                 }
             });
         });
+
+        function cmpMmConfirmDeleteMenu(formEl) {
+            var sel = formEl.querySelector('select[name="del_range"]');
+            if (!sel || !sel.value) {
+                return false;
+            }
+            var periodTxt = sel.options[sel.selectedIndex].text;
+            var existingModal = document.getElementById('cmp-mm-del-confirm-modal');
+            if (existingModal) existingModal.remove();
+
+            var backdrop = document.createElement('div');
+            backdrop.id = 'cmp-mm-del-confirm-modal';
+            Object.assign(backdrop.style, {
+                position: 'fixed',
+                inset: '0',
+                background: 'rgba(15, 23, 42, 0.55)',
+                backdropFilter: 'blur(4px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: '100100',
+                padding: '16px'
+            });
+
+            var box = document.createElement('div');
+            Object.assign(box.style, {
+                background: '#ffffff',
+                border: '2px solid #fde68a',
+                borderTop: '5px solid #dc2626',
+                borderRadius: '14px',
+                maxWidth: '420px',
+                width: '100%',
+                padding: '22px 20px',
+                boxShadow: '0 20px 40px rgba(15, 23, 42, 0.25)',
+                textAlign: 'center',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+            });
+
+            box.innerHTML = '<h3 style="margin:0 0 8px 0; color:#991b1b; font-size:1.1rem; font-weight:800;">Permanently Delete Menu Period?</h3>' +
+                '<p style="margin:0 0 18px 0; color:#334155; font-size:0.9rem; line-height:1.45;">This will permanently delete all food items assigned to <strong>' + periodTxt + '</strong>.</p>' +
+                '<div style="display:flex; gap:10px;">' +
+                    '<button type="button" id="cmp-mm-cancel-del" style="flex:1; padding:10px; border-radius:8px; border:1.5px solid #cbd5e1; background:#f8fafc; color:#334155; font-weight:800; cursor:pointer;">Cancel</button>' +
+                    '<button type="button" id="cmp-mm-confirm-del" style="flex:1; padding:10px; border-radius:8px; border:none; background:#dc2626; color:#ffffff; font-weight:800; cursor:pointer;">Yes, Delete Menu</button>' +
+                '</div>';
+
+            backdrop.appendChild(box);
+            document.body.appendChild(backdrop);
+
+            document.getElementById('cmp-mm-cancel-del').onclick = function() {
+                backdrop.remove();
+            };
+            document.getElementById('cmp-mm-confirm-del').onclick = function() {
+                backdrop.remove();
+                var hiddenSubmit = document.createElement('input');
+                hiddenSubmit.type = 'hidden';
+                hiddenSubmit.name = 'delete_menu_range';
+                hiddenSubmit.value = '1';
+                formEl.appendChild(hiddenSubmit);
+                formEl.submit();
+            };
+            return false;
+        }
         </script>
 
-        <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
+        <div class="cmp-mm-bottom-grid">
             <!-- CSV UPLOAD SECTION -->
-            <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; flex: 1; min-width: 300px; max-width: 600px;">
-                <h2 style="margin-top: 0;">Upload Quarterly Menu (CSV)</h2>
-                <p>Your CSV must have exactly these 7 columns in this order: <br>
-                <strong>Category | Food Name | Description | Calories | Total Fat | Carbohydrates | Protein</strong></p>
-                
+            <div class="cmp-mm-panel-card">
+                <div>
+                    <h2>📥 Upload Quarterly Menu (CSV)</h2>
+                    <p class="cmp-mm-panel-desc">Upload your menu CSV file with these exact 7 columns in order:</p>
+                    <div class="cmp-mm-csv-cols-bar">
+                        <span class="cmp-mm-col-pill">1. Category</span>
+                        <span class="cmp-mm-col-pill">2. Food Name</span>
+                        <span class="cmp-mm-col-pill">3. Description</span>
+                        <span class="cmp-mm-col-pill">4. Calories</span>
+                        <span class="cmp-mm-col-pill">5. Total Fat</span>
+                        <span class="cmp-mm-col-pill">6. Carbohydrates</span>
+                        <span class="cmp-mm-col-pill">7. Protein</span>
+                    </div>
+                </div>
+
                 <form method="post" enctype="multipart/form-data">
-                    <input type="file" name="csv_file" accept=".csv" required style="margin-bottom: 20px; width: 100%;" />
+                    <div class="cmp-mm-file-dropzone">
+                        <input type="file" name="csv_file" accept=".csv" required />
+                    </div>
                     
-                    <div style="display: flex; gap: 15px; margin-bottom: 20px;">
-                        <div style="flex: 1;">
-                            <label style="display: block; font-weight: bold; margin-bottom: 5px;">Valid From *</label>
-                            <input type="date" name="valid_from" required style="width: 100%;">
+                    <div class="cmp-mm-date-grid">
+                        <div>
+                            <label class="cmp-mm-field-label">Valid From *</label>
+                            <input type="date" name="valid_from" class="cmp-mm-input" required>
                         </div>
-                        <div style="flex: 1;">
-                            <label style="display: block; font-weight: bold; margin-bottom: 5px;">Valid Until *</label>
-                            <input type="date" name="valid_until" required style="width: 100%;">
+                        <div>
+                            <label class="cmp-mm-field-label">Valid Until *</label>
+                            <input type="date" name="valid_until" class="cmp-mm-input" required>
                         </div>
                     </div>
                     
-                    <input type="submit" name="cmp_upload_csv" class="button button-primary" value="Upload Menu CSV" />
+                    <button type="submit" name="cmp_upload_csv" value="1" class="cmp-mm-primary-btn">Upload Menu CSV</button>
                 </form>
             </div>
 
             <!-- SAFE DELETION SECTION -->
-            <div style="background: #fffbdd; padding: 20px; border: 1px solid #d97706; flex: 1; min-width: 300px; max-width: 400px; align-self: flex-start;">
-                <h2 style="margin-top: 0; color: #b45309;">Delete Old Menus</h2>
-                <p style="font-size: 0.9em; color: #856404;">Completely wipe an old quarter's menu from the database to keep the system clean without affecting current menus.</p>
-                <form method="POST" onsubmit="return confirm('Are you sure? This will delete ALL food items assigned to this specific date range forever.');">
-                    <select name="del_range" style="width: 100%; padding: 5px; margin-bottom: 15px; border-color: #d97706;" onchange="
-                        var spl = this.value.split('|'); 
-                        document.getElementById('del_from').value = spl[0];
-                        document.getElementById('del_until').value = spl[1];
-                    " required>
-                        <option value="">- Select Menu Period to Delete -</option>
-                        <?php foreach ( $menu_ranges as $r ) : ?>
-                            <option value="<?php echo esc_attr( $r->valid_from . '|' . $r->valid_until ); ?>">
-                                <?php echo date( 'd M Y', strtotime( $r->valid_from ) ) . ' to ' . date( 'd M Y', strtotime( $r->valid_until ) ); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+            <div class="cmp-mm-panel-card danger-card">
+                <div>
+                    <h2>🗑️ Delete Old Menus</h2>
+                    <p class="cmp-mm-panel-desc">Completely wipe an old quarter's menu from the database to keep the system clean without affecting active or upcoming menus.</p>
+                </div>
+
+                <form method="POST" onsubmit="return cmpMmConfirmDeleteMenu(this);">
+                    <div style="margin-bottom: 18px;">
+                        <label class="cmp-mm-field-label" style="color:#92400e;">Select Menu Period to Delete *</label>
+                        <select name="del_range" class="cmp-mm-select" style="border-color: #f59e0b !important;" onchange="
+                            var spl = this.value.split('|'); 
+                            document.getElementById('del_from').value = spl[0] || '';
+                            document.getElementById('del_until').value = spl[1] || '';
+                        " required>
+                            <option value="">&mdash; Select Menu Period to Delete &mdash;</option>
+                            <?php foreach ( $menu_ranges as $r ) : ?>
+                                <option value="<?php echo esc_attr( $r->valid_from . '|' . $r->valid_until ); ?>">
+                                    <?php echo date( 'd M Y', strtotime( $r->valid_from ) ) . ' to ' . date( 'd M Y', strtotime( $r->valid_until ) ); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                     <input type="hidden" name="del_from" id="del_from" value="">
                     <input type="hidden" name="del_until" id="del_until" value="">
-                    <button type="submit" name="delete_menu_range" class="button" style="color: #dc2626; border-color: #dc2626;">Permanently Delete Menu</button>
+                    <button type="submit" name="delete_menu_range" class="cmp-mm-danger-btn">Permanently Delete Menu</button>
                 </form>
             </div>
         </div>
