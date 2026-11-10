@@ -2438,6 +2438,32 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
                                ('ontouchstart' in window && $(window).width() <= 1024);
 
+            var iconResetSvg  = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+            var iconCancelSvg = '<svg class="cmp-fixed-svg" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+
+            function ensureRowSecondaryActionButtons(rowElement, subId, logId) {
+                if (!rowElement || !rowElement.length || !logId || parseInt(logId) <= 0) return;
+                var $actionBox = rowElement.find('.cmp-action-box');
+                if (!$actionBox.length) return;
+
+                var $sec = $actionBox.find('.cmp-secondary-actions');
+                if ($sec.length) {
+                    $sec.find('.cmp-clear-row, .cmp-cancel-day-row')
+                        .attr('data-log-id', logId)
+                        .data('log-id', logId)
+                        .attr('data-sub-id', subId)
+                        .data('sub-id', subId);
+                } else {
+                    var secHtml = '<div class="cmp-secondary-actions">' +
+                        '<button type="button" class="cmp-clear-row" data-sub-id="' + subId + '" data-log-id="' + logId + '" title="Reset Selection">' + iconResetSvg + '</button>';
+                    if (!isChefOverride) {
+                        secHtml += '<button type="button" class="cmp-cancel-day-row" data-sub-id="' + subId + '" data-log-id="' + logId + '" title="Cancel Day">' + iconCancelSvg + '</button>';
+                    }
+                    secHtml += '</div>';
+                    $actionBox.append(secHtml);
+                }
+            }
+
             var shortDays   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
             var shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
             function formatShortMobileDate(dateStr) {
@@ -2504,17 +2530,19 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     mealsMap[slot] = ($(this).val() || '').toString().trim();
                 });
 
-                var saveBtn = rowElement.find('.cmp-save-row');
-                var logId   = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
+                var saveBtn  = rowElement.find('.cmp-save-row');
+                var logId    = saveBtn.length ? (parseInt(saveBtn.data('log-id')) || 0) : 0;
+                var savedDt  = (rowElement.find('.cmp-date-picker').val() || '').toString().trim();
+                var hasSaved = (logId > 0 && savedDt !== '' && savedDt !== '0000-00-00');
                 var currentBadgeHtml = rowElement.find('.cmp-desktop-status-holder').html();
 
                 rowElement.data('cmp-snapshot', {
-                    date: (rowElement.find('.cmp-date-picker').val() || '').toString().trim(),
+                    date: savedDt,
                     chefsChoice: rowElement.find('.cmp-chefs-choice').is(':checked'),
                     meals: mealsMap,
                     logId: logId,
-                    btnText: logId > 0 ? 'Update' : 'Save',
-                    btnBg: logId > 0 ? '#1B5E20' : '#379237',
+                    btnText: hasSaved ? 'Update' : 'Save',
+                    btnBg: hasSaved ? '#1B5E20' : '#379237',
                     statusBadgeHtml: currentBadgeHtml
                 });
             }
@@ -2745,11 +2773,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
             function applyValidDateToRow(rowInput, selectedDate) {
                 var container = rowInput.closest('.cmp-portal-container');
                 var rowNumber = parseInt(rowInput.data('row'));
-                var totalDays = parseInt(container.data('total-days'));
+                var totalDays = Math.max(
+                    parseInt(container.data('total-days')) || 0,
+                    container.find('tr.cmp-day-row').length
+                );
 
                 if (selectedDate) {
                     var nextDateString = getNextValidDeliveryDate(selectedDate);
-                    for (var i = rowNumber + 1; i <= (totalDays + 10); i++) {
+                    for (var i = rowNumber + 1; i <= (totalDays + 15); i++) {
                         var targetInput = container.find('.cmp-date-picker[data-row="' + i + '"]');
                         if (targetInput.length) {
                             if (!canBypassDateLock && nextDateString) {
@@ -3669,12 +3700,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                     } else {
                         syncRowCompactAndSummary($row);
                     }
+                    $row.removeClass('is-unsaved');
                     captureRowSnapshot($row);
                 } catch (initErr) {
                     console.error('CMP Row Init Error:', initErr);
                 }
             });
             updatePendingCounts();
+            updateGlobalUnsavedState();
 
             $(document).on('change input', '.cmp-meal-select, .cmp-meal-custom, select[class^="cmp-juice-"]', function() {
                 var rowElement = $(this).closest('tr');
@@ -4093,9 +4126,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                 $.post(ajaxUrl, data, function(response) {
                     if(response.success) {
+                        var activeLogId = parseInt(btn.data('log-id')) || 0;
                         if(response.data && response.data.new_log_id) {
-                            btn.data('log-id', response.data.new_log_id);
+                            activeLogId = parseInt(response.data.new_log_id);
+                            btn.attr('data-log-id', activeLogId).data('log-id', activeLogId);
                         }
+
+                        // Ensure Reset & Cancel buttons are immediately present on this saved row
+                        ensureRowSecondaryActionButtons(rowElement, btn.data('sub-id'), activeLogId);
 
                         var hasSavedMeals = false;
                         rowElement.find('select.cmp-meal-select, select[class^="cmp-juice-"], input.cmp-meal-custom').each(function() {
