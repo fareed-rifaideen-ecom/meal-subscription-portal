@@ -4,6 +4,10 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+if ( function_exists( 'opcache_invalidate' ) ) {
+    @opcache_invalidate( __FILE__, true );
+}
+
 // 1. Add the menu item to the WordPress dashboard
 add_action( 'admin_menu', 'cmp_add_admin_menu' );
 function cmp_add_admin_menu() {
@@ -28,6 +32,20 @@ function cmp_render_admin_page() {
     global $wpdb;
     $table_foods = $wpdb->prefix . 'cmp_foods';
     $message = '';
+
+    // --- PHASE 0: HANDLE DISH DETAILS DISPLAY MODE SAVE ---
+    if ( isset( $_POST['cmp_save_dish_display_mode'] ) && check_admin_referer( 'cmp_save_dish_mode_action', 'cmp_dish_mode_nonce' ) ) {
+        if ( current_user_can( 'manage_options' ) || current_user_can( 'menu_manager' ) ) {
+            $new_mode = isset( $_POST['cmp_dish_details_display_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['cmp_dish_details_display_mode'] ) ) : 'dish_1';
+            if ( ! in_array( $new_mode, array( 'dish_1', 'dish_2', 'dish_3', 'off' ), true ) ) {
+                $new_mode = 'dish_1';
+            }
+            update_option( 'cmp_dish_details_display_mode', $new_mode );
+            $message .= '<div class="notice notice-success is-dismissible"><p><strong>Success:</strong> Customer Portal Dish Details Display Mode updated successfully.</p></div>';
+        }
+    }
+
+    $current_dish_mode = get_option( 'cmp_dish_details_display_mode', 'dish_1' );
 
     // --- PHASE 1: DATABASE UPGRADE (Safe & Non-Destructive) ---
     // Check if the date columns exist. If not, add them and migrate current data to Q2 2026.
@@ -98,6 +116,59 @@ function cmp_render_admin_page() {
         <h1>Meal Portal - Menu Manager</h1>
         <?php echo $message; ?>
 
+        <!-- DISH DETAILS DISPLAY MODE TOGGLE CARD (OPTIONS DISH-1, DISH-2, DISH-3, OFF) -->
+        <div style="background: #fff; border: 1.5px solid #DCECC9; border-left: 5px solid #379237; border-radius: 12px; padding: 18px 22px; margin-top: 20px; box-shadow: 0 4px 14px rgba(27, 94, 32, 0.05); max-width: 1280px;">
+            <form method="POST" action="">
+                <?php wp_nonce_field( 'cmp_save_dish_mode_action', 'cmp_dish_mode_nonce' ); ?>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+                    <div>
+                        <h2 style="margin:0 0 4px 0; color:#1B5E20; font-size:1.15em;">
+                            🍽️ Customer Portal: Dish Ingredients &amp; Macros Display Mode
+                            <span style="background:#EEF7E3; color:#1B5E20; border:1px solid #68B946; padding:2px 8px; border-radius:999px; font-size:0.72em; font-weight:800;">Live Toggle</span>
+                        </h2>
+                        <p style="margin:0; color:#64748b; font-size:0.9em;">Choose how each selected meal's Ingredients and Macros are displayed in the Customer Portal across Desktop, Tablet, and Mobile.</p>
+                    </div>
+                    <button type="submit" name="cmp_save_dish_display_mode" value="1" class="button button-primary" style="background:#379237; border-color:#1B5E20; font-weight:800; padding:6px 18px; height:auto; border-radius:8px;">
+                        Save Display Mode
+                    </button>
+                </div>
+
+                <div style="display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: stretch;">
+                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'dish_1' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'dish_1' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_1" <?php checked( $current_dish_mode, 'dish_1' ); ?> style="margin-top:2px; accent-color:#379237;">
+                        <span>
+                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Option DISH-1: Micro-Card</strong>
+                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Shows a clean card below each selected meal with Ingredients + 4 Macro Pills.</span>
+                        </span>
+                    </label>
+
+                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'dish_2' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'dish_2' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_2" <?php checked( $current_dish_mode, 'dish_2' ); ?> style="margin-top:2px; accent-color:#379237;">
+                        <span>
+                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Option DISH-2: Badge &amp; Popover</strong>
+                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Shows a compact <code>[440 kcal • ℹ️ Ingredients]</code> pill next to the slot label with floating popover.</span>
+                        </span>
+                    </label>
+
+                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'dish_3' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'dish_3' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="dish_3" <?php checked( $current_dish_mode, 'dish_3' ); ?> style="margin-top:2px; accent-color:#379237;">
+                        <span>
+                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Option DISH-3: Macro Bar + Drawer</strong>
+                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Shows a 1-line macro summary bar below dropdown with tap-to-expand ingredients drawer.</span>
+                        </span>
+                    </label>
+
+                    <label style="display:flex; align-items:flex-start; gap:8px; padding:12px; border:1.5px solid <?php echo $current_dish_mode === 'off' ? '#379237' : '#cbd5e1'; ?>; border-radius:10px; background:<?php echo $current_dish_mode === 'off' ? '#EEF7E3' : '#f8fafc'; ?>; cursor:pointer;">
+                        <input type="radio" name="cmp_dish_details_display_mode" value="off" <?php checked( $current_dish_mode, 'off' ); ?> style="margin-top:2px; accent-color:#379237;">
+                        <span>
+                            <strong style="display:block; color:#0f172a; font-size:0.88em; margin-bottom:2px;">Off (Menu Name Only)</strong>
+                            <span style="color:#475569; font-size:0.78em; line-height:1.35; display:block;">Displays only the dish name inside dropdowns and daily macro totals at the bottom.</span>
+                        </span>
+                    </label>
+                </div>
+            </form>
+        </div>
+
         <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
             <!-- CSV UPLOAD SECTION -->
             <div style="background: #fff; padding: 20px; border: 1px solid #ccd0d4; flex: 1; min-width: 300px; max-width: 600px;">
@@ -147,5 +218,5 @@ function cmp_render_admin_page() {
             </div>
         </div>
     </div>
-    <?php
+    <?:
 }
