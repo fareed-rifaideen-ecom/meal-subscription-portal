@@ -1687,6 +1687,8 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 min-width: 310px;
                 max-height: 410px;
                 overflow-y: auto;
+                overscroll-behavior: contain !important;
+                -webkit-overflow-scrolling: touch;
                 background: #f8fafc;
                 border: 2px solid #1B5E20;
                 border-radius: 14px;
@@ -1762,9 +1764,16 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 align-items: center;
                 justify-content: center;
                 padding: 16px;
+                overscroll-behavior: contain !important;
+                touch-action: none;
             }
             .cmp-card-drawer-backdrop.is-open {
                 display: flex !important;
+            }
+            body.cmp-drawer-scroll-locked,
+            html.cmp-drawer-scroll-locked {
+                overflow: hidden !important;
+                overscroll-behavior: none !important;
             }
             .cmp-card-drawer-sheet {
                 background: #f8fafc;
@@ -1779,6 +1788,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 overflow: hidden;
                 box-shadow: 0 24px 48px rgba(15, 23, 42, 0.35);
                 animation: cmpDrawerSlideUp 0.22s ease-out;
+                touch-action: pan-y;
             }
             @keyframes cmpDrawerSlideUp {
                 from { opacity: 0; transform: translateY(18px); }
@@ -1863,8 +1873,10 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             .cmp-card-drawer-body {
                 padding: 12px 14px;
                 overflow-y: auto;
+                overscroll-behavior: contain !important;
                 flex: 1;
                 -webkit-overflow-scrolling: touch;
+                touch-action: pan-y;
             }
 
             /* Collapsed Row Rich Dish Summary Cards (Visible Even When Day Row is Collapsed After Saving) */
@@ -3415,12 +3427,62 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
 
                 $('#cmp-card-drawer-body').html(buildCardStackOptionsHtml($select, 'all', ''));
                 $('#cmp-card-stack-drawer-backdrop').addClass('is-open').attr('aria-hidden', 'false');
+                $('html, body').addClass('cmp-drawer-scroll-locked');
             }
 
             function closeCardStackDrawer() {
                 $('#cmp-card-stack-drawer-backdrop').removeClass('is-open').attr('aria-hidden', 'true');
+                $('html, body').removeClass('cmp-drawer-scroll-locked');
                 $activeDrawerSelect = null;
             }
+
+            // Prevent Wheel & Touch Scroll Chaining at Top/Bottom Boundaries in DISH-4 & DISH-5
+            var d4TouchStartY = 0;
+            $(document).on('touchstart', '.cmp-d4-floating-panel, #cmp-card-drawer-body', function(e) {
+                if (e.originalEvent && e.originalEvent.touches && e.originalEvent.touches.length === 1) {
+                    d4TouchStartY = e.originalEvent.touches[0].clientY;
+                }
+            });
+
+            $(document).on('touchmove', '.cmp-d4-floating-panel, #cmp-card-drawer-body', function(e) {
+                if (!e.originalEvent || !e.originalEvent.touches || e.originalEvent.touches.length !== 1) return;
+                var el            = this;
+                var currentY      = e.originalEvent.touches[0].clientY;
+                var deltaY        = d4TouchStartY - currentY; // > 0 scrolling down, < 0 scrolling up
+                var scrollTop     = el.scrollTop;
+                var scrollHeight  = el.scrollHeight;
+                var clientHeight  = el.clientHeight;
+                var isAtTop       = (scrollTop <= 0 && deltaY < 0);
+                var isAtBottom    = (scrollTop + clientHeight >= scrollHeight - 1 && deltaY > 0);
+                var notScrollable = (scrollHeight <= clientHeight);
+
+                if ((notScrollable || isAtTop || isAtBottom) && e.cancelable) {
+                    e.preventDefault();
+                }
+            });
+
+            $(document).on('wheel', '.cmp-d4-floating-panel, #cmp-card-drawer-body', function(e) {
+                var el            = this;
+                var deltaY        = e.originalEvent.deltaY;
+                var scrollTop     = el.scrollTop;
+                var scrollHeight  = el.scrollHeight;
+                var clientHeight  = el.clientHeight;
+                var isAtTop       = (scrollTop <= 0 && deltaY < 0);
+                var isAtBottom    = (scrollTop + clientHeight >= scrollHeight - 1 && deltaY > 0);
+                var notScrollable = (scrollHeight <= clientHeight);
+
+                if (notScrollable || isAtTop || isAtBottom) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            });
+
+            // Block any wheel/touch scroll on the dark backdrop outside the drawer sheet
+            $(document).on('wheel touchmove', '#cmp-card-stack-drawer-backdrop', function(e) {
+                if (!$(e.target).closest('#cmp-card-drawer-body, .cmp-card-drawer-cats').length) {
+                    if (e.cancelable) e.preventDefault();
+                }
+            });
 
             // Trigger Click for DISH-4 (4A) & DISH-5 (4B)
             $(document).on('click', '.cmp-card-picker-trigger', function(e) {
