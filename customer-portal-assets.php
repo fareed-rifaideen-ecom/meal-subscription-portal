@@ -1615,34 +1615,34 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
             .cmp-ref-dish-card {
                 display: flex;
                 flex-direction: column;
-                gap: 6px;
+                gap: 4px;
                 width: 100%;
             }
             .cmp-ref-card-top {
                 display: flex;
-                align-items: flex-start;
+                align-items: center;
                 justify-content: space-between;
-                gap: 8px;
+                gap: 6px;
             }
             .cmp-ref-dish-title {
-                font-size: 0.96rem;
+                font-size: 0.91rem;
                 font-weight: 800;
                 color: #0f172a;
-                line-height: 1.28;
+                line-height: 1.25;
                 margin: 0;
             }
             .cmp-ref-card-actions {
                 display: inline-flex;
                 align-items: center;
-                gap: 5px;
+                gap: 4px;
                 flex-shrink: 0;
             }
             .cmp-ref-clear-slot-btn {
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                width: 22px;
-                height: 22px;
+                width: 20px;
+                height: 20px;
                 border-radius: 50%;
                 background: #f1f5f9;
                 color: #64748b;
@@ -1660,7 +1660,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 border-color: #fca5a5;
             }
             .cmp-ref-change-hint {
-                font-size: 0.7rem;
+                font-size: 0.68rem;
                 font-weight: 800;
                 color: #379237;
                 background: #EEF7E3;
@@ -1674,19 +1674,31 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: none !important;
             }
             .cmp-ref-dish-desc {
-                font-size: 0.8rem;
+                font-size: 0.76rem;
                 font-weight: 500;
                 color: #475569;
-                line-height: 1.38;
+                line-height: 1.32;
                 margin: 0;
                 word-break: break-word;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+            .cmp-stack-option-card .cmp-ref-dish-desc {
+                -webkit-line-clamp: 3;
             }
             .cmp-ref-dish-pills {
                 display: flex;
                 align-items: center;
-                flex-wrap: wrap;
-                gap: 5px;
+                flex-wrap: nowrap;
+                gap: 4px;
                 margin-top: 2px;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+            .cmp-ref-dish-pills::-webkit-scrollbar {
+                display: none;
             }
 
             /* Option DISH-4 (4A): Inline Floating Card-Stack Dropdown Panel (Desktop/Tablet) */
@@ -1891,81 +1903,72 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 touch-action: pan-y;
             }
 
-            /* Collapsed Row Rich Dish Summary Cards (Visible Even When Day Row is Collapsed After Saving) */
-            .cmp-collapsed-summary-top-bar {
+            /* Compact 1-Line Glimpse Chips for Desktop & Tablet Collapsed Summary Bar */
+            .cmp-glimpse-inline-bar {
                 display: flex;
                 align-items: center;
-                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 6px;
                 width: 100%;
-                gap: 10px;
-                margin-bottom: 8px;
-            }
-            .cmp-collapsed-cards-grid {
-                display: grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-                gap: 10px;
-                width: 100%;
-                margin-top: 4px;
-            }
-            .cmp-collapsed-mini-card {
-                background: #ffffff;
-                border: 1.5px solid #cbd5e1;
-                border-left: 4px solid #379237;
-                border-radius: 10px;
-                padding: 10px 12px;
-                display: flex;
-                flex-direction: column;
-                justify-content: space-between;
-                gap: 5px;
                 min-width: 0;
-                box-shadow: 0 2px 5px rgba(15, 23, 42, 0.03);
             }
-            .cmp-collapsed-mini-title {
-                font-size: 0.86rem;
-                font-weight: 800;
+            .cmp-glimpse-dish-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                background: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-left: 3px solid #379237;
+                border-radius: 7px;
+                padding: 3px 9px;
+                font-size: 0.78rem;
+                font-weight: 700;
                 color: #0f172a;
                 line-height: 1.25;
+                max-width: 260px;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
             }
-            .cmp-collapsed-mini-desc {
-                font-size: 0.75rem;
-                color: #475569;
-                line-height: 1.35;
-                display: -webkit-box;
-                -webkit-line-clamp: 1;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
+            .cmp-glimpse-dish-cal {
+                color: #c2410c;
+                font-size: 0.71rem;
+                font-weight: 800;
+                background: #ffedd5;
+                padding: 1px 5px;
+                border-radius: 999px;
+                flex-shrink: 0;
             }
-            .cmp-collapsed-mini-card .cmp-ref-dish-pills {
-                flex-wrap: nowrap;
-                gap: 4px;
-                overflow-x: auto;
-                scrollbar-width: none;
-            }
-            .cmp-collapsed-mini-card .cmp-ref-dish-pills::-webkit-scrollbar {
-                display: none;
+            .cmp-glimpse-macro-tot {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                margin-left: auto;
+                background: #EEF7E3;
+                color: #1B5E20;
+                border: 1px solid #b7e1a1;
+                border-radius: 999px;
+                padding: 3px 10px;
+                font-size: 0.74rem;
+                font-weight: 800;
+                white-space: nowrap;
             }
 
             /* Tablet Grid Optimization for Expanded & Collapsed Cards (769px - 1024px) */
             @media (min-width: 769px) and (max-width: 1024px) {
-                .cmp-collapsed-cards-grid {
-                    grid-template-columns: repeat(2, minmax(0, 1fr));
-                    gap: 8px;
-                }
                 .cmp-card-picker-trigger {
-                    padding: 9px 10px;
+                    padding: 8px 10px;
                 }
                 .cmp-ref-dish-title {
-                    font-size: 0.88rem;
+                    font-size: 0.85rem;
                 }
                 .cmp-ref-dish-desc {
-                    font-size: 0.75rem;
+                    font-size: 0.73rem;
+                    -webkit-line-clamp: 2;
                 }
                 .cmp-d-pill {
                     padding: 2px 6px;
-                    font-size: 0.65rem;
+                    font-size: 0.64rem;
                 }
             }
 
@@ -2051,30 +2054,23 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 display: none !important;
                 grid-column: 1 / span 12 !important;
                 background: #f8fafc !important;
-                border: 1.5px dashed #cbd5e1 !important;
-                border-radius: 12px !important;
-                padding: 12px 16px !important;
-                margin-top: 4px !important;
-                font-size: 0.86rem !important;
+                border: 1px dashed #cbd5e1 !important;
+                border-radius: 10px !important;
+                padding: 7px 12px !important;
+                margin-top: 0 !important;
+                font-size: 0.82rem !important;
                 color: #334155 !important;
                 font-weight: 600 !important;
                 cursor: pointer !important;
                 align-items: center !important;
                 justify-content: space-between !important;
-                gap: 12px !important;
+                gap: 10px !important;
                 width: 100% !important;
             }
             .cmp-table td.cmp-collapsed-summary .cmp-summary-text {
                 flex: 1 1 auto !important;
                 min-width: 0 !important;
-                width: 100% !important;
-            }
-            .cmp-table td.cmp-collapsed-summary.has-rich-cards {
-                flex-direction: column !important;
-                align-items: stretch !important;
-            }
-            .cmp-table td.cmp-collapsed-summary.has-rich-cards > .cmp-expand-hint {
-                display: none !important;
+                overflow: hidden !important;
             }
             .cmp-table td.cmp-collapsed-summary:hover {
                 background: #f4fbf0 !important;
@@ -2082,7 +2078,7 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 color: #1B5E20 !important;
             }
 
-            /* DESKTOP & TABLET CARD GRID LAYOUT (> 768px) */
+            /* DESKTOP & TABLET CARD GRID LAYOUT (> 768px) — COMPACT & STREAMLINED */
             @media (min-width: 769px) {
                 .cmp-mobile-status,
                 .cmp-mobile-date-badge,
@@ -2097,8 +2093,14 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-table tr.cmp-day-row {
                     display: grid !important;
                     grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
-                    gap: 12px 14px !important;
+                    gap: 8px 12px !important;
                     align-items: end !important;
+                    padding: 11px 16px !important;
+                    margin-bottom: 11px !important;
+                }
+                .cmp-table tr.cmp-day-row.is-collapsed-desktop {
+                    gap: 6px 12px !important;
+                    padding: 10px 16px !important;
                 }
                 .cmp-table td:not(.cmp-collapsed-summary):not(.cmp-audit-footer-cell) {
                     display: block !important;
@@ -2111,7 +2113,8 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     grid-column: 1 / span 2 !important;
                     grid-row: 1 !important;
                     align-self: end !important;
-                    min-height: 48px !important;
+                    min-height: 42px !important;
+                    height: 42px !important;
                     display: flex !important;
                     flex-direction: column !important;
                     align-items: flex-start !important;
@@ -2119,22 +2122,26 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                     background: #EEF7E3 !important;
                     color: #1B5E20 !important;
                     border: 1.5px solid #DCECC9 !important;
-                    border-radius: 12px !important;
-                    font-size: 1.04rem !important;
+                    border-radius: 10px !important;
+                    font-size: 0.98rem !important;
                     font-weight: 800 !important;
-                    padding: 9px 28px 9px 14px !important;
+                    padding: 6px 26px 6px 12px !important;
                     cursor: pointer !important;
                     user-select: none;
                     transition: filter 0.15s ease;
                     position: relative !important;
                 }
+                .cmp-table tr.cmp-day-row.is-carryover-row td.cmp-cell-day,
+                .cmp-table tr.cmp-day-row.has-skipped-meal td.cmp-cell-day {
+                    height: auto !important;
+                }
                 .cmp-table td.cmp-cell-day:hover { filter: brightness(0.97); }
                 .cmp-table td.cmp-cell-day::after {
                     content: '\25B2';
-                    font-size: 0.72rem;
+                    font-size: 0.68rem;
                     opacity: 0.7;
                     position: absolute;
-                    right: 11px;
+                    right: 10px;
                     top: 50%;
                     transform: translateY(-50%);
                 }
@@ -2150,79 +2157,62 @@ if ( ! function_exists( 'cmp_render_customer_portal_styles' ) ) {
                 .cmp-table td.cmp-cell-status { grid-column: 8 / span 2 !important; grid-row: 1 !important; }
                 .cmp-table td.cmp-cell-action { grid-column: 10 / span 3 !important; grid-row: 1 !important; }
 
-                .cmp-table td.cmp-cell-meal,
-                .cmp-table td.cmp-cell-snack,
-                .cmp-table td.cmp-cell-macros,
-                .cmp-table td.cmp-cell-juice {
-                    padding-top: 10px !important;
-                    border-top: 1px dashed #e2e8f0 !important;
-                    align-self: stretch !important;
+                /* Compact Top-Row Controls on Desktop & Tablet */
+                .cmp-mobile-label {
+                    font-size: 0.7rem !important;
+                    margin-bottom: 3px !important;
                 }
-                .cmp-day-header-top {
-                    display: contents !important;
+                .cmp-table select,
+                .cmp-table input[type="text"],
+                .cmp-table input[type="date"] {
+                    min-height: 42px !important;
+                    padding: 7px 34px 7px 11px !important;
+                    font-size: 13.8px !important;
                 }
-
-                .cmp-table tr.cmp-day-row {
-                    display: grid !important;
-                    grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
-                    gap: 12px 14px !important;
-                    align-items: end !important;
+                .cmp-table input[type="date"],
+                .cmp-table input[type="text"] {
+                    padding-right: 10px !important;
                 }
-                .cmp-table td:not(.cmp-collapsed-summary):not(.cmp-audit-footer-cell) {
-                    display: block !important;
-                    padding: 0 !important;
-                    border: none !important;
-                    width: 100% !important;
+                .cmp-chef-box,
+                .cmp-status-box {
+                    min-height: 42px !important;
+                    padding: 4px 10px !important;
                 }
-
-                .cmp-table td.cmp-cell-day {
-                    grid-column: 1 / span 2 !important;
-                    grid-row: 1 !important;
-                    align-self: stretch !important;
-                    display: flex !important;
-                    flex-direction: column !important;
-                    align-items: flex-start !important;
-                    justify-content: center !important;
-                    background: #EEF7E3 !important;
-                    color: #1B5E20 !important;
-                    border: 1.5px solid #DCECC9 !important;
-                    border-radius: 12px !important;
-                    font-size: 1.04rem !important;
-                    font-weight: 800 !important;
-                    padding: 9px 28px 9px 12px !important;
-                    cursor: pointer !important;
-                    user-select: none;
-                    transition: filter 0.15s ease;
-                    position: relative !important;
+                .cmp-save-row {
+                    min-height: 42px !important;
+                    padding: 8px 12px !important;
+                    font-size: 13.5px !important;
                 }
-                .cmp-table td.cmp-cell-day:hover { filter: brightness(0.97); }
-                .cmp-table td.cmp-cell-day::after {
-                    content: '\25B2';
-                    font-size: 0.72rem;
-                    opacity: 0.7;
-                    position: absolute;
-                    right: 11px;
-                    top: 50%;
-                    transform: translateY(-50%);
+                .cmp-clear-row,
+                .cmp-cancel-day-row,
+                .cmp-undo-row {
+                    height: 42px !important;
                 }
-                .cmp-table tr.cmp-day-row.is-collapsed-desktop td.cmp-cell-day::after {
-                    content: '\25BC';
+                .cmp-card-picker-trigger {
+                    padding: 8px 11px !important;
+                    border-radius: 10px !important;
                 }
-
-                .cmp-table tr.status-pending td.cmp-cell-day { background: #fffbeb !important; color: #b45309 !important; border-color: #fde68a !important; }
-                .cmp-table tr.status-void td.cmp-cell-day { background: #fff1f2 !important; color: #9f1239 !important; border-color: #fecdd3 !important; }
-
-                .cmp-table td.cmp-cell-date { grid-column: 3 / span 3 !important; grid-row: 1 !important; }
-                .cmp-table td.cmp-cell-chef { grid-column: 6 / span 2 !important; grid-row: 1 !important; }
-                .cmp-table td.cmp-cell-status { grid-column: 8 / span 2 !important; grid-row: 1 !important; }
-                .cmp-table td.cmp-cell-action { grid-column: 10 / span 3 !important; grid-row: 1 !important; }
+                .cmp-card-picker-trigger.is-empty {
+                    min-height: 42px !important;
+                    padding: 8px 12px !important;
+                }
+                .cmp-macro-display {
+                    padding: 6px 10px !important;
+                }
+                .cmp-macro-tile {
+                    padding: 5px 6px !important;
+                }
+                .cmp-macro-tile .tile-val {
+                    font-size: 0.88rem !important;
+                }
 
                 .cmp-table td.cmp-cell-meal,
                 .cmp-table td.cmp-cell-snack,
                 .cmp-table td.cmp-cell-macros,
                 .cmp-table td.cmp-cell-juice {
-                    padding-top: 10px !important;
+                    padding-top: 7px !important;
                     border-top: 1px dashed #e2e8f0 !important;
+                    align-self: stretch !important;
                 }
 
                 .cmp-table td.cmp-cell-meal-1 { grid-column: 1 / span 4 !important; grid-row: 2 !important; }
@@ -4280,35 +4270,47 @@ if ( ! function_exists( 'cmp_render_customer_portal_scripts' ) ) {
                 if (summaryTextEl.length) {
                     var unsavedPrefix = isUnsaved ? '<strong style="color:#d97706;">[Unsaved Changes &mdash; Click Save Required! or Undo]</strong> ' : '';
                     if (isChefsChoice && !hasValues) {
-                        summaryCellEl.removeClass('has-rich-cards');
                         summaryTextEl.html(unsavedPrefix + '<strong style="color:#b45309;">' + chefsChoiceLabel + ' Selected</strong>' + carryoverHint + ' &mdash; Click to expand');
                     } else if (pickedNames.length > 0) {
-                        if (dishDisplayMode && dishDisplayMode !== 'off' && pickedInfos.length > 0) {
-                            summaryCellEl.addClass('has-rich-cards');
-                            var topBarHtml = '<div class="cmp-collapsed-summary-top-bar">' +
-                                '<div>' + unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong>' + carryoverHint + '</div>' +
-                                '<span class="cmp-expand-hint" style="color:#379237; font-size:0.8rem; font-weight:800; white-space:nowrap;">Expand &#9660;</span>' +
-                            '</div>';
-                            var miniCardsHtml = '<div class="cmp-collapsed-cards-grid">';
+                        if (pickedInfos.length > 0) {
+                            var totCal  = 0;
+                            var totPro  = 0;
+                            var totCarb = 0;
+                            var totFat  = 0;
+                            var chipsHtml = '<div class="cmp-glimpse-inline-bar">';
+                            if (unsavedPrefix) {
+                                chipsHtml += '<span>' + unsavedPrefix + '</span>';
+                            }
                             pickedInfos.forEach(function(inf) {
-                                var descLine = inf.desc ? '<div class="cmp-collapsed-mini-desc">' + cmpEscapeHtml(inf.desc) + '</div>' : '';
-                                miniCardsHtml += '<div class="cmp-collapsed-mini-card">' +
-                                    '<div class="cmp-collapsed-mini-title">' + cmpEscapeHtml(inf.name) + '</div>' +
-                                    descLine +
-                                    buildPastelMacroPillsHtml(inf) +
-                                '</div>';
+                                totCal  += (parseFloat(inf.cal) || 0);
+                                totPro  += (parseFloat(inf.pro) || 0);
+                                totCarb += (parseFloat(inf.carbs) || 0);
+                                totFat  += (parseFloat(inf.fat) || 0);
+                                var calBadge = inf.cal > 0 ? '<span class="cmp-glimpse-dish-cal">' + Math.round(inf.cal) + ' kcal</span>' : '';
+                                chipsHtml += '<span class="cmp-glimpse-dish-chip" title="' + cmpEscapeHtml(inf.name + (inf.desc ? ' — ' + inf.desc : '')) + '">' +
+                                    '<span>' + cmpEscapeHtml(inf.name) + '</span>' +
+                                    calBadge +
+                                '</span>';
                             });
-                            miniCardsHtml += '</div>';
-                            summaryTextEl.html(topBarHtml + miniCardsHtml);
+                            if (carryoverHint) {
+                                chipsHtml += carryoverHint;
+                            }
+                            if (totCal > 0) {
+                                chipsHtml += '<span class="cmp-glimpse-macro-tot">' +
+                                    Math.round(totCal) + ' kcal &bull; ' +
+                                    (Math.round(totPro * 10) / 10) + 'g P &bull; ' +
+                                    (Math.round(totCarb * 10) / 10) + 'g C &bull; ' +
+                                    (Math.round(totFat * 10) / 10) + 'g F' +
+                                '</span>';
+                            }
+                            chipsHtml += '</div>';
+                            summaryTextEl.html(chipsHtml);
                         } else {
-                            summaryCellEl.removeClass('has-rich-cards');
-                            summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected Meals:</strong> ' + pickedNames.join('  &bull;  ') + carryoverHint);
+                            summaryTextEl.html(unsavedPrefix + '<strong style="color:#1B5E20;">Selected:</strong> ' + pickedNames.join('  &bull;  ') + carryoverHint);
                         }
                     } else if (logId > 0 && !isUnsaved) {
-                        summaryCellEl.removeClass('has-rich-cards');
                         summaryTextEl.html('<strong style="color:#c2410c;">Date Reserved</strong>' + carryoverHint + ' &mdash; Click to expand and select meals');
                     } else {
-                        summaryCellEl.removeClass('has-rich-cards');
                         summaryTextEl.html(unsavedPrefix + 'Pending selection' + carryoverHint + ' &mdash; Click to expand and choose meals');
                     }
                 }
